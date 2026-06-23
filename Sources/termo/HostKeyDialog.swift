@@ -59,8 +59,7 @@ struct HostKeyDialog: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-
-                Spacer(minLength: 22)
+                .padding(.bottom, 22)
 
                 HStack(spacing: 10) {
                     Spacer()

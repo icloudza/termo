@@ -28,31 +28,58 @@ struct TestConnectionView: View {
 
             Divider().overlay(Pal.fill(0.06))
 
-            // 目标信息
-            HStack(spacing: 8) {
-                statusDot
-                Text(targetLabel)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(Pal.subtext)
-                Spacer()
-                Text(tester.overallStatusText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(tester.overallColor)
-            }
-            .padding(.horizontal, 20).padding(.vertical, 12)
-
-            // 连接流程
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(tester.steps) { step in
-                    stepRow(step)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
+            ConnectionProgressView(tester: tester, targetLabel: targetLabel)
 
             Divider().overlay(Pal.fill(0.06))
 
-            // 实时日志
+            // 底部
+            HStack {
+                Spacer()
+                if tester.isRunning {
+                    SecondaryButton(title: "取消") { tester.cancel(); dismiss() }
+                } else {
+                    SecondaryButton(title: "关闭") { dismiss() }
+                    PrimaryButton(title: "重新测试") { tester.start(conn: draft.buildConnection()) }
+                }
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14)
+        }
+        .frame(width: 520, height: 600)
+        .background(Pal.solidBase)
+        .preferredColorScheme(theme.isDark ? .dark : .light)
+        .onAppear { tester.start(conn: draft.buildConnection()) }
+        .onDisappear { tester.cancel() }
+    }
+
+    private var targetLabel: String {
+        let u = draft.user.isEmpty ? "" : "\(draft.user)@"
+        return "\(u)\(draft.address):\(draft.port)"
+    }
+}
+
+/// 可复用的连接进度视图：目标状态 + 步骤 + 实时日志（测试连接与连接终端共用）。
+struct ConnectionProgressView: View {
+    @ObservedObject var tester: ConnectionTester
+    let targetLabel: String
+    @ObservedObject private var theme = ThemeManager.shared
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Circle().fill(tester.overallColor).frame(width: 8, height: 8)
+                Text(targetLabel).font(.system(size: 12, design: .monospaced)).foregroundStyle(Pal.subtext)
+                Spacer()
+                Text(tester.overallStatusText).font(.system(size: 12, weight: .medium)).foregroundStyle(tester.overallColor)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(tester.steps) { step in stepRow(step) }
+            }
+            .padding(.horizontal, 20).padding(.bottom, 12)
+
+            Divider().overlay(Pal.fill(0.06))
+
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Text("实时日志").font(.system(size: 11, weight: .medium)).foregroundStyle(Pal.overlay)
@@ -63,7 +90,6 @@ struct TestConnectionView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
-                            // 整段日志渲染为单个 Text，才能跨行自由选中复制
                             combinedLog
                                 .font(.system(size: 11, design: .monospaced))
                                 .textSelection(.enabled)
@@ -81,29 +107,10 @@ struct TestConnectionView: View {
             }
             .frame(maxHeight: .infinity)
             .background(theme.isDark ? Pal.fill(0.03) : Pal.fill(0.02))
-
-            Divider().overlay(Pal.fill(0.06))
-
-            // 底部
-            HStack {
-                Spacer()
-                if tester.isRunning {
-                    SecondaryButton(title: "取消") { tester.cancel(); dismiss() }
-                } else {
-                    SecondaryButton(title: "关闭") { dismiss() }
-                    PrimaryButton(title: "重新测试") { tester.start(draft: draft) }
-                }
-            }
-            .padding(.horizontal, 20).padding(.vertical, 14)
         }
-        .frame(width: 520, height: 600)
-        .background(Pal.solidBase)
-        .preferredColorScheme(theme.isDark ? .dark : .light)
-        .onAppear { tester.start(draft: draft) }
-        .onDisappear { tester.cancel() }
     }
 
-    /// 把所有日志拼成单个 Text（保留时间戳与各自配色），以支持跨行自由选中复制。
+    /// 把所有日志拼成单个 Text（保留时间戳与各自配色），支持跨行自由选中复制。
     private var combinedLog: Text {
         tester.logs.reduce(Text(verbatim: "")) { acc, log in
             let stamp = log.time.isEmpty ? "" : log.time + "  "
@@ -113,27 +120,14 @@ struct TestConnectionView: View {
         }
     }
 
-    private var targetLabel: String {
-        let u = draft.user.isEmpty ? "" : "\(draft.user)@"
-        return "\(u)\(draft.address):\(draft.port)"
-    }
-
-    private var statusDot: some View {
-        Circle().fill(tester.overallColor).frame(width: 8, height: 8)
-    }
-
     private func stepRow(_ step: ConnectionStep) -> some View {
         HStack(spacing: 10) {
-            stepIcon(step.state)
-                .frame(width: 18)
-            Text(step.title)
-                .font(.system(size: 13))
+            stepIcon(step.state).frame(width: 18)
+            Text(step.title).font(.system(size: 13))
                 .foregroundStyle(step.state == .pending ? Pal.overlay : Pal.text)
             Spacer()
             if let detail = step.detail {
-                Text(detail)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Pal.overlay)
+                Text(detail).font(.system(size: 11, design: .monospaced)).foregroundStyle(Pal.overlay)
             }
         }
         .padding(.vertical, 6)
@@ -142,15 +136,70 @@ struct TestConnectionView: View {
     @ViewBuilder
     private func stepIcon(_ state: ConnectionStep.State) -> some View {
         switch state {
-        case .pending:
-            Image(systemName: "circle").font(.system(size: 13)).foregroundStyle(Pal.overlay)
-        case .running:
-            ProgressView().controlSize(.small).scaleEffect(0.7)
-        case .success:
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 14)).foregroundStyle(Pal.green)
-        case .failure:
-            Image(systemName: "xmark.circle.fill").font(.system(size: 14)).foregroundStyle(Pal.red)
+        case .pending: Image(systemName: "circle").font(.system(size: 13)).foregroundStyle(Pal.overlay)
+        case .running: ProgressView().controlSize(.small).scaleEffect(0.7)
+        case .success: Image(systemName: "checkmark.circle.fill").font(.system(size: 14)).foregroundStyle(Pal.green)
+        case .failure: Image(systemName: "xmark.circle.fill").font(.system(size: 14)).foregroundStyle(Pal.red)
         }
+    }
+}
+
+/// 连接主机时的进度弹窗（复用 ConnectionProgressView），成功后回调进入终端。
+struct ConnectingDialog: View {
+    let host: Host
+    let onConnected: () -> Void
+    let onCancel: () -> Void
+    @StateObject private var tester = ConnectionTester()
+    @ObservedObject private var theme = ThemeManager.shared
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+            VStack(spacing: 0) {
+                HStack {
+                    Text("正在连接").font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
+                    Spacer()
+                }
+                .padding(.horizontal, 20).padding(.vertical, 16)
+                Divider().overlay(Pal.fill(0.06))
+
+                ConnectionProgressView(tester: tester, targetLabel: targetLabel)
+
+                Divider().overlay(Pal.fill(0.06))
+                HStack {
+                    Spacer()
+                    if tester.isRunning {
+                        SecondaryButton(title: "取消") { tester.cancel(); onCancel() }
+                    } else if tester.failed {
+                        SecondaryButton(title: "取消") { onCancel() }
+                        PrimaryButton(title: "重试") { tester.start(conn: host.ssh ?? SSHConnection()) }
+                    } else {
+                        Text("连接成功，正在进入终端…").font(.system(size: 12)).foregroundStyle(Pal.green)
+                    }
+                }
+                .padding(.horizontal, 20).padding(.vertical, 14)
+            }
+            .frame(width: 520, height: 560)
+            .background(Pal.solidMantle, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Pal.fill(0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(0.4), radius: 24, y: 8)
+        }
+        .preferredColorScheme(theme.isDark ? .dark : .light)
+        .onAppear {
+            tester.onFinished = { success in
+                guard success else { return }
+                // 短暂停留展示「连接成功」，再淡出进入终端
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { onConnected() }
+            }
+            tester.start(conn: host.ssh ?? SSHConnection())
+        }
+        .onDisappear { tester.cancel() }
+    }
+
+    private var targetLabel: String {
+        guard let s = host.ssh else { return host.addr }
+        let u = s.user.isEmpty ? "" : "\(s.user)@"
+        return "\(u)\(s.host):\(s.port)"
     }
 }
 
@@ -182,6 +231,15 @@ final class ConnectionTester: ObservableObject {
     private let stepTitles = ["初始化配置", "解析主机地址", "建立 TCP 连接", "SSH 协议握手", "身份验证", "连接成功"]
     private let probeMarker = "TERMO_CONNECT_OK"
     private var sawMarker = false
+    private var concluded = false
+    /// 测试/连接结束时回调一次（true=成功）。
+    var onFinished: ((Bool) -> Void)?
+
+    private func conclude(_ success: Bool) {
+        guard !concluded else { return }
+        concluded = true
+        onFinished?(success)
+    }
 
     var overallStatusText: String {
         if isRunning { return "连接中…" }
@@ -197,15 +255,15 @@ final class ConnectionTester: ObservableObject {
         return Pal.overlay
     }
 
-    func start(draft: HostDraft) {
+    func start(conn: SSHConnection) {
         cancel()
         steps = stepTitles.map { ConnectionStep(title: $0) }
         logs = []
         isRunning = true
         failed = false
         sawMarker = false
+        concluded = false
 
-        let conn = draft.buildConnection()
         guard !conn.host.isEmpty else {
             log("未填写主机地址", color: Pal.red)
             failStep(0); return
@@ -326,13 +384,18 @@ final class ConnectionTester: ObservableObject {
     private func finished(code: Int32) {
         if sawMarker || code == 0 {
             markSuccess(5)
-            log("连接测试通过 ✓", color: Pal.green)
+            log("连接成功 ✓", color: Pal.green)
             failed = false
+            isRunning = false
+            conclude(true)
         } else if !failed {
             failedCurrentStep()
             log("连接失败（ssh 退出码 \(code)）", color: Pal.red)
+            isRunning = false
+            conclude(false)
+        } else {
+            isRunning = false
         }
-        isRunning = false
     }
 
     // MARK: - 步骤状态
@@ -351,6 +414,7 @@ final class ConnectionTester: ObservableObject {
         failed = true
         isRunning = false
         cancel()
+        conclude(false)
     }
     private func failedCurrentStep() {
         if let idx = steps.firstIndex(where: { $0.state == .running || $0.state == .pending }) {

@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
     @Published var showAddHost = false
     @Published var editingHost: Host? = nil   // 非 nil 时以编辑模式打开主机表单
     @Published var pendingHostKey: PendingHostKey? = nil   // 首次连接待验证的主机指纹
+    @Published var connectingHost: Host? = nil   // 正在连接的主机（展示连接进度弹窗）
 
     @Published var hosts: [Host] = []
     /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
@@ -438,11 +439,12 @@ final class AppModel: ObservableObject {
     private func scheduleInitialCommands(_ tv: LocalProcessTerminalView, ssh: SSHConnection) {
         let path = ssh.defaultPath.trimmingCharacters(in: .whitespaces)
         let cmd = ssh.initialCommand.trimmingCharacters(in: .whitespaces)
-        // 总是注入 OSC7 钩子（用于 cwd 跟踪），再附加可选的 cd / 初始命令
+        // 总是注入 OSC7 钩子（用于 cwd 跟踪）；随后清屏隐藏该命令的回显（banner 仍保留在 scrollback，
+        // 向上滚动可见），再附加可选的 cd / 初始命令（其输出落在清屏后的干净界面上）。
         var tail = ""
         if !path.isEmpty && path != "~" { tail += "cd \(path)" }
         if !cmd.isEmpty { tail += (tail.isEmpty ? "" : " && ") + cmd }
-        var line = Self.osc7Hook
+        var line = Self.osc7Hook + "; printf '\\033[2J\\033[H'"
         if !tail.isEmpty { line += "; " + tail }
         line += "\n"
         // 等待 SSH 登录完成后再发送
@@ -469,10 +471,19 @@ final class AppModel: ObservableObject {
     func openHostTerminal(_ host: Host) {
         Task {
             guard await verifyHostKey(host) else { return }   // 首次连接先验证指纹
-            addTab(.terminal, title: host.name, hostId: host.id)
-            recordSession(hostId: host.id, kind: .terminal, detail: "终端会话")
+            connectingHost = host   // 展示连接进度弹窗，成功后 finishConnecting 进入终端
         }
     }
+
+    /// 连接进度弹窗成功 → 打开真实终端标签。
+    func finishConnecting() {
+        guard let host = connectingHost else { return }
+        connectingHost = nil
+        addTab(.terminal, title: host.name, hostId: host.id)
+        recordSession(hostId: host.id, kind: .terminal, detail: "终端会话")
+    }
+
+    func cancelConnecting() { connectingHost = nil }
 
     func openHostFiles(_ host: Host) {
         // 同一主机已有文件标签则切过去

@@ -82,6 +82,15 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
+        .overlay {
+            if let h = model.connectingHost {
+                ConnectingDialog(host: h,
+                                 onConnected: { model.finishConnecting() },
+                                 onCancel: { model.cancelConnecting() })
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: model.connectingHost?.id)
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
         }
