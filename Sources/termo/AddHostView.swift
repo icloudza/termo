@@ -1,11 +1,17 @@
+import AppKit
 import SwiftUI
 
 struct AddHostView: View {
     @ObservedObject var model: AppModel
+    var editing: Host? = nil
     @StateObject private var draft = HostDraft()
     @ObservedObject private var theme = ThemeManager.shared
+    @Environment(\.dismiss) private var dismiss
     @State private var section: HostFormSection = .basic
     @State private var showTest = false
+    @State private var didLoad = false
+
+    private var isEditing: Bool { editing != nil }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,7 +34,15 @@ struct AddHostView: View {
         .frame(width: 680, height: 560)
         .background(Pal.solidBase)
         .preferredColorScheme(theme.isDark ? .dark : .light)
-        .onAppear { draft.group = model.groupNames.first ?? "" }
+        .onAppear {
+            guard !didLoad else { return }
+            didLoad = true
+            if let editing {
+                draft.load(from: editing)
+            } else {
+                draft.group = model.groupNames.first ?? ""
+            }
+        }
         .sheet(isPresented: $showTest) {
             TestConnectionView(draft: draft)
         }
@@ -38,12 +52,12 @@ struct AddHostView: View {
 
     private var header: some View {
         HStack {
-            Text("新增主机")
+            Text(isEditing ? "编辑主机" : "新增主机")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Pal.text)
             Spacer()
             Button {
-                model.showAddHost = false
+                dismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .medium))
@@ -117,16 +131,33 @@ struct AddHostView: View {
             .opacity(draft.canSave ? 1 : 0.5)
 
             Spacer()
-            SecondaryButton(title: "取消") { model.showAddHost = false }
-            PrimaryButton(title: "添加", enabled: draft.canSave) { save() }
+            SecondaryButton(title: "取消") { dismiss() }
+            PrimaryButton(title: isEditing ? "保存" : "添加", enabled: draft.canSave) { save() }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
     }
 
     private func save() {
-        model.addHost(from: draft)
-        model.showAddHost = false
+        if let editing {
+            model.updateHost(id: editing.id, from: draft)
+        } else {
+            model.addHost(from: draft)
+        }
+        dismiss()
+    }
+
+    private func chooseKeyFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true   // ~/.ssh 下的密钥是隐藏目录
+        panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh")
+        panel.prompt = "选择"
+        if panel.runModal() == .OK, let url = panel.url {
+            draft.keyPath = url.path
+        }
     }
 
     // MARK: - 各分区内容
@@ -159,8 +190,20 @@ struct AddHostView: View {
                 .frame(width: 200)
             }
             field("登录用户", placeholder: "root", text: $draft.user)
-            labeled("登录密码", optional: true) {
-                ThemedSecureField(placeholder: "（可选）", text: $draft.password)
+            if draft.authMethod == .key {
+                labeled("私钥文件") {
+                    HStack(spacing: 8) {
+                        ThemedTextField(placeholder: "~/.ssh/id_ed25519", text: $draft.keyPath)
+                        SecondaryButton(title: "选择…") { chooseKeyFile() }
+                    }
+                }
+                labeled("私钥密码", optional: true) {
+                    ThemedSecureField(placeholder: "（私钥有 passphrase 时填写）", text: $draft.password)
+                }
+            } else {
+                labeled("登录密码", optional: true) {
+                    ThemedSecureField(placeholder: "（可选）", text: $draft.password)
+                }
             }
             labeled("主机备注") {
                 ThemedTextEditor(placeholder: "备注信息…", text: $draft.notes)
@@ -208,18 +251,7 @@ struct AddHostView: View {
     private var advancedSection: some View {
         VStack(alignment: .leading, spacing: 18) {
             sectionTitle("高级设置")
-            toggleRow("启用 X11 转发", isOn: $draft.x11Forwarding)
-            labeled("X11 Cookie 模式") {
-                ThemedDropdown(
-                    options: X11CookieMode.allCases.map { ($0, $0.rawValue) },
-                    selection: $draft.x11CookieMode
-                )
-                .frame(width: 200)
-            }
-            if draft.x11CookieMode == .manual {
-                field("X11 Cookie", placeholder: "输入 X11 Cookie", text: $draft.x11Cookie)
-            }
-            labeled("终端显示编码") {
+            labeled("终端显示编码", hint: "作为 LC_ALL 转发给服务器；非 UTF-8 的最终显示受终端渲染限制") {
                 ThemedDropdown(options: SSHOptions.encodings, selection: $draft.encoding)
                     .frame(width: 240)
             }

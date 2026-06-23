@@ -157,25 +157,6 @@ struct SettingsView: View {
                 )
                 .frame(width: 240)
             }
-
-            settingRow("窗口效果", description: "窗口背景材质（需配合透明度）") {
-                SegmentedControl(
-                    options: WindowEffect.allCases.map { ($0, $0.rawValue) },
-                    selection: $settings.windowEffect
-                )
-                .frame(width: 240)
-            }
-
-            settingRow("窗口透明度", description: "数值越低，桌面/模糊越明显") {
-                HStack(spacing: 10) {
-                    ThemedSlider(value: $settings.windowOpacity, range: 0.5...1.0)
-                        .frame(width: 130)
-                    Text("\(Int(settings.windowOpacity * 100))%")
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(Pal.subtext)
-                        .frame(width: 38, alignment: .trailing)
-                }
-            }
         }
     }
 

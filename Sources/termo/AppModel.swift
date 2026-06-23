@@ -1,7 +1,15 @@
 import AppKit
 import Combine
+import Darwin
 import SwiftTerm
 import SwiftUI
+
+/// 首次连接待验证的主机指纹（弹窗用）。respond 回传用户选择。
+struct PendingHostKey: Identifiable {
+    let id = UUID()
+    let info: HostKeyInfo
+    let respond: (HostKeyDecision) -> Void
+}
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -13,8 +21,14 @@ final class AppModel: ObservableObject {
     @Published var settingsTab: SettingsTab = .general
     @Published var showSettings = false
     @Published var showAddHost = false
+    @Published var editingHost: Host? = nil   // 非 nil 时以编辑模式打开主机表单
+    @Published var pendingHostKey: PendingHostKey? = nil   // 首次连接待验证的主机指纹
 
-    @Published var hosts: [Host] = Host.mock
+    @Published var hosts: [Host] = []
+    /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
+    @Published var sessions: [SessionEvent] = []
+    /// 正在 SSH 探测系统信息的主机 id。
+    @Published var probingHosts: Set<String> = []
 
     /// 现有分组（保持出现顺序，去重）
     var groupNames: [String] {
@@ -27,7 +41,7 @@ final class AppModel: ObservableObject {
         let conn = draft.buildConnection()
         let name = draft.name.trimmingCharacters(in: .whitespaces)
         let addr = "\(conn.user)@\(conn.host)"
-        let id = "host-\(name)-\(hosts.count)-\(Int(Date().timeIntervalSince1970))"
+        let id = "host-\(UUID().uuidString)"
         let newHost = Host(
             id: id,
             name: name,
@@ -36,9 +50,193 @@ final class AppModel: ObservableObject {
             status: .unknown,
             os: "未知",
             port: conn.port,
-            ssh: conn
+            ssh: conn,
+            notes: draft.notes.trimmingCharacters(in: .whitespaces)
         )
         hosts.append(newHost)
+        HostStore.saveHosts(hosts)
+        checkReachability(newHost)
+    }
+
+    func beginEditHost(_ host: Host) {
+        editingHost = host
+    }
+
+    /// 用编辑后的表单覆盖已有主机（保持 id / 状态 / 系统不变）。
+    func updateHost(id: String, from draft: HostDraft) {
+        guard let idx = hosts.firstIndex(where: { $0.id == id }) else { return }
+        let conn = draft.buildConnection()
+        let old = hosts[idx]
+        hosts[idx] = Host(
+            id: id,
+            name: draft.name.trimmingCharacters(in: .whitespaces),
+            addr: "\(conn.user)@\(conn.host)",
+            group: draft.resolvedGroup,
+            status: old.status,
+            os: old.os,
+            port: conn.port,
+            ssh: conn,
+            notes: draft.notes.trimmingCharacters(in: .whitespaces)
+        )
+        HostStore.saveHosts(hosts)
+        checkReachability(hosts[idx])
+    }
+
+    func deleteHost(_ id: String) {
+        hosts.removeAll { $0.id == id }
+        sessions.removeAll { $0.hostId == id }
+        HostKeychain.delete(id)
+        HostStore.saveHosts(hosts)
+        HostStore.saveSessions(sessions)
+    }
+
+    // ---------- 会话历史 ----------
+    /// 记录一条会话事件并持久化。
+    func recordSession(hostId: String, kind: SessionKind, detail: String) {
+        sessions.append(SessionEvent(hostId: hostId, kind: kind, detail: detail, timestamp: Date()))
+        // 每台主机最多保留 50 条，避免无限增长
+        let perHost = Dictionary(grouping: sessions, by: \.hostId)
+        var trimmed: [SessionEvent] = []
+        for (_, evs) in perHost {
+            trimmed += evs.sorted { $0.timestamp > $1.timestamp }.prefix(50)
+        }
+        sessions = trimmed
+        HostStore.saveSessions(sessions)
+    }
+
+    /// 某主机最近的会话（倒序，最多 limit 条）。
+    func recentSessions(for hostId: String, limit: Int = 6) -> [SessionEvent] {
+        sessions
+            .filter { $0.hostId == hostId }
+            .sorted { $0.timestamp > $1.timestamp }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    // ---------- 系统信息探测 ----------
+    /// 远端一次性探测脚本：输出 OS/CORES/MEM/DISK 四行 key=value。
+    private static let probeScript =
+        ". /etc/os-release 2>/dev/null; " +
+        "echo \"OS=${PRETTY_NAME:-$(uname -sr)}\"; " +
+        "echo \"CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)\"; " +
+        "echo \"MEM=$(free -h 2>/dev/null | awk 'NR==2{print $2}')\"; " +
+        "echo \"DISK=$(df -h / 2>/dev/null | awk 'NR==2{print $3\"/\"$2}')\""
+
+    /// 打开主机概览时调用：后台 SSH 跑一次探测脚本，取真实系统信息并缓存。
+    func probeHostIfNeeded(_ host: Host) {
+        guard let ssh = host.ssh, !ssh.host.isEmpty, !probingHosts.contains(host.id) else { return }
+        probingHosts.insert(host.id)
+        let id = host.id
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        proc.arguments = ssh.sshArguments(ephemeralKnownHosts: true) + ["-o", "BatchMode=no", Self.probeScript]
+        var env = ProcessInfo.processInfo.environment
+        if ssh.needsAskpass, let ap = SSHAskpass.envVars(password: ssh.password) {
+            for (k, v) in ap { env[k] = v }
+        }
+        proc.environment = env
+
+        let outPipe = Pipe()
+        proc.standardOutput = outPipe
+        proc.standardError = Pipe()   // 丢弃 stderr
+        proc.terminationHandler = { [weak self] _ in
+            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            Task { @MainActor in self?.applyProbe(id: id, output: text) }
+        }
+
+        do {
+            try proc.run()
+        } catch {
+            probingHosts.remove(id)
+            return
+        }
+        // 安全超时：20s 还没结束就杀掉，避免卡在认证
+        DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+            if proc.isRunning { proc.terminate() }
+        }
+    }
+
+    private func applyProbe(id: String, output: String) {
+        probingHosts.remove(id)
+        guard let idx = hosts.firstIndex(where: { $0.id == id }) else { return }
+        var specs = HostSpecs()
+        for line in output.split(separator: "\n") {
+            guard let eq = line.firstIndex(of: "=") else { continue }
+            let key = String(line[line.startIndex..<eq]).trimmingCharacters(in: .whitespaces)
+            let val = String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+            switch key {
+            case "OS": specs.os = val
+            case "CORES": specs.cores = val
+            case "MEM": specs.memory = val
+            case "DISK": specs.disk = val
+            default: break
+            }
+        }
+        guard !specs.isEmpty else { return }   // 探测失败（连接/认证失败）则保留原样
+        hosts[idx].specs = specs
+        hosts[idx].status = .online            // 探测成功 ⇒ 一定在线
+        HostStore.saveHosts(hosts)
+    }
+
+    // ---------- 在线状态检测 ----------
+    /// 对所有主机做一次轻量 TCP 可达性检测（启动/刷新时调用）。
+    func refreshAllStatuses() {
+        for host in hosts { checkReachability(host) }
+    }
+
+    /// 轻量 TCP 连接探测（不登录）：实测握手 RTT，成功=在线+延迟，失败/超时=离线。
+    func checkReachability(_ host: Host) {
+        guard let ssh = host.ssh, !ssh.host.isEmpty else { return }
+        let id = host.id
+        let h = ssh.host
+        let p = ssh.port
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let (ok, ms) = Self.tcpPing(host: h, port: p, timeoutSec: 5)
+            Task { @MainActor in self?.setStatus(id, ok ? .online : .offline, latencyMs: ok ? ms : nil) }
+        }
+    }
+
+    /// 用非阻塞 socket connect 实测 TCP 握手耗时（毫秒）。返回 (是否连通, 延迟ms)。
+    private static func tcpPing(host: String, port: Int, timeoutSec: Double) -> (Bool, Int) {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        hints.ai_protocol = IPPROTO_TCP
+        var res: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, String(port), &hints, &res) == 0, let info = res, let addr = info.pointee.ai_addr else {
+            return (false, 0)
+        }
+        defer { freeaddrinfo(res) }
+
+        let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
+        if fd < 0 { return (false, 0) }
+        defer { close(fd) }
+        let flags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+
+        let start = DispatchTime.now()
+        let cr = connect(fd, addr, info.pointee.ai_addrlen)
+        let elapsed = { Int(Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000) }
+        if cr == 0 { return (true, elapsed()) }            // 立即连通（如本机）
+        if errno != EINPROGRESS { return (false, 0) }
+
+        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        let pr = poll(&pfd, 1, Int32(timeoutSec * 1000))
+        if pr <= 0 { return (false, 0) }                   // 超时或错误
+        var soErr: Int32 = 0
+        var len = socklen_t(MemoryLayout<Int32>.size)
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &len)
+        if soErr != 0 { return (false, 0) }                // 连接被拒等
+        return (true, elapsed())
+    }
+
+    private func setStatus(_ id: String, _ status: HostStatus, latencyMs: Int? = nil) {
+        guard let idx = hosts.firstIndex(where: { $0.id == id }) else { return }
+        // 运行时状态，不持久化（下次启动重新检测）
+        if hosts[idx].status != status { hosts[idx].status = status }
+        if hosts[idx].latencyMs != latencyMs { hosts[idx].latencyMs = latencyMs }
     }
 
     private var terminals: [Int: LocalProcessTerminalView] = [:]
@@ -49,15 +247,20 @@ final class AppModel: ObservableObject {
     private var settingsCancellable: AnyCancellable?
 
     init() {
-        // 主题切换时转发，让所有观察 model 的视图重绘并读取新的 Pal 配色
+        // 从磁盘加载主机与会话历史
+        hosts = HostStore.loadHosts()
+        sessions = HostStore.loadSessions()
+        HostKeyVerifier.resetSession()   // 清空「仅本次信任」的会话临时 known_hosts
+        // 启动即对所有主机做一次轻量在线检测
+        defer { refreshAllStatuses() }
+
+        // 所有用 Pal 配色的视图都已直接 @ObservedObject ThemeManager.shared / AppSettings.shared，
+        // 无需再把它们的 objectWillChange 转发到 AppModel（那样会让整棵视图树重复重建）。
+        // 这里只订阅副作用：主题/设置变化时刷新各终端的配色与透明度。
         themeCancellable = ThemeManager.shared.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-            // 主题变化后刷新所有终端配色
             DispatchQueue.main.async { self?.applyThemeToTerminals() }
         }
-        // 窗口透明度/效果变化时也刷新视图与终端背景
         settingsCancellable = AppSettings.shared.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
             DispatchQueue.main.async { self?.applyThemeToTerminals() }
         }
     }
@@ -65,6 +268,22 @@ final class AppModel: ObservableObject {
     var activeHostId: String? {
         guard let id = activeTabId else { return nil }
         return tabs.first(where: { $0.id == id })?.hostId
+    }
+
+    /// 活动「会话」标签（终端/文件）对应的主机——侧栏文件树跟随它（概览页不算会话）。
+    var activeSessionHost: Host? {
+        guard let id = activeSessionTabId,
+              let hid = tabs.first(where: { $0.id == id })?.hostId else { return nil }
+        return hosts.first { $0.id == hid }
+    }
+
+    /// 活动「会话」标签的 id（文件树按标签分离时用作 key）。
+    var activeSessionTabId: Int? {
+        guard let id = activeTabId,
+              let tab = tabs.first(where: { $0.id == id }),
+              tab.kind == .terminal || tab.kind == .files,
+              tab.hostId != nil else { return nil }
+        return id
     }
 
     func host(_ id: String?) -> Host? {
@@ -75,12 +294,27 @@ final class AppModel: ObservableObject {
     // ---------- 终端 ----------
     func terminalView(for tabId: Int) -> LocalProcessTerminalView {
         if let tv = terminals[tabId] { return tv }
-        let conn = tabs.first(where: { $0.id == tabId })?.hostId
-            .flatMap { hid in hosts.first(where: { $0.id == hid })?.ssh }
-        let tv = makeTerminal(ssh: conn)
+        let hostId = tabs.first(where: { $0.id == tabId })?.hostId
+        let conn = hostId.flatMap { hid in hosts.first(where: { $0.id == hid })?.ssh }
+        let tv = makeTerminal(ssh: conn, hostId: hostId, tabId: tabId)
         terminals[tabId] = tv
         return tv
     }
+
+    /// 终端 cwd 变化（OSC 7）→ 定位该标签的侧栏文件树（按标签独立）。
+    private var tabCwd: [Int: String] = [:]
+    private var termDelegates: [Int: TerminalSessionDelegate] = [:]
+    func handleTerminalCwd(tabId: Int, path: String) {
+        guard tabCwd[tabId] != path else { return }   // 去重：同一目录不重复定位（OSC7 每次提示符都会发）
+        tabCwd[tabId] = path
+        fileTreeStates[tabId]?.reveal(path)
+    }
+
+    /// SSH 登录后注入的 OSC 7 钩子：bash/zsh 每次提示符上报当前目录。
+    private static let osc7Hook =
+        "__t7(){ printf '\\033]7;file://%s%s\\033\\\\' \"${HOSTNAME:-h}\" \"$PWD\"; }; " +
+        "if [ -n \"$ZSH_VERSION\" ]; then precmd_functions+=(__t7); " +
+        "else PROMPT_COMMAND=\"__t7;${PROMPT_COMMAND}\"; fi; __t7"
 
     private static let terminalFont: NSFont = {
         let size: CGFloat = 14
@@ -102,7 +336,7 @@ final class AppModel: ObservableObject {
         SwiftTerm.Color(red: r * 257, green: g * 257, blue: b * 257)
     }
 
-    // VSCode 终端默认 ANSI 调色板
+    // 终端默认 ANSI 调色板
     private static let darkPalette: [SwiftTerm.Color] = [
         c(0x00, 0x00, 0x00), c(0xcd, 0x31, 0x31), c(0x0d, 0xbc, 0x79), c(0xe5, 0xe5, 0x10),
         c(0x24, 0x72, 0xc8), c(0xbc, 0x3f, 0xbc), c(0x11, 0xa8, 0xcd), c(0xe5, 0xe5, 0xe5),
@@ -119,18 +353,12 @@ final class AppModel: ObservableObject {
 
     private func applyTheme(to tv: LocalProcessTerminalView) {
         let t = ThemeManager.shared.colors
-        let alpha = AppSettings.shared.surfaceAlpha
-        let transparent = alpha < 0.999
         tv.installColors(ThemeManager.shared.isDark ? Self.darkPalette : Self.lightPalette)
-        tv.nativeBackgroundColor = NSColor(hex: t.termBg).withAlphaComponent(alpha)
+        tv.nativeBackgroundColor = NSColor(hex: t.termBg)
         tv.nativeForegroundColor = NSColor(hex: t.termFg)
         tv.selectedTextBackgroundColor = NSColor(hex: t.termSelection)
         tv.caretColor = NSColor(hex: t.termCaret)
         tv.caretTextColor = NSColor(hex: t.termBg)
-        // 透明时让终端视图非不透明，使窗口模糊/桌面透出
-        tv.wantsLayer = true
-        tv.layer?.isOpaque = !transparent
-        tv.layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     private func applyThemeToTerminals() {
@@ -142,7 +370,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func makeTerminal(ssh: SSHConnection? = nil) -> LocalProcessTerminalView {
+    private func makeTerminal(ssh: SSHConnection? = nil, hostId: String? = nil, tabId: Int) -> LocalProcessTerminalView {
         let tv = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 480))
         tv.font = Self.terminalFont
         applyTheme(to: tv)
@@ -154,22 +382,43 @@ final class AppModel: ObservableObject {
         }
 
         if let ssh {
-            // 真实 SSH 连接
+            // 真实 SSH 连接——密码用 OpenSSH 内置 SSH_ASKPASS 喂入（无需 sshpass）
             let args = ssh.sshArguments()
-            if ssh.usesPassword, let sshpass = Self.sshpassPath() {
-                // 用 sshpass -e，密码经环境变量传入（不暴露在进程参数里）
-                env.append("SSHPASS=\(ssh.password)")
-                tv.startProcess(executable: sshpass, args: ["-e", "ssh"] + args, environment: env)
-            } else {
-                tv.startProcess(executable: "/usr/bin/ssh", args: args, environment: env)
+            if ssh.needsAskpass, let askpass = SSHAskpass.envVars(password: ssh.password) {
+                for (k, v) in askpass { env.append("\(k)=\(v)") }
             }
-            // 连接后执行初始命令 / 切换默认路径（best-effort）
+            tv.startProcess(executable: "/usr/bin/ssh", args: args, environment: env)
+            // 连接后注入 OSC7 钩子 + 初始命令 / 默认路径（best-effort）
             scheduleInitialCommands(tv, ssh: ssh)
         } else {
             let shell = AppSettings.shared.resolvedShell
             tv.startProcess(executable: shell, args: ["-l"], environment: env)
         }
+
+        // 会话代理：cwd 跟踪（仅 SSH 主机）+ 进程退出（exit/掉线）自动关闭标签
+        let d = TerminalSessionDelegate()
+        if let hostId {
+            d.onCwd = { [weak self] path in
+                Task { @MainActor in self?.handleTerminalCwd(tabId: tabId, path: path) }
+            }
+        }
+        d.onTerminated = { [weak self] in
+            Task { @MainActor in self?.handleTerminalExit(tabId: tabId, hostId: hostId) }
+        }
+        tv.processDelegate = d
+        termDelegates[tabId] = d
         return tv
+    }
+
+    /// SSH 终端进程退出（exit / 掉线）：关闭该标签（其文件树状态随之释放）。
+    /// 若该主机已无其它会话标签，则断开复用的 ControlMaster 主连接。
+    func handleTerminalExit(tabId: Int, hostId: String?) {
+        guard tabs.contains(where: { $0.id == tabId }) else { return }
+        performCloseTab(tabId)   // 内部已清理该标签的 fileTreeState / tabCwd
+        if let hostId, let host = hosts.first(where: { $0.id == hostId }) {
+            let stillUsed = tabs.contains { ($0.kind == .terminal || $0.kind == .files) && $0.hostId == hostId }
+            if !stillUsed { RemoteFS(host.ssh ?? SSHConnection()).closeMaster() }
+        }
     }
 
     // ---------- 启动行为 ----------
@@ -186,21 +435,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    static func sshpassPath() -> String? {
-        for p in ["/opt/homebrew/bin/sshpass", "/usr/local/bin/sshpass", "/usr/bin/sshpass"]
-        where FileManager.default.isExecutableFile(atPath: p) {
-            return p
-        }
-        return nil
-    }
-
     private func scheduleInitialCommands(_ tv: LocalProcessTerminalView, ssh: SSHConnection) {
         let path = ssh.defaultPath.trimmingCharacters(in: .whitespaces)
         let cmd = ssh.initialCommand.trimmingCharacters(in: .whitespaces)
-        guard (!path.isEmpty && path != "~") || !cmd.isEmpty else { return }
-        var line = ""
-        if !path.isEmpty && path != "~" { line += "cd \(path)" }
-        if !cmd.isEmpty { line += (line.isEmpty ? "" : " && ") + cmd }
+        // 总是注入 OSC7 钩子（用于 cwd 跟踪），再附加可选的 cd / 初始命令
+        var tail = ""
+        if !path.isEmpty && path != "~" { tail += "cd \(path)" }
+        if !cmd.isEmpty { tail += (tail.isEmpty ? "" : " && ") + cmd }
+        var line = Self.osc7Hook
+        if !tail.isEmpty { line += "; " + tail }
         line += "\n"
         // 等待 SSH 登录完成后再发送
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak tv] in
@@ -224,7 +467,65 @@ final class AppModel: ObservableObject {
     }
 
     func openHostTerminal(_ host: Host) {
-        addTab(.terminal, title: host.name, hostId: host.id)
+        Task {
+            guard await verifyHostKey(host) else { return }   // 首次连接先验证指纹
+            addTab(.terminal, title: host.name, hostId: host.id)
+            recordSession(hostId: host.id, kind: .terminal, detail: "终端会话")
+        }
+    }
+
+    func openHostFiles(_ host: Host) {
+        // 同一主机已有文件标签则切过去
+        if let existing = tabs.first(where: { $0.kind == .files && $0.hostId == host.id }) {
+            activeTabId = existing.id
+            return
+        }
+        Task {
+            guard await verifyHostKey(host) else { return }
+            addTab(.files, title: host.name, hostId: host.id)
+            recordSession(hostId: host.id, kind: .files, detail: "文件浏览")
+        }
+    }
+
+    /// 首次连接验证主机指纹：已知 → 直接放行；未知 → 弹窗让用户核对后决定。返回是否继续连接。
+    func verifyHostKey(_ host: Host) async -> Bool {
+        guard let ssh = host.ssh, !ssh.host.isEmpty else { return true }
+        let h = ssh.host, p = ssh.port
+        let pf = await Task.detached { HostKeyVerifier.preflight(host: h, port: p) }.value
+        switch pf {
+        case .known, .scanFailed:
+            return true   // 已知放行；扫描失败交给 ssh 自己报错
+        case .prompt(let info):
+            let decision: HostKeyDecision = await withCheckedContinuation { cont in
+                pendingHostKey = PendingHostKey(info: info) { cont.resume(returning: $0) }
+            }
+            pendingHostKey = nil
+            switch decision {
+            case .cancel: return false
+            case .once: HostKeyVerifier.trust(info, persist: false); return true
+            case .save: HostKeyVerifier.trust(info, persist: true); return true
+            }
+        }
+    }
+
+    // ---------- 文件浏览状态 ----------
+    private var browserStates: [Int: BrowserState] = [:]
+
+    func browserState(for tabId: Int, host: Host) -> BrowserState {
+        if let s = browserStates[tabId] { return s }
+        let s = BrowserState(fs: RemoteFS(host.ssh ?? SSHConnection()))
+        browserStates[tabId] = s
+        return s
+    }
+
+    /// 侧栏文件树状态（按主机缓存，活动栏「文件」用）。
+    // 文件树状态按「标签」分离（同主机的多个会话各自独立）；底层 SSH 连接仍由 ControlMaster 按主机复用。
+    private var fileTreeStates: [Int: FileTreeState] = [:]
+    func fileTreeState(forTab tabId: Int, host: Host) -> FileTreeState {
+        if let s = fileTreeStates[tabId] { return s }
+        let s = FileTreeState(fs: RemoteFS(host.ssh ?? SSHConnection()), revealOnLoad: tabCwd[tabId])
+        fileTreeStates[tabId] = s
+        return s
     }
 
     private func addTab(_ kind: TabKind, title: String, hostId: String?) {
@@ -262,7 +563,19 @@ final class AppModel: ObservableObject {
     private func performCloseTab(_ id: Int) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs.remove(at: idx)
+        // 先清空代理回调，避免 terminate 触发的 processTerminated 再次回调（重入）
+        if let d = termDelegates[id] { d.onTerminated = nil; d.onCwd = nil }
+        // 终止子进程（SIGTERM）并关闭 PTY fd，避免孤儿 ssh/shell 进程与 fd 泄漏
+        if let tv = terminals[id] {
+            tv.process.terminate()
+        }
         terminals.removeValue(forKey: id)
+        termDelegates.removeValue(forKey: id)
+        // 取消该标签未完成的文件操作并释放浏览/树状态（按标签独立，关即释放）
+        browserStates[id]?.cancel()
+        browserStates.removeValue(forKey: id)
+        fileTreeStates.removeValue(forKey: id)
+        tabCwd.removeValue(forKey: id)
         if activeTabId == id {
             activeTabId = tabs.isEmpty ? nil : tabs[min(idx, tabs.count - 1)].id
         }

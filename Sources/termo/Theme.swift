@@ -110,13 +110,12 @@ final class ThemeManager: ObservableObject {
 // 兼容层：Pal 读取当前主题
 enum Pal {
     private static var c: ThemeColors { ThemeManager.shared.colors }
-    private static var a: Double { AppSettings.shared.surfaceAlpha }
 
-    // 窗口表面色：随窗口透明度设置带 alpha（开启模糊/透明时半透明，否则不透明）
-    static var crust: Color { c.crust.opacity(a) }
-    static var mantle: Color { c.mantle.opacity(a) }
-    static var base: Color { c.base.opacity(a) }
-    // 始终不透明的版本，供弹窗等需要可读性的场景使用
+    // 窗口表面色（始终不透明）
+    static var crust: Color { c.crust }
+    static var mantle: Color { c.mantle }
+    static var base: Color { c.base }
+    // solid* 别名，保留供调用点兼容
     static var solidCrust: Color { c.crust }
     static var solidMantle: Color { c.mantle }
     static var solidBase: Color { c.base }

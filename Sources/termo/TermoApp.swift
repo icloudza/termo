@@ -37,13 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct ContentView: View {
     @StateObject private var model = AppModel()
     @ObservedObject private var theme = ThemeManager.shared
-    @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
         HStack(spacing: 0) {
             ActivityBar(model: model)
             Sidebar(model: model)
-            SidebarDivider(width: $model.sidebarWidth)
+            // 文件栏特权：允许拖到更宽（深层目录树）；其它区上限 320
+            SidebarDivider(width: $model.sidebarWidth, maxWidth: model.section == .files ? 600 : 320)
             VStack(spacing: 0) {
                 TabBar(model: model)
                 Workspace(model: model)
@@ -51,14 +51,15 @@ struct ContentView: View {
             }
             .background(Pal.mantle)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Pal.base)
-        .background {
-            if settings.windowEffect != .none {
-                VisualEffectBackground(effect: settings.windowEffect).ignoresSafeArea()
+        .onChange(of: model.section) { sec in
+            // 离开文件栏时，若超过常规上限则收回（宽度是文件栏的特权）
+            if sec != .files, model.sidebarWidth > 320 {
+                withAnimation(.easeOut(duration: 0.2)) { model.sidebarWidth = 320 }
             }
         }
-        .background(WindowConfigurator(effect: settings.windowEffect, opacity: settings.windowOpacity))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Pal.base)
+        .background(WindowConfigurator())
         .ignoresSafeArea()
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .overlay {
@@ -75,49 +76,34 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: model.pendingCloseTabId)
+        .overlay {
+            if let pending = model.pendingHostKey {
+                HostKeyDialog(pending: pending).transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
         }
         .sheet(isPresented: $model.showAddHost) {
             AddHostView(model: model)
         }
+        .sheet(item: $model.editingHost) { host in
+            AddHostView(model: model, editing: host)
+        }
         .onAppear { model.applyStartupIfNeeded() }
-    }
-}
-
-/// 窗口背景模糊/材质层（behindWindow，模糊桌面）。作为 SwiftUI .background 置于内容之后。
-struct VisualEffectBackground: NSViewRepresentable {
-    let effect: WindowEffect
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let v = NSVisualEffectView()
-        v.blendingMode = .behindWindow
-        v.state = .active
-        v.material = material
-        return v
-    }
-    func updateNSView(_ v: NSVisualEffectView, context: Context) {
-        v.material = material
-    }
-    private var material: NSVisualEffectView.Material {
-        effect == .blur ? .fullScreenUI : .underWindowBackground
     }
 }
 
 /// 内容铺满到顶（fullSizeContentView + 透明标题栏），并把系统原生红绿灯整体下移，
 /// 与标签栏对齐（不再单独占用顶部一行）。下移量由 lightsDownOffset 控制。
 struct WindowConfigurator: NSViewRepresentable {
-    var effect: WindowEffect
-    var opacity: Double
-
     func makeNSView(context: Context) -> NSView {
         let v = NSView(frame: .zero)
         context.coordinator.attach(to: v)
         return v
     }
-    func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.applyAppearance(effect: effect, opacity: opacity)
-    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator: NSObject {
@@ -140,16 +126,6 @@ struct WindowConfigurator: NSViewRepresentable {
                 NotificationCenter.default.addObserver(self, selector: #selector(self.reposition), name: NSWindow.didResizeNotification, object: w)
                 NotificationCenter.default.addObserver(self, selector: #selector(self.reposition), name: NSWindow.didBecomeKeyNotification, object: w)
                 self.reposition()
-                self.applyAppearance(effect: AppSettings.shared.windowEffect, opacity: AppSettings.shared.windowOpacity)
-            }
-        }
-
-        func applyAppearance(effect: WindowEffect, opacity: Double) {
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let w = self.window else { return }
-                let transparent = effect != .none || opacity < 0.999
-                w.isOpaque = !transparent
-                w.backgroundColor = transparent ? .clear : .windowBackgroundColor
             }
         }
 

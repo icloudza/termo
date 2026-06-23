@@ -95,27 +95,59 @@ struct ThemedTextEditor: View {
     }
 }
 
-/// 密码输入框。
+/// 密码输入框（带显示/隐藏小眼睛）。
 struct ThemedSecureField: View {
     let placeholder: String
     @Binding var text: String
-    @FocusState private var focused: Bool
+    @State private var reveal = false
+    @FocusState private var focusedField: Field?
     @ObservedObject private var theme = ThemeManager.shared
 
+    private enum Field { case secure, plain }
+    private var isFocused: Bool { focusedField != nil }
+
     var body: some View {
-        SecureField(placeholder, text: $text)
+        HStack(spacing: 6) {
+            // 两个字段都常驻（仅 opacity 切换），切换显示/隐藏时不重建、焦点不丢
+            ZStack {
+                SecureField(placeholder, text: $text)
+                    .focused($focusedField, equals: .secure)
+                    .opacity(reveal ? 0 : 1)
+                    .allowsHitTesting(!reveal)
+                TextField(placeholder, text: $text)
+                    .focused($focusedField, equals: .plain)
+                    .opacity(reveal ? 1 : 0)
+                    .allowsHitTesting(reveal)
+            }
             .textFieldStyle(.plain)
             .font(.system(size: 13))
             .foregroundStyle(Pal.text)
-            .focused($focused)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 8)
-            .background(theme.isDark ? Pal.fill(0.05) : Color.white, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(focused ? Pal.mauve : Pal.fill(0.12), lineWidth: focused ? 1.5 : 1)
-            )
-            .animation(.easeOut(duration: 0.12), value: focused)
+
+            Button {
+                let wasFocused = isFocused
+                reveal.toggle()
+                // 把焦点移到当前可见的那个字段（两者都在视图树里，重设可靠）
+                if wasFocused {
+                    DispatchQueue.main.async { focusedField = reveal ? .plain : .secure }
+                }
+            } label: {
+                Image(systemName: reveal ? "eye.slash" : "eye")
+                    .font(.system(size: 12))
+                    .foregroundStyle(isFocused ? Pal.subtext : Pal.overlay)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(reveal ? "隐藏密码" : "显示密码")
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .background(theme.isDark ? Pal.fill(0.05) : Color.white, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isFocused ? Pal.mauve : Pal.fill(0.12), lineWidth: isFocused ? 1.5 : 1)
+        )
+        .animation(.easeOut(duration: 0.12), value: isFocused)
     }
 }
 
@@ -354,44 +386,5 @@ struct SecondaryButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-}
-
-/// 自定义滑块。
-struct ThemedSlider: View {
-    @Binding var value: Double
-    var range: ClosedRange<Double> = 0...1
-    @ObservedObject private var theme = ThemeManager.shared
-
-    private let thumb: CGFloat = 14
-
-    var body: some View {
-        GeometryReader { g in
-            let w = g.size.width
-            let span = range.upperBound - range.lowerBound
-            let pct = span > 0 ? (value - range.lowerBound) / span : 0
-            let fillW = max(0, min(w, w * pct))
-            let thumbX = max(thumb / 2, min(w - thumb / 2, w * pct))
-
-            ZStack(alignment: .leading) {
-                Capsule().fill(Pal.fill(0.10)).frame(height: 4)
-                Capsule().fill(Pal.mauve).frame(width: fillW, height: 4)
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: thumb, height: thumb)
-                    .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
-                    .position(x: thumbX, y: g.size.height / 2)
-            }
-            .frame(height: g.size.height)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { v in
-                        let p = min(max(0, v.location.x / w), 1)
-                        value = range.lowerBound + p * span
-                    }
-            )
-        }
-        .frame(height: 16)
     }
 }

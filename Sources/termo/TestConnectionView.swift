@@ -62,28 +62,20 @@ struct TestConnectionView: View {
 
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 3) {
-                            ForEach(tester.logs) { log in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text(log.time)
-                                        .font(.system(size: 11, design: .monospaced))
-                                        .foregroundStyle(Pal.overlay)
-                                    Text(log.message)
-                                        .font(.system(size: 11, design: .monospaced))
-                                        .foregroundStyle(log.color)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    Spacer()
-                                }
-                                .id(log.id)
-                            }
+                        VStack(alignment: .leading, spacing: 0) {
+                            // 整段日志渲染为单个 Text，才能跨行自由选中复制
+                            combinedLog
+                                .font(.system(size: 11, design: .monospaced))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Color.clear.frame(height: 1).id("logBottom")
                         }
                         .padding(.horizontal, 20).padding(.bottom, 12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .onChange(of: tester.logs.count) { _ in
-                        if let last = tester.logs.last {
-                            withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                        }
+                        withAnimation { proxy.scrollTo("logBottom", anchor: .bottom) }
                     }
                 }
             }
@@ -109,6 +101,16 @@ struct TestConnectionView: View {
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .onAppear { tester.start(draft: draft) }
         .onDisappear { tester.cancel() }
+    }
+
+    /// 把所有日志拼成单个 Text（保留时间戳与各自配色），以支持跨行自由选中复制。
+    private var combinedLog: Text {
+        tester.logs.reduce(Text(verbatim: "")) { acc, log in
+            let stamp = log.time.isEmpty ? "" : log.time + "  "
+            return acc
+                + Text(verbatim: stamp).foregroundColor(Pal.overlay)
+                + Text(verbatim: log.message + "\n").foregroundColor(log.color)
+        }
     }
 
     private var targetLabel: String {
@@ -220,15 +222,13 @@ final class ConnectionTester: ObservableObject {
         // 构建真实 ssh -v 命令
         let proc = Process()
         var env = ProcessInfo.processInfo.environment
-        let sshArgs = conn.sshArguments(verbose: true) + ["-o", "BatchMode=no", "echo \(probeMarker); uname -a; echo EXIT_$?"]
+        let sshArgs = conn.sshArguments(verbose: true, ephemeralKnownHosts: true) + ["-o", "BatchMode=no", "echo \(probeMarker); uname -a; echo EXIT_$?"]
 
-        if conn.usesPassword, let sshpass = AppModelSSH.sshpassPath() {
-            env["SSHPASS"] = conn.password
-            proc.executableURL = URL(fileURLWithPath: sshpass)
-            proc.arguments = ["-e", "ssh"] + sshArgs
-        } else {
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            proc.arguments = sshArgs
+        // 密码用 OpenSSH 内置 SSH_ASKPASS 喂入（无需 sshpass，且无 TTY 也能工作）
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        proc.arguments = sshArgs
+        if conn.needsAskpass, let askpass = SSHAskpass.envVars(password: conn.password) {
+            for (k, v) in askpass { env[k] = v }
         }
         proc.environment = env
 
@@ -363,16 +363,5 @@ final class ConnectionTester: ObservableObject {
         let fmt = DateFormatter()
         fmt.dateFormat = "HH:mm:ss"
         logs.append(ConnectionLog(time: fmt.string(from: Date()), message: message, color: color))
-    }
-}
-
-/// 供 ConnectionTester 复用的 sshpass 查找（避免依赖 @MainActor AppModel 实例）。
-enum AppModelSSH {
-    static func sshpassPath() -> String? {
-        for p in ["/opt/homebrew/bin/sshpass", "/usr/local/bin/sshpass", "/usr/bin/sshpass"]
-        where FileManager.default.isExecutableFile(atPath: p) {
-            return p
-        }
-        return nil
     }
 }

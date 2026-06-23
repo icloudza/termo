@@ -2,12 +2,12 @@ import SwiftUI
 
 struct SidebarDivider: View {
     @Binding var width: CGFloat
+    var maxWidth: CGFloat = 320          // 文件栏可传更大上限（深层目录树需要空间）
     @ObservedObject private var theme = ThemeManager.shared
     @State private var isHovering = false
     @State private var isDragging = false
     @State private var dragStartWidth: CGFloat = 0
 
-    private let maxWidth: CGFloat = 320
     private let collapseThreshold: CGFloat = 60
     private var active: Bool { isHovering || isDragging }
 

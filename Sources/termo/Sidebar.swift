@@ -40,7 +40,13 @@ struct Sidebar: View {
             if model.section == .hosts {
                 Spacer().frame(height: 8)
                 searchBox
-                ScrollView { hostList }.padding(.top, 6)
+                if filteredHosts.isEmpty {
+                    hostEmptyState
+                } else {
+                    ScrollView { hostList }.padding(.top, 6)
+                }
+            } else if model.section == .files {
+                filesPanel
             } else {
                 Spacer()
                 Text("\(sectionTitle)模块开发中")
@@ -80,6 +86,48 @@ struct Sidebar: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
         .background(Pal.fill(0.05), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 12)
+    }
+
+    /// 活动栏「文件」面板：有活动主机时显示其文件树，否则提示。
+    @ViewBuilder
+    private var filesPanel: some View {
+        if let host = model.activeSessionHost, let tabId = model.activeSessionTabId {
+            SidebarFileTree(state: model.fileTreeState(forTab: tabId, host: host), onOpenFile: { _ in })
+                .id(tabId)
+        } else {
+            VStack(spacing: 10) {
+                Spacer()
+                Image(systemName: "folder").font(.system(size: 26)).foregroundStyle(Pal.overlay)
+                Text("打开一个主机后\n在此浏览文件")
+                    .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                    .multilineTextAlignment(.center)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var hostEmptyState: some View {
+        VStack(spacing: 10) {
+            Spacer().frame(height: 40)
+            Image(systemName: model.hosts.isEmpty ? "server.rack" : "magnifyingglass")
+                .font(.system(size: 26)).foregroundStyle(Pal.overlay)
+            Text(model.hosts.isEmpty ? "还没有主机" : "无匹配主机")
+                .font(.system(size: 13)).foregroundStyle(Pal.subtext)
+            if model.hosts.isEmpty {
+                Button { model.showAddHost = true } label: {
+                    Text("添加主机").font(.system(size: 12)).foregroundStyle(Pal.mauve)
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(Pal.mauve.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, 12)
     }
 
@@ -133,7 +181,7 @@ struct HostRow: View {
                 Circle().fill(host.statusColor).frame(width: 7, height: 7)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(host.name).font(.system(size: 13)).foregroundStyle(Pal.text)
-                    Text(host.addr).font(.system(size: 11)).foregroundStyle(Pal.subtext)
+                    Text(host.ipOrHost).font(.system(size: 11)).foregroundStyle(Pal.subtext)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -147,5 +195,12 @@ struct HostRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
+        .contextMenu {
+            Button("打开终端") { model.openHostTerminal(host) }
+            Button("打开文件") { model.openHostFiles(host) }
+            Button("编辑主机") { model.beginEditHost(host) }
+            Divider()
+            Button("删除主机", role: .destructive) { model.deleteHost(host.id) }
+        }
     }
 }

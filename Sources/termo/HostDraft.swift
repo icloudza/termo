@@ -51,18 +51,9 @@ enum SSHOptions {
     ]
 }
 
-enum AuthMethod: String, CaseIterable, Hashable {
+enum AuthMethod: String, CaseIterable, Hashable, Codable {
     case password = "密码"
     case key = "密钥"
-    case credential = "登录凭证"
-    case interactive = "交互认证"
-    case askEveryTime = "每次询问"
-}
-
-enum X11CookieMode: String, CaseIterable, Hashable {
-    case auto = "自动"
-    case disable = "禁用"
-    case manual = "手动输入"
 }
 
 enum HostFormSection: String, CaseIterable, Hashable {
@@ -95,6 +86,7 @@ final class HostDraft: ObservableObject {
     @Published var authMethod: AuthMethod = .password
     @Published var user = "root"
     @Published var password = ""
+    @Published var keyPath = ""        // 私钥文件路径（验证方式为「密钥」时使用）
     @Published var notes = ""
 
     // 连接设置
@@ -110,9 +102,6 @@ final class HostDraft: ObservableObject {
     @Published var proxyURL = ""
 
     // 高级设置
-    @Published var x11Forwarding = false
-    @Published var x11CookieMode: X11CookieMode = .auto
-    @Published var x11Cookie = ""
     @Published var encoding = ""
     @Published var hostKeyAlgos = ""
     @Published var ciphers = ""
@@ -131,6 +120,31 @@ final class HostDraft: ObservableObject {
         return g.isEmpty ? "未分组" : g
     }
 
+    /// 从已有主机回填表单（编辑模式）。
+    func load(from host: Host) {
+        name = host.name
+        group = host.group
+        creatingGroup = false
+        notes = host.notes
+        guard let s = host.ssh else { return }
+        user = s.user
+        address = s.host
+        port = String(s.port)
+        authMethod = s.authMethod
+        password = s.password
+        keyPath = s.keyPath
+        encoding = s.encoding
+        hostKeyAlgos = s.hostKeyAlgos
+        ciphers = s.ciphers
+        kexAlgos = s.kexAlgos
+        proxyURL = s.proxyURL
+        disableProxy = s.disableProxy
+        timeout = String(s.timeoutMs)
+        heartbeat = String(s.heartbeatMs)
+        initialCommand = s.initialCommand
+        defaultPath = s.defaultPath
+    }
+
     func buildConnection() -> SSHConnection {
         SSHConnection(
             user: user.trimmingCharacters(in: .whitespaces).isEmpty ? "root" : user.trimmingCharacters(in: .whitespaces),
@@ -138,6 +152,7 @@ final class HostDraft: ObservableObject {
             port: Int(port) ?? 22,
             authMethod: authMethod,
             password: password,
+            keyPath: keyPath.trimmingCharacters(in: .whitespaces),
             encoding: encoding,
             hostKeyAlgos: hostKeyAlgos,
             ciphers: ciphers,

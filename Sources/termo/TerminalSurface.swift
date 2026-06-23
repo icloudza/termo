@@ -13,9 +13,9 @@ struct TerminalSurface: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-        DispatchQueue.main.async {
-            nsView.window?.makeFirstResponder(nsView)
-        }
+        // 不在这里抢焦点：updateNSView 会随任何重绘（主题/设置/hover）频繁触发，
+        // 在此 makeFirstResponder 会在用户于侧栏搜索框等处打字时把键盘焦点抢回终端。
+        // 首次出现与切到终端标签的聚焦由 makeNSView 负责（content 用 .id(tab.id)，切标签会重建）。
     }
 
     private static func buildContextMenu() -> NSMenu {
@@ -47,6 +47,32 @@ struct TerminalSurface: NSViewRepresentable {
         menu.addItem(search)
 
         return menu
+    }
+}
+
+/// 监听终端的 OSC 7「当前目录变更」，把远端 cwd 回传给 AppModel（用于侧栏文件树定位）。
+final class TerminalSessionDelegate: NSObject, LocalProcessTerminalViewDelegate {
+    var onCwd: ((String) -> Void)?
+    var onTerminated: (() -> Void)?
+
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
+    func processTerminated(source: TerminalView, exitCode: Int32?) { onTerminated?() }
+
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        guard let p = Self.parsePath(directory) else { return }
+        onCwd?(p)
+    }
+
+    /// 把 OSC 7 的 `file://host/path` 解析为绝对路径。
+    static func parsePath(_ dir: String?) -> String? {
+        guard let dir else { return nil }
+        if dir.hasPrefix("file://") {
+            let after = dir.dropFirst("file://".count)   // "host/path" 或 "/path"
+            if let slash = after.firstIndex(of: "/") { return String(after[slash...]) }
+            return nil
+        }
+        return dir.hasPrefix("/") ? dir : nil
     }
 }
 

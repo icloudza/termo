@@ -27,8 +27,12 @@ struct Workspace: View {
                     HostOverview(host: host, model: model)
                 }
             case .files:
-                Text("文件浏览（SFTP）开发中")
-                    .font(.system(size: 13)).foregroundStyle(Pal.overlay)
+                if let host = model.host(tab.hostId) {
+                    FileBrowser(state: model.browserState(for: tab.id, host: host))
+                        .id(tab.id)
+                } else {
+                    Text("无主机").font(.system(size: 13)).foregroundStyle(Pal.overlay)
+                }
             }
         } else {
             WelcomeView(model: model)
