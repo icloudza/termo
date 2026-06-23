@@ -13,7 +13,11 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
-            path: "Sources/termo"
+            path: "Sources/termo",
+            resources: [
+                .copy("Resources/AppIcon.icns"),
+                .copy("Resources/AppIcon.png"),
+            ]
         ),
     ]
 )

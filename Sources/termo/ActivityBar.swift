@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ActivityBar: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var theme = ThemeManager.shared
     @State private var isFullScreen = false
 
     private let items: [(String, Section)] = [
@@ -18,7 +19,7 @@ struct ActivityBar: View {
                 item(symbol, section)
             }
             Spacer()
-            item("gearshape", .settings)
+            settingsButton
         }
         .padding(.top, isFullScreen ? 12 : 52)
         .padding(.bottom, 12)
@@ -33,11 +34,35 @@ struct ActivityBar: View {
         }
     }
 
+    private var settingsButton: some View {
+        Button {
+            model.showSettings = true
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 16))
+                .foregroundStyle(model.showSettings ? Pal.mauve : Pal.overlay)
+                .frame(width: 38, height: 38)
+                .background(
+                    model.showSettings ? Pal.mauve.opacity(0.16) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 9)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     @ViewBuilder
     private func item(_ symbol: String, _ section: Section) -> some View {
         let selected = model.section == section
         Button {
-            model.section = section
+            if model.section == section && model.sidebarWidth >= 10 {
+                withAnimation(.easeOut(duration: 0.2)) { model.sidebarWidth = 0 }
+            } else {
+                model.section = section
+                if model.sidebarWidth < 10 {
+                    withAnimation(.easeOut(duration: 0.2)) { model.sidebarWidth = 224 }
+                }
+            }
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 16))

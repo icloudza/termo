@@ -1,20 +1,142 @@
 import AppKit
 import SwiftUI
 
-// Catppuccin Mocha 调色板（深色）。浅色主题后续再加。
+enum AppearanceMode: String, CaseIterable {
+    case system = "跟随系统"
+    case dark = "深色"
+    case light = "浅色"
+}
+
+struct ThemeColors {
+    let crust: Color
+    let mantle: Color
+    let base: Color
+    let surface0: Color
+    let text: Color
+    let textBright: Color
+    let subtext: Color
+    let overlay: Color
+    let mauve: Color
+    let green: Color
+    let yellow: Color
+    let red: Color
+
+    // 终端颜色
+    let termBg: UInt32
+    let termFg: UInt32
+    let termCaret: UInt32
+    let termSelection: UInt32
+}
+
+extension ThemeColors {
+    // VSCode Dark+ 风格：中性灰调，侧栏比编辑区稍亮
+    static let dark = ThemeColors(
+        crust: Color(hex: 0x333333),    // 活动栏
+        mantle: Color(hex: 0x252526),   // 侧栏 / 标签栏
+        base: Color(hex: 0x1e1e1e),     // 工作区 / 编辑器
+        surface0: Color(hex: 0x37373d),
+        text: Color(hex: 0xcccccc),
+        textBright: Color(hex: 0xffffff),
+        subtext: Color(hex: 0x9d9d9d),
+        overlay: Color(hex: 0x7a7a7a),
+        mauve: Color(hex: 0x569cd6),    // VSCode 蓝作强调色
+        green: Color(hex: 0x4ec9b0),
+        yellow: Color(hex: 0xd7ba7d),
+        red: Color(hex: 0xf14c4c),
+        termBg: 0x1e1e1e, termFg: 0xcccccc,
+        termCaret: 0xaeafad, termSelection: 0x264f78
+    )
+
+    // 清新浅色风格
+    static let light = ThemeColors(
+        crust: Color(hex: 0xeceef2),
+        mantle: Color(hex: 0xf5f6f8),
+        base: Color(hex: 0xffffff),
+        surface0: Color(hex: 0xe6e9f0),
+        text: Color(hex: 0x2e3440),
+        textBright: Color(hex: 0x1a1d24),
+        subtext: Color(hex: 0x6b7280),
+        overlay: Color(hex: 0x9aa0ac),
+        mauve: Color(hex: 0x3b82f6),    // 清新亮蓝
+        green: Color(hex: 0x10b981),
+        yellow: Color(hex: 0xf59e0b),
+        red: Color(hex: 0xef4444),
+        termBg: 0xffffff, termFg: 0x2e3440,
+        termCaret: 0x3b82f6, termSelection: 0xbfdbfe
+    )
+}
+
+final class ThemeManager: ObservableObject {
+    static let shared = ThemeManager()
+
+    @Published var mode: AppearanceMode {
+        didSet {
+            UserDefaults.standard.set(mode.rawValue, forKey: "appearanceMode")
+            update()
+        }
+    }
+
+    @Published private(set) var colors: ThemeColors = .dark
+    @Published private(set) var isDark: Bool = true
+
+    private var systemObserver: NSObjectProtocol?
+
+    private init() {
+        let saved = UserDefaults.standard.string(forKey: "appearanceMode") ?? "跟随系统"
+        self.mode = AppearanceMode(rawValue: saved) ?? .system
+        update()
+
+        systemObserver = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            if self?.mode == .system { self?.update() }
+        }
+    }
+
+    private func update() {
+        switch mode {
+        case .dark:
+            isDark = true
+        case .light:
+            isDark = false
+        case .system:
+            isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        }
+        colors = isDark ? .dark : .light
+    }
+}
+
+// 兼容层：Pal 读取当前主题
 enum Pal {
-    static let crust = Color(hex: 0x11111b) // 活动栏
-    static let mantle = Color(hex: 0x181825) // 侧栏 / 标签栏
-    static let base = Color(hex: 0x1e1e2e) // 工作区
-    static let surface0 = Color(hex: 0x313244)
-    static let text = Color(hex: 0xcdd6f4)
-    static let textBright = Color(hex: 0xe6eafc)
-    static let subtext = Color(hex: 0xa6adc8)
-    static let overlay = Color(hex: 0x7f849c)
-    static let mauve = Color(hex: 0xcba6f7) // 强调色
-    static let green = Color(hex: 0xa6e3a1)
-    static let yellow = Color(hex: 0xf9e2af)
-    static let red = Color(hex: 0xf38ba8)
+    private static var c: ThemeColors { ThemeManager.shared.colors }
+    private static var a: Double { AppSettings.shared.surfaceAlpha }
+
+    // 窗口表面色：随窗口透明度设置带 alpha（开启模糊/透明时半透明，否则不透明）
+    static var crust: Color { c.crust.opacity(a) }
+    static var mantle: Color { c.mantle.opacity(a) }
+    static var base: Color { c.base.opacity(a) }
+    // 始终不透明的版本，供弹窗等需要可读性的场景使用
+    static var solidCrust: Color { c.crust }
+    static var solidMantle: Color { c.mantle }
+    static var solidBase: Color { c.base }
+    static var surface0: Color { c.surface0 }
+    static var text: Color { c.text }
+    static var textBright: Color { c.textBright }
+    static var subtext: Color { c.subtext }
+    static var overlay: Color { c.overlay }
+    static var mauve: Color { c.mauve }
+    static var green: Color { c.green }
+    static var yellow: Color { c.yellow }
+    static var red: Color { c.red }
+
+    /// 自适应叠加色：深色主题用白色叠加，浅色主题用黑色叠加。
+    /// 用于 hover / 选中 / 卡片 / 边框等半透明层，保证两种主题下都可见。
+    static func fill(_ opacity: Double) -> Color {
+        ThemeManager.shared.isDark
+            ? Color.white.opacity(opacity)
+            : Color.black.opacity(opacity * 1.4)
+    }
 }
 
 extension Color {

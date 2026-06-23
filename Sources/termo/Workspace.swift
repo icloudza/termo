@@ -2,6 +2,7 @@ import SwiftUI
 
 struct Workspace: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         ZStack {
@@ -20,7 +21,7 @@ struct Workspace: View {
             case .terminal:
                 TerminalSurface(terminal: model.terminalView(for: tab.id))
                     .id(tab.id)
-                    .padding(8)
+                    .padding(10)
             case .overview:
                 if let host = model.host(tab.hostId) {
                     HostOverview(host: host, model: model)
@@ -37,6 +38,7 @@ struct Workspace: View {
 
 struct WelcomeView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         VStack(spacing: 18) {

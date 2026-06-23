@@ -202,7 +202,7 @@ struct TabStrip<Content: View>: View {
                 let maxX = max(0, track - thumbW)
                 let x = metrics.maxScroll > 0 ? metrics.offsetX / metrics.maxScroll * maxX : 0
                 Capsule()
-                    .fill(Color.white.opacity(hovering ? 0.45 : 0.26))
+                    .fill(Pal.fill(hovering ? 0.32 : 0.18))
                     .frame(width: thumbW, height: 4)
                     .frame(width: thumbW, height: g.size.height)
                     .contentShape(Rectangle())

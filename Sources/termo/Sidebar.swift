@@ -2,6 +2,7 @@ import SwiftUI
 
 struct Sidebar: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var theme = ThemeManager.shared
     @FocusState private var searchFocused: Bool
 
     private var filteredHosts: [Host] {
@@ -24,7 +25,9 @@ struct Sidebar: View {
                 Text(sectionTitle).font(.system(size: 15, weight: .medium)).foregroundStyle(Pal.text)
                 Spacer()
                 if model.section == .hosts {
-                    Button {} label: {
+                    Button {
+                        model.showAddHost = true
+                    } label: {
                         Image(systemName: "plus").font(.system(size: 14)).foregroundStyle(Pal.mauve)
                     }
                     .buttonStyle(.plain)
@@ -47,9 +50,11 @@ struct Sidebar: View {
             Spacer(minLength: 0)
             localTerminalButton
         }
-        .frame(width: 224)
+        .frame(width: max(224, model.sidebarWidth), alignment: .leading)
         .frame(maxHeight: .infinity)
         .background(Pal.mantle)
+        .frame(width: model.sidebarWidth, alignment: .leading)
+        .clipped()
         .onChange(of: model.activeTabId) { _ in searchFocused = false }
     }
 
@@ -74,7 +79,7 @@ struct Sidebar: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+        .background(Pal.fill(0.05), in: RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal, 12)
     }
 
@@ -116,6 +121,7 @@ struct Sidebar: View {
 struct HostRow: View {
     let host: Host
     @ObservedObject var model: AppModel
+    @ObservedObject private var theme = ThemeManager.shared
     @State private var hover = false
 
     var body: some View {
@@ -134,7 +140,7 @@ struct HostRow: View {
             }
             .padding(.horizontal, 8).padding(.vertical, 7)
             .background(
-                active ? Pal.mauve.opacity(0.15) : (hover ? Color.white.opacity(0.05) : Color.clear),
+                active ? Pal.mauve.opacity(0.15) : (hover ? Pal.fill(0.05) : Color.clear),
                 in: RoundedRectangle(cornerRadius: 8)
             )
             .contentShape(Rectangle())

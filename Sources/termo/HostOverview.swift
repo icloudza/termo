@@ -3,6 +3,7 @@ import SwiftUI
 struct HostOverview: View {
     let host: Host
     @ObservedObject var model: AppModel
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         ScrollView {
@@ -57,12 +58,12 @@ struct HostOverview: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(
-                primary ? Pal.mauve.opacity(0.10) : Color.white.opacity(0.03),
+                primary ? Pal.mauve.opacity(0.10) : Pal.fill(0.03),
                 in: RoundedRectangle(cornerRadius: 10)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(primary ? Pal.mauve.opacity(0.25) : Color.white.opacity(0.07), lineWidth: 1)
+                    .stroke(primary ? Pal.mauve.opacity(0.25) : Pal.fill(0.07), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }

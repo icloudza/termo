@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TabBar: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
@@ -36,6 +37,7 @@ struct TabBar: View {
 struct TabChip: View {
     let tab: TabItem
     @ObservedObject var model: AppModel
+    @ObservedObject private var theme = ThemeManager.shared
     @State private var hover = false
 
     private var symbol: String {
@@ -61,7 +63,7 @@ struct TabChip: View {
                     .foregroundStyle(Pal.overlay)
                     .frame(width: 16, height: 16)
                     .background(
-                        hover ? Color.white.opacity(0.1) : Color.clear,
+                        hover ? Pal.fill(0.1) : Color.clear,
                         in: RoundedRectangle(cornerRadius: 4)
                     )
             }
@@ -70,7 +72,7 @@ struct TabChip: View {
         }
         .padding(.leading, 10).padding(.trailing, 6).padding(.vertical, 5)
         .background(
-            active ? Color.white.opacity(0.08) : (hover ? Color.white.opacity(0.04) : Color.clear),
+            active ? Pal.fill(0.08) : (hover ? Pal.fill(0.04) : Color.clear),
             in: RoundedRectangle(cornerRadius: 7)
         )
         .contentShape(Rectangle())

@@ -1,3 +1,5 @@
 .build/
 .swiftpm/
 .DS_Store
+termo.app/
+.spec-workflow/
