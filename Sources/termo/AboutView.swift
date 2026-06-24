@@ -14,7 +14,7 @@ struct AboutContent: View {
                     .frame(width: 52, height: 52)
                     .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("termo").font(.system(size: 18, weight: .semibold)).foregroundStyle(Pal.text)
+                    Text("Termo").font(.system(size: 18, weight: .semibold)).foregroundStyle(Pal.text)
                     Text("版本 0.1.0 (开发版)")
                         .font(.system(size: 12)).foregroundStyle(Pal.subtext)
                 }

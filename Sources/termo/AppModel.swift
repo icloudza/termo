@@ -226,9 +226,29 @@ final class AppModel: ObservableObject {
     }
 
     // ---------- 在线状态检测 ----------
-    /// 对所有主机做一次轻量 TCP 可达性检测（启动/刷新时调用）。
+    // 探测并发上限：最多 6 个并发 TCP 探测，控制线程/CPU 占用（大量主机时不会线程爆炸）。
+    private static let reachQueue = DispatchQueue(label: "termo.reach", attributes: .concurrent)
+    private static let reachLimit = DispatchSemaphore(value: 6)
+    private var statusTimer: Timer?
+
+    /// 对所有主机做一次轻量 TCP 可达性检测（启动/刷新/定时调用）。
     func refreshAllStatuses() {
         for host in hosts { checkReachability(host) }
+    }
+
+    /// 定时扫描在线状态/延迟；仅在 App 处于活动状态时运行（失焦即暂停，省 CPU）。
+    private func startStatusTimer() {
+        guard statusTimer == nil else { return }
+        let t = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshAllStatuses() }
+        }
+        t.tolerance = 5   // 允许系统合并定时器触发，进一步省电
+        statusTimer = t
+    }
+
+    private func stopStatusTimer() {
+        statusTimer?.invalidate()
+        statusTimer = nil
     }
 
     /// 轻量在线/延迟探测（不登录）：应用层测真实 RTT，成功=在线+延迟，失败/超时=离线。
@@ -243,7 +263,9 @@ final class AppModel: ObservableObject {
         } else {
             return
         }
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        Self.reachQueue.async { [weak self] in
+            Self.reachLimit.wait()
+            defer { Self.reachLimit.signal() }
             // RDP 端口无 SSH banner，只做纯 TCP 连通性；SSH 仍走带 1-RTT 测量的探测。
             let (ok, ms) = isRDP ? Self.tcpLatency(host: h, port: p) : Self.sshLatency(host: h, port: p)
             Task { @MainActor in self?.setStatus(id, ok ? .online : .offline, latencyMs: ms) }
@@ -379,6 +401,16 @@ final class AppModel: ObservableObject {
                 self?.applyThemeToTerminals()
                 self?.applyTerminalSettings()
             }
+        }
+
+        // 定时扫描在线状态/延迟：App 活动时每 30s 一次，失焦暂停（省 CPU/电）
+        startStatusTimer()
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.startStatusTimer(); self?.refreshAllStatuses() }
+        }
+        nc.addObserver(forName: NSApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.stopStatusTimer() }
         }
     }
 

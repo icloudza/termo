@@ -47,7 +47,12 @@ struct TestConnectionView: View {
         .frame(width: 520, height: 600)
         .background(Pal.solidBase)
         .preferredColorScheme(theme.isDark ? .dark : .light)
-        .onAppear { tester.start(conn: draft.buildConnection()) }
+        .onAppear {
+            // 用禁用动画的事务填充初始内容，避免内容在 sheet 呈现动画期间「从上滑入」
+            var tx = Transaction()
+            tx.disablesAnimations = true
+            withTransaction(tx) { tester.start(conn: draft.buildConnection()) }
+        }
         .onDisappear { tester.cancel() }
     }
 
@@ -101,7 +106,8 @@ struct ConnectionProgressView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .onChange(of: tester.logs.count) { _ in
-                        withAnimation { proxy.scrollTo("logBottom", anchor: .bottom) }
+                        // 不加 withAnimation：避免日志增长触发的动画牵动整块内容布局
+                        proxy.scrollTo("logBottom", anchor: .bottom)
                     }
                 }
             }
@@ -203,7 +209,9 @@ struct ConnectingDialog: View {
             guard !Task.isCancelled else { return }
             if ok {
                 verifying = false
-                tester.start(conn: host.ssh ?? SSHConnection())
+                var tx = Transaction()
+                tx.disablesAnimations = true
+                withTransaction(tx) { tester.start(conn: host.ssh ?? SSHConnection()) }
             } else {
                 onCancel()
             }

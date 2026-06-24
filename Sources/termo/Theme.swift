@@ -138,6 +138,13 @@ enum Pal {
     }
 }
 
+/// 延迟着色：低绿、中黄、高红（主机概览与主机列表共用）。
+func latencyColor(_ ms: Int) -> Color {
+    if ms < 80 { return Pal.green }
+    if ms < 1000 { return Pal.yellow }
+    return Pal.red
+}
+
 extension Color {
     init(hex: UInt32) {
         self.init(

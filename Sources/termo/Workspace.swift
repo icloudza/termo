@@ -66,7 +66,7 @@ struct WelcomeView: View {
                 .frame(width: 64, height: 64)
                 .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
             VStack(spacing: 6) {
-                Text("termo").font(.system(size: 18, weight: .medium)).foregroundStyle(Pal.text)
+                Text("Termo").font(.system(size: 18, weight: .medium)).foregroundStyle(Pal.text)
                 Text("从左侧选择一台主机，或打开一个本地终端开始。")
                     .font(.system(size: 13)).foregroundStyle(Pal.overlay)
             }

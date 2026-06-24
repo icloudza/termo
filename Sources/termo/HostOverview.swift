@@ -82,13 +82,6 @@ struct HostOverview: View {
         }
     }
 
-    /// 延迟着色：低绿、中黄、高红。
-    private func latencyColor(_ ms: Int) -> Color {
-        if ms < 80 { return Pal.green }
-        if ms < 1000 { return Pal.yellow }
-        return Pal.red
-    }
-
     private var statusBadge: some View {
         let (label, fg, bg): (String, Color, Color) = {
             switch host.status {

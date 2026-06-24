@@ -8,7 +8,8 @@ struct TermoApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 480, minHeight: 300)
+                // 三栏布局（活动栏 + 主机侧栏 + 工作区）+ 设置/新增主机弹窗(≈720宽) 的合理下限
+                .frame(minWidth: 860, minHeight: 560)
         }
         .windowStyle(.hiddenTitleBar)
     }
@@ -34,11 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(appItem)
         let appMenu = NSMenu()
         appItem.submenu = appMenu
-        let about = NSMenuItem(title: "关于 termo", action: #selector(showAbout), keyEquivalent: "")
+        let about = NSMenuItem(title: "关于 Termo", action: #selector(showAbout), keyEquivalent: "")
         about.target = self
         appMenu.addItem(about)
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "退出 termo",
+        appMenu.addItem(NSMenuItem(title: "退出 Termo",
                                    action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         // 编辑菜单（复制/粘贴/撤销等依赖这些菜单项的快捷键注册）
@@ -66,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
                 styleMask: [.titled, .closable],
                 backing: .buffered, defer: false)
-            w.title = "关于 termo"
+            w.title = "关于 Termo"
             w.isReleasedWhenClosed = false
             w.contentView = hosting
             w.setContentSize(NSSize(width: 420, height: hosting.fittingSize.height))
@@ -118,37 +119,45 @@ struct ContentView: View {
         .background(WindowConfigurator())
         .ignoresSafeArea()
         .preferredColorScheme(theme.isDark ? .dark : .light)
+        // 注意：动画必须局限在各自 overlay 的 ZStack 内，不能加在链上——否则会泄漏到
+        // 下方的 .sheet 子树，导致 sheet（如测试连接弹窗）内容出现时被错误动画。
         .overlay {
-            if model.pendingCloseTabId != nil {
-                ConfirmDialog(
-                    title: model.pendingCloseDialogTitle,
-                    message: model.pendingCloseDialogMessage,
-                    confirmTitle: "关闭",
-                    destructive: true,
-                    onConfirm: { model.confirmPendingClose() },
-                    onCancel: { model.cancelPendingClose() }
-                )
-                .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.15), value: model.pendingCloseTabId)
-        .overlay {
-            if let h = model.connectingHost {
-                ConnectingDialog(host: h,
-                                 verify: { await model.verifyHostKey(h) },
-                                 onConnected: { model.finishConnecting() },
-                                 onCancel: { model.cancelConnecting() })
+            ZStack {
+                if model.pendingCloseTabId != nil {
+                    ConfirmDialog(
+                        title: model.pendingCloseDialogTitle,
+                        message: model.pendingCloseDialogMessage,
+                        confirmTitle: "关闭",
+                        destructive: true,
+                        onConfirm: { model.confirmPendingClose() },
+                        onCancel: { model.cancelPendingClose() }
+                    )
                     .transition(.opacity)
+                }
             }
+            .animation(.easeOut(duration: 0.15), value: model.pendingCloseTabId)
         }
-        .animation(.easeOut(duration: 0.25), value: model.connectingHost?.id)
+        .overlay {
+            ZStack {
+                if let h = model.connectingHost {
+                    ConnectingDialog(host: h,
+                                     verify: { await model.verifyHostKey(h) },
+                                     onConnected: { model.finishConnecting() },
+                                     onCancel: { model.cancelConnecting() })
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.25), value: model.connectingHost?.id)
+        }
         // 指纹验证弹窗叠在连接弹窗之上（未知主机首次连接时需要用户核对）
         .overlay {
-            if let pending = model.pendingHostKey {
-                HostKeyDialog(pending: pending).transition(.opacity)
+            ZStack {
+                if let pending = model.pendingHostKey {
+                    HostKeyDialog(pending: pending).transition(.opacity)
+                }
             }
+            .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
         }
-        .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
         }

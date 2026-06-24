@@ -239,6 +239,10 @@ struct HostRow: View {
                         .lineLimit(1)
                 }
                 Spacer()
+                // 延迟统一右对齐到行末，多主机竖排对齐
+                if host.status == .online, let ms = host.latencyMs {
+                    Text("\(ms) ms").font(.system(size: 11)).foregroundStyle(latencyColor(ms))
+                }
             }
             .padding(.horizontal, 8).padding(.vertical, 7)
             .background(

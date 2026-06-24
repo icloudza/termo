@@ -7,6 +7,10 @@ let package = Package(
     // 与 App 自身的中文界面一致（否则在中文系统上这些会回退成英文）。
     defaultLocalization: "zh-Hans",
     platforms: [.macOS(.v13)],
+    // 可执行产品名为大写 Termo → 构建出的 .app 与 Dock 名称为「Termo」（内部目标仍叫 termo）
+    products: [
+        .executable(name: "Termo", targets: ["termo"]),
+    ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0"),
         // 本地空壳覆盖 CodeEdit 传递依赖的 SwiftLintPlugin，绕过其构建插件在沙盒中崩溃
