@@ -28,7 +28,21 @@ struct Workspace: View {
                 }
             case .files:
                 if let host = model.host(tab.hostId) {
-                    FileBrowser(state: model.browserState(for: tab.id, host: host))
+                    FileBrowser(state: model.browserState(for: tab.id, host: host),
+                                onOpenFile: { model.openFile($0, host: host) })
+                        .id(tab.id)
+                } else {
+                    Text("无主机").font(.system(size: 13)).foregroundStyle(Pal.overlay)
+                }
+            case .editor:
+                if let st = model.editorState(for: tab.id) {
+                    FileViewerView(state: st, model: model).id(tab.id)
+                } else {
+                    Text("无法打开文件").font(.system(size: 13)).foregroundStyle(Pal.overlay)
+                }
+            case .rdp:
+                if let host = model.host(tab.hostId) {
+                    RDPSessionView(session: model.rdpSession(for: tab.id, host: host))
                         .id(tab.id)
                 } else {
                     Text("无主机").font(.system(size: 13)).foregroundStyle(Pal.overlay)

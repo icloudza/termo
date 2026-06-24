@@ -11,6 +11,8 @@ struct PendingHostKey: Identifiable {
     let respond: (HostKeyDecision) -> Void
 }
 
+
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var section: Section = .hosts
@@ -22,6 +24,8 @@ final class AppModel: ObservableObject {
     @Published var showSettings = false
     @Published var showAddHost = false
     @Published var editingHost: Host? = nil   // 非 nil 时以编辑模式打开主机表单
+    @Published var showAddRDPHost = false
+    @Published var editingRDPHost: Host? = nil   // 非 nil 时以编辑模式打开 RDP 主机表单
     @Published var pendingHostKey: PendingHostKey? = nil   // 首次连接待验证的主机指纹
     @Published var connectingHost: Host? = nil   // 正在连接的主机（展示连接进度弹窗）
 
@@ -78,6 +82,46 @@ final class AppModel: ObservableObject {
             port: conn.port,
             ssh: conn,
             notes: draft.notes.trimmingCharacters(in: .whitespaces)
+        )
+        HostStore.saveHosts(hosts)
+        checkReachability(hosts[idx])
+    }
+
+    /// 新增一台 RDP（Windows 远程桌面）主机。
+    func addRDPHost(name: String, group: String, notes: String, rdp: RDPConnection) {
+        let id = "host-\(UUID().uuidString)"
+        let newHost = Host(
+            id: id,
+            name: name,
+            addr: "\(rdp.user)@\(rdp.host)",
+            group: group,
+            status: .unknown,
+            os: "Windows",
+            port: rdp.port,
+            ssh: nil,
+            notes: notes,
+            rdp: rdp
+        )
+        hosts.append(newHost)
+        HostStore.saveHosts(hosts)
+        checkReachability(newHost)
+    }
+
+    /// 用编辑后的表单覆盖已有 RDP 主机（保持 id / 状态不变）。
+    func updateRDPHost(id: String, name: String, group: String, notes: String, rdp: RDPConnection) {
+        guard let idx = hosts.firstIndex(where: { $0.id == id }) else { return }
+        let old = hosts[idx]
+        hosts[idx] = Host(
+            id: id,
+            name: name,
+            addr: "\(rdp.user)@\(rdp.host)",
+            group: group,
+            status: old.status,
+            os: old.os,
+            port: rdp.port,
+            ssh: nil,
+            notes: notes,
+            rdp: rdp
         )
         HostStore.saveHosts(hosts)
         checkReachability(hosts[idx])
@@ -187,50 +231,118 @@ final class AppModel: ObservableObject {
         for host in hosts { checkReachability(host) }
     }
 
-    /// 轻量 TCP 连接探测（不登录）：实测握手 RTT，成功=在线+延迟，失败/超时=离线。
+    /// 轻量在线/延迟探测（不登录）：应用层测真实 RTT，成功=在线+延迟，失败/超时=离线。
     func checkReachability(_ host: Host) {
-        guard let ssh = host.ssh, !ssh.host.isEmpty else { return }
         let id = host.id
-        let h = ssh.host
-        let p = ssh.port
+        let isRDP = host.isRDP
+        let h: String, p: Int
+        if let ssh = host.ssh, !ssh.host.isEmpty {
+            h = ssh.host; p = ssh.port
+        } else if let rdp = host.rdp, !rdp.host.isEmpty {
+            h = rdp.host; p = rdp.port
+        } else {
+            return
+        }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let (ok, ms) = Self.tcpPing(host: h, port: p, timeoutSec: 5)
-            Task { @MainActor in self?.setStatus(id, ok ? .online : .offline, latencyMs: ok ? ms : nil) }
+            // RDP 端口无 SSH banner，只做纯 TCP 连通性；SSH 仍走带 1-RTT 测量的探测。
+            let (ok, ms) = isRDP ? Self.tcpLatency(host: h, port: p) : Self.sshLatency(host: h, port: p)
+            Task { @MainActor in self?.setStatus(id, ok ? .online : .offline, latencyMs: ms) }
         }
     }
 
-    /// 用非阻塞 socket connect 实测 TCP 握手耗时（毫秒）。返回 (是否连通, 延迟ms)。
-    private static func tcpPing(host: String, port: Int, timeoutSec: Double) -> (Bool, Int) {
+    /// 纯 TCP 连通性探测（用于 RDP，没有可读 banner）：连上即在线，握手耗时作粗略延迟。
+    private nonisolated static func tcpLatency(host: String, port: Int) -> (Bool, Int?) {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_STREAM
         hints.ai_protocol = IPPROTO_TCP
         var res: UnsafeMutablePointer<addrinfo>?
         guard getaddrinfo(host, String(port), &hints, &res) == 0, let info = res, let addr = info.pointee.ai_addr else {
-            return (false, 0)
+            return (false, nil)
+        }
+        defer { freeaddrinfo(res) }
+        let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
+        if fd < 0 { return (false, nil) }
+        defer { close(fd) }
+        let flags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        let t = DispatchTime.now()
+        if connect(fd, addr, info.pointee.ai_addrlen) != 0 {
+            if errno != EINPROGRESS { return (false, nil) }
+            if !waitFD(fd, POLLOUT, 5) { return (false, nil) }
+            var soErr: Int32 = 0
+            var len = socklen_t(MemoryLayout<Int32>.size)
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &len)
+            if soErr != 0 { return (false, nil) }
+        }
+        let ms = Int(Double(DispatchTime.now().uptimeNanoseconds - t.uptimeNanoseconds) / 1_000_000)
+        return (true, ms)
+    }
+
+    /// 应用层延迟测量：TCP 连到 SSH 端口判断在线，并在隧道建立后测一次纯 1-RTT。
+    /// 注意纯 TCP/ICMP 握手在 TUN 模式代理下会被本地拦截（显示 ~2ms 假值），
+    /// 故改为「收 banner（含代理建隧道开销，丢弃）→ 发版本 → 计时收服务器 KEXINIT」，
+    /// 这次往返穿过代理到真实服务器，反映真实延迟。多采样取首个 ≥3ms 干净值（避开粘包假 0）。
+    private nonisolated static func sshLatency(host: String, port: Int) -> (Bool, Int?) {
+        var online = false
+        var smallSample: Int? = nil
+        for _ in 0..<3 {
+            let (ok, rtt) = probeOnce(host: host, port: port, timeoutSec: 5)
+            if ok { online = true }
+            if let rtt {
+                if rtt >= 3 { return (true, rtt) }   // 干净样本，直接用
+                smallSample = rtt                    // <3ms：可能粘包，先记着，继续采样
+            }
+        }
+        return (online, online ? smallSample : nil)
+    }
+
+    /// 单次探测：连接 → 读 banner → 发版本 → 计时读服务器 KEXINIT。返回 (TCP是否连通, 纯RTTms?)。
+    private nonisolated static func probeOnce(host: String, port: Int, timeoutSec: Double) -> (Bool, Int?) {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        hints.ai_protocol = IPPROTO_TCP
+        var res: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, String(port), &hints, &res) == 0, let info = res, let addr = info.pointee.ai_addr else {
+            return (false, nil)
         }
         defer { freeaddrinfo(res) }
 
         let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
-        if fd < 0 { return (false, 0) }
+        if fd < 0 { return (false, nil) }
         defer { close(fd) }
         let flags = fcntl(fd, F_GETFL, 0)
         _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
 
-        let start = DispatchTime.now()
-        let cr = connect(fd, addr, info.pointee.ai_addrlen)
-        let elapsed = { Int(Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000) }
-        if cr == 0 { return (true, elapsed()) }            // 立即连通（如本机）
-        if errno != EINPROGRESS { return (false, 0) }
+        // 1) 连接（非阻塞 + poll）
+        if connect(fd, addr, info.pointee.ai_addrlen) != 0 {
+            if errno != EINPROGRESS { return (false, nil) }
+            if !waitFD(fd, POLLOUT, timeoutSec) { return (false, nil) }
+            var soErr: Int32 = 0
+            var len = socklen_t(MemoryLayout<Int32>.size)
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &len)
+            if soErr != 0 { return (false, nil) }
+        }
+        // TCP 已连通 ⇒ 在线
+        var buf = [UInt8](repeating: 0, count: 512)
+        // 2) 读 banner（首包，含代理建隧道开销，丢弃）
+        if !waitFD(fd, POLLIN, timeoutSec) { return (true, nil) }
+        if recv(fd, &buf, buf.count, 0) <= 0 { return (true, nil) }
+        // 3) 发我方版本，计时等服务器 KEXINIT（隧道已建立 ⇒ 纯 1 RTT）
+        let ver = "SSH-2.0-termo\r\n"
+        _ = ver.withCString { send(fd, $0, strlen($0), 0) }
+        let t = DispatchTime.now()
+        if !waitFD(fd, POLLIN, timeoutSec) { return (true, nil) }
+        if recv(fd, &buf, buf.count, 0) <= 0 { return (true, nil) }
+        let ms = Int(Double(DispatchTime.now().uptimeNanoseconds - t.uptimeNanoseconds) / 1_000_000)
+        return (true, ms)
+    }
 
-        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-        let pr = poll(&pfd, 1, Int32(timeoutSec * 1000))
-        if pr <= 0 { return (false, 0) }                   // 超时或错误
-        var soErr: Int32 = 0
-        var len = socklen_t(MemoryLayout<Int32>.size)
-        getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &len)
-        if soErr != 0 { return (false, 0) }                // 连接被拒等
-        return (true, elapsed())
+    /// 在 fd 上等待事件（POLLIN/POLLOUT），返回是否就绪（超时/错误返回 false）。
+    private nonisolated static func waitFD(_ fd: Int32, _ event: Int32, _ timeoutSec: Double) -> Bool {
+        var pfd = pollfd(fd: fd, events: Int16(event), revents: 0)
+        return poll(&pfd, 1, Int32(timeoutSec * 1000)) > 0
     }
 
     private func setStatus(_ id: String, _ status: HostStatus, latencyMs: Int? = nil) {
@@ -241,6 +353,7 @@ final class AppModel: ObservableObject {
     }
 
     private var terminals: [Int: LocalProcessTerminalView] = [:]
+    private var rdpSessions: [Int: RDPSession] = [:]
     private var nextTabId = 1
     private var terminalCount = 0
     private var themeCancellable: AnyCancellable?
@@ -271,20 +384,20 @@ final class AppModel: ObservableObject {
         return tabs.first(where: { $0.id == id })?.hostId
     }
 
-    /// 活动「会话」标签（终端/文件）对应的主机——侧栏文件树跟随它（概览页不算会话）。
-    var activeSessionHost: Host? {
-        guard let id = activeSessionTabId,
-              let hid = tabs.first(where: { $0.id == id })?.hostId else { return nil }
-        return hosts.first { $0.id == hid }
-    }
-
-    /// 活动「会话」标签的 id（文件树按标签分离时用作 key）。
-    var activeSessionTabId: Int? {
+    /// 侧栏「文件」面板要显示的树 + 稳定标识 + 所属主机。
+    /// 终端/文件标签 → 各自跟随 cwd 的按标签树；编辑器标签 → 主机级资源管理器树（高亮当前文件）。
+    var sidebarFileTree: (state: FileTreeState, id: String, host: Host)? {
         guard let id = activeTabId,
               let tab = tabs.first(where: { $0.id == id }),
-              tab.kind == .terminal || tab.kind == .files,
-              tab.hostId != nil else { return nil }
-        return id
+              let host = host(tab.hostId) else { return nil }
+        switch tab.kind {
+        case .terminal, .files:
+            return (fileTreeState(forTab: id, host: host), "tab-\(id)", host)
+        case .editor:
+            return (explorerTree(for: host), "host-\(host.id)", host)
+        case .overview, .rdp:
+            return nil
+        }
     }
 
     func host(_ id: String?) -> Host? {
@@ -469,10 +582,8 @@ final class AppModel: ObservableObject {
     }
 
     func openHostTerminal(_ host: Host) {
-        Task {
-            guard await verifyHostKey(host) else { return }   // 首次连接先验证指纹
-            connectingHost = host   // 展示连接进度弹窗，成功后 finishConnecting 进入终端
-        }
+        // 立刻显示连接弹窗；指纹验证与真实连接都在弹窗内分步进行（避免海外高延迟主机点击后长时间无反馈）
+        connectingHost = host
     }
 
     /// 连接进度弹窗成功 → 打开真实终端标签。
@@ -481,9 +592,37 @@ final class AppModel: ObservableObject {
         connectingHost = nil
         addTab(.terminal, title: host.name, hostId: host.id)
         recordSession(hostId: host.id, kind: .terminal, detail: "终端会话")
+        prewarmExplorer(for: host)
+    }
+
+    /// SSH 连上后立刻在后台预建主机资源管理器树，使后续打开文件无可感知的加载。
+    func prewarmExplorer(for host: Host) {
+        guard host.ssh != nil else { return }
+        explorerTree(for: host).startIfNeeded()
     }
 
     func cancelConnecting() { connectingHost = nil }
+
+    // ---------- RDP 远程桌面 ----------
+    /// 打开（或切到）一台 RDP 主机的远程桌面标签。
+    func openHostRDP(_ host: Host) {
+        guard host.isRDP else { return }
+        if let existing = tabs.first(where: { $0.kind == .rdp && $0.hostId == host.id }) {
+            activeTabId = existing.id
+            return
+        }
+        let id = addTab(.rdp, title: host.name, hostId: host.id)
+        rdpSessions[id] = RDPSession(host: host)
+        recordSession(hostId: host.id, kind: .rdp, detail: "远程桌面")
+    }
+
+    /// 某 RDP 标签的会话状态（缺失则按需创建，保证视图总能拿到）。
+    func rdpSession(for tabId: Int, host: Host) -> RDPSession {
+        if let s = rdpSessions[tabId] { return s }
+        let s = RDPSession(host: host)
+        rdpSessions[tabId] = s
+        return s
+    }
 
     func openHostFiles(_ host: Host) {
         // 同一主机已有文件标签则切过去
@@ -495,6 +634,7 @@ final class AppModel: ObservableObject {
             guard await verifyHostKey(host) else { return }
             addTab(.files, title: host.name, hostId: host.id)
             recordSession(hostId: host.id, kind: .files, detail: "文件浏览")
+            prewarmExplorer(for: host)
         }
     }
 
@@ -539,15 +679,68 @@ final class AppModel: ObservableObject {
         return s
     }
 
-    private func addTab(_ kind: TabKind, title: String, hostId: String?) {
+    /// 主机级「资源管理器」树（所有编辑器标签共用一棵，高亮跟随当前打开的文件，不随每个文件重载）。
+    private var hostExplorerTrees: [String: FileTreeState] = [:]
+    func explorerTree(for host: Host) -> FileTreeState {
+        if let s = hostExplorerTrees[host.id] { return s }
+        let s = FileTreeState(fs: RemoteFS(host.ssh ?? SSHConnection()), revealOnLoad: nil)
+        hostExplorerTrees[host.id] = s
+        return s
+    }
+
+    /// 面包屑点击：切到「文件」侧栏并在资源管理器里展开/选中该路径（目录或文件）。
+    func jumpToExplorer(path: String, host: Host) {
+        section = .files
+        revealInExplorer(path, host: host)
+    }
+
+    /// 在主机资源管理器树里展开并选中某文件（已存在则原地 reveal，不存在则以该路径初始化）。
+    private func revealInExplorer(_ path: String, host: Host) {
+        if let tree = hostExplorerTrees[host.id] {
+            tree.reveal(path)
+        } else {
+            hostExplorerTrees[host.id] = FileTreeState(
+                fs: RemoteFS(host.ssh ?? SSHConnection()), revealOnLoad: path)
+        }
+    }
+
+    @discardableResult
+    private func addTab(_ kind: TabKind, title: String, hostId: String?, filePath: String? = nil) -> Int {
         let id = nextTabId
         nextTabId += 1
-        tabs.append(TabItem(id: id, kind: kind, title: title, hostId: hostId))
+        tabs.append(TabItem(id: id, kind: kind, title: title, hostId: hostId, filePath: filePath))
         activeTabId = id
+        return id
+    }
+
+    // ---------- 文件编辑 / 预览 ----------
+    private var editorStates: [Int: EditorState] = [:]
+
+    func editorState(for tabId: Int) -> EditorState? { editorStates[tabId] }
+
+    /// 打开一个远程文件到编辑器/预览标签（同主机同路径已开则切过去）。
+    func openFile(_ file: RemoteFile, host: Host) {
+        guard !file.isDir else { return }
+        revealInExplorer(file.path, host: host)   // 左侧资源管理器高亮到该文件
+        if let existing = tabs.first(where: {
+            $0.kind == .editor && $0.hostId == host.id && $0.filePath == file.path
+        }) {
+            activeTabId = existing.id
+            return
+        }
+        let id = addTab(.editor, title: file.name, hostId: host.id, filePath: file.path)
+        let st = EditorState(file: file, host: host, fs: RemoteFS(host.ssh ?? SSHConnection()))
+        editorStates[id] = st
+        st.loadIfNeeded()   // 立刻开始加载（点击即拉取，不等视图出现）
     }
 
     func selectTab(_ id: Int) {
         activeTabId = id
+        // 切到编辑器标签时，让资源管理器高亮跟到它打开的文件
+        if let tab = tabs.first(where: { $0.id == id }), tab.kind == .editor,
+           let path = tab.filePath, let host = host(tab.hostId) {
+            revealInExplorer(path, host: host)
+        }
     }
 
     @Published var pendingCloseTabId: Int? = nil
@@ -586,6 +779,10 @@ final class AppModel: ObservableObject {
         browserStates[id]?.cancel()
         browserStates.removeValue(forKey: id)
         fileTreeStates.removeValue(forKey: id)
+        editorStates[id]?.cancel()
+        editorStates.removeValue(forKey: id)
+        rdpSessions[id]?.disconnect()
+        rdpSessions.removeValue(forKey: id)
         tabCwd.removeValue(forKey: id)
         if activeTabId == id {
             activeTabId = tabs.isEmpty ? nil : tabs[min(idx, tabs.count - 1)].id
@@ -594,7 +791,13 @@ final class AppModel: ObservableObject {
 
     /// 该终端是否有正在运行的活跃进程，需要确认后再关闭。
     private func shouldConfirmClose(_ id: Int) -> Bool {
+        // 编辑器有未保存修改 → 始终确认（数据丢失风险，不受「关闭确认」开关影响）
+        if let tab = tabs.first(where: { $0.id == id }), tab.kind == .editor {
+            return editorStates[id]?.isDirty ?? false
+        }
         guard AppSettings.shared.closeConfirm else { return false }
+        // RDP 会话：关闭即断开远程桌面，始终确认
+        if let tab = tabs.first(where: { $0.id == id }), tab.kind == .rdp { return true }
         guard let tab = tabs.first(where: { $0.id == id }), tab.kind == .terminal else { return false }
         guard let tv = terminals[id] else { return false }
 
@@ -614,5 +817,27 @@ final class AppModel: ObservableObject {
     var pendingCloseTitle: String {
         guard let id = pendingCloseTabId else { return "" }
         return tabs.first(where: { $0.id == id })?.title ?? ""
+    }
+
+    /// 关闭确认弹窗标题（按标签类型区分）。
+    var pendingCloseDialogTitle: String {
+        guard let id = pendingCloseTabId,
+              let tab = tabs.first(where: { $0.id == id }) else { return "关闭此标签？" }
+        switch tab.kind {
+        case .editor: return "放弃未保存的修改？"
+        case .rdp:    return "断开远程桌面？"
+        default:      return "关闭此终端？"
+        }
+    }
+
+    /// 关闭确认弹窗正文。
+    var pendingCloseDialogMessage: String {
+        guard let id = pendingCloseTabId,
+              let tab = tabs.first(where: { $0.id == id }) else { return "" }
+        switch tab.kind {
+        case .editor: return "「\(tab.title)」有尚未保存的修改，关闭后修改将丢失。"
+        case .rdp:    return "「\(tab.title)」是一个远程桌面会话，关闭后将断开连接。"
+        default:      return "「\(tab.title)」有正在运行的进程，关闭后进程将被终止。"
+        }
     }
 }

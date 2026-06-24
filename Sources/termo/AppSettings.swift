@@ -22,11 +22,16 @@ final class AppSettings: ObservableObject {
     @Published var closeConfirm: Bool {
         didSet { d.set(closeConfirm, forKey: "closeConfirm") }
     }
+    /// 代码编辑器右侧缩略图（minimap）。
+    @Published var editorMinimap: Bool {
+        didSet { d.set(editorMinimap, forKey: "editorMinimap") }
+    }
 
     private init() {
         startupBehavior = StartupBehavior(rawValue: d.string(forKey: "startupBehavior") ?? "") ?? .welcome
         defaultShell = DefaultShell(rawValue: d.string(forKey: "defaultShell") ?? "") ?? .auto
         closeConfirm = d.object(forKey: "closeConfirm") as? Bool ?? true
+        editorMinimap = d.object(forKey: "editorMinimap") as? Bool ?? true
     }
 
     /// 解析出实际的 shell 可执行路径。

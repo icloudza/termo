@@ -147,10 +147,12 @@ struct ConnectionProgressView: View {
 /// 连接主机时的进度弹窗（复用 ConnectionProgressView），成功后回调进入终端。
 struct ConnectingDialog: View {
     let host: Host
+    let verify: () async -> Bool   // 指纹验证（可能弹出指纹核对框）；返回是否继续连接
     let onConnected: () -> Void
     let onCancel: () -> Void
     @StateObject private var tester = ConnectionTester()
     @ObservedObject private var theme = ThemeManager.shared
+    @State private var verifying = true
 
     var body: some View {
         ZStack {
@@ -163,12 +165,18 @@ struct ConnectingDialog: View {
                 .padding(.horizontal, 20).padding(.vertical, 16)
                 Divider().overlay(Pal.fill(0.06))
 
-                ConnectionProgressView(tester: tester, targetLabel: targetLabel)
+                if verifying {
+                    verifyingPanel
+                } else {
+                    ConnectionProgressView(tester: tester, targetLabel: targetLabel)
+                }
 
                 Divider().overlay(Pal.fill(0.06))
                 HStack {
                     Spacer()
-                    if tester.isRunning {
+                    if verifying {
+                        SecondaryButton(title: "取消") { onCancel() }
+                    } else if tester.isRunning {
                         SecondaryButton(title: "取消") { tester.cancel(); onCancel() }
                     } else if tester.failed {
                         SecondaryButton(title: "取消") { onCancel() }
@@ -185,15 +193,45 @@ struct ConnectingDialog: View {
             .shadow(color: .black.opacity(0.4), radius: 24, y: 8)
         }
         .preferredColorScheme(theme.isDark ? .dark : .light)
-        .onAppear {
+        .task {
             tester.onFinished = { success in
                 guard success else { return }
-                // 短暂停留展示「连接成功」，再淡出进入终端
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { onConnected() }
             }
-            tester.start(conn: host.ssh ?? SSHConnection())
+            // 第一阶段：验证主机指纹（已知主机瞬间通过；未知主机会叠加指纹核对框）
+            let ok = await verify()
+            guard !Task.isCancelled else { return }
+            if ok {
+                verifying = false
+                tester.start(conn: host.ssh ?? SSHConnection())
+            } else {
+                onCancel()
+            }
         }
         .onDisappear { tester.cancel() }
+    }
+
+    private var verifyingPanel: some View {
+        VStack(spacing: 0) {
+            // 目标行（与 ConnectionProgressView 顶部一致）
+            HStack(spacing: 8) {
+                Circle().fill(Pal.yellow).frame(width: 8, height: 8)
+                Text(targetLabel)
+                    .font(.system(size: 12, design: .monospaced)).foregroundStyle(Pal.subtext)
+                Spacer()
+                Text("验证中…").font(.system(size: 12, weight: .medium)).foregroundStyle(Pal.yellow)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
+
+            Spacer()
+            VStack(spacing: 14) {
+                ProgressView().controlSize(.small)
+                Text("正在验证主机指纹…")
+                    .font(.system(size: 13)).foregroundStyle(Pal.subtext)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var targetLabel: String {

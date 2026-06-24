@@ -37,15 +37,16 @@ final class FileTreeState: ObservableObject {
         guard !started else { return }
         started = true
         Task {
-            let initial: String
-            if let t = revealTarget { initial = t } else { initial = await fs.home() }
             let r = await fs.list("/")
             switch r {
             case .success(let files):
                 roots = files.map { FileTreeNode(file: $0) }
                 phase = .loaded
                 rebuild()
-                await revealPath(initial)
+                // 加载完成后再取最新的定位目标：预热期间若已请求 reveal 某文件，这里能拿到
+                let target: String
+                if let t = revealTarget { target = t } else { target = await fs.home() }
+                await revealPath(target)
             case .failure(let e):
                 phase = .error(e.message)
             }

@@ -6,9 +6,11 @@ struct Sidebar: View {
     @FocusState private var searchFocused: Bool
 
     private var filteredHosts: [Host] {
-        guard !model.query.isEmpty else { return model.hosts }
+        // 「主机」面板只列 SSH 主机；RDP 主机归到 RDP 面板
+        let sshHosts = model.hosts.filter { !$0.isRDP }
+        guard !model.query.isEmpty else { return sshHosts }
         let q = model.query.lowercased()
-        return model.hosts.filter {
+        return sshHosts.filter {
             $0.name.lowercased().contains(q) || $0.addr.lowercased().contains(q)
         }
     }
@@ -24,9 +26,10 @@ struct Sidebar: View {
             HStack {
                 Text(sectionTitle).font(.system(size: 15, weight: .medium)).foregroundStyle(Pal.text)
                 Spacer()
-                if model.section == .hosts {
+                if model.section == .hosts || model.section == .rdp {
                     Button {
-                        model.showAddHost = true
+                        if model.section == .rdp { model.showAddRDPHost = true }
+                        else { model.showAddHost = true }
                     } label: {
                         Image(systemName: "plus").font(.system(size: 14)).foregroundStyle(Pal.mauve)
                     }
@@ -47,6 +50,8 @@ struct Sidebar: View {
                 }
             } else if model.section == .files {
                 filesPanel
+            } else if model.section == .rdp {
+                rdpPanel
             } else {
                 Spacer()
                 Text("\(sectionTitle)模块开发中")
@@ -68,7 +73,7 @@ struct Sidebar: View {
         switch model.section {
         case .hosts: return "主机"
         case .files: return "文件"
-        case .keys: return "SSH 密钥"
+        case .rdp: return "RDP"
         case .snippets: return "代码片段"
         case .settings: return "设置"
         }
@@ -92,9 +97,10 @@ struct Sidebar: View {
     /// 活动栏「文件」面板：有活动主机时显示其文件树，否则提示。
     @ViewBuilder
     private var filesPanel: some View {
-        if let host = model.activeSessionHost, let tabId = model.activeSessionTabId {
-            SidebarFileTree(state: model.fileTreeState(forTab: tabId, host: host), onOpenFile: { _ in })
-                .id(tabId)
+        if let tree = model.sidebarFileTree {
+            SidebarFileTree(state: tree.state,
+                            onOpenFile: { model.openFile($0, host: tree.host) })
+                .id(tree.id)
         } else {
             VStack(spacing: 10) {
                 Spacer()
@@ -105,6 +111,40 @@ struct Sidebar: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// 活动栏「RDP」面板：列出 RDP 主机，空时给出添加引导。
+    @ViewBuilder
+    private var rdpPanel: some View {
+        let rdpHosts = model.hosts.filter { $0.isRDP }
+        if rdpHosts.isEmpty {
+            VStack(spacing: 10) {
+                Spacer().frame(height: 40)
+                Image(systemName: "display").font(.system(size: 26)).foregroundStyle(Pal.overlay)
+                Text("还没有 RDP 主机").font(.system(size: 13)).foregroundStyle(Pal.subtext)
+                Button { model.showAddRDPHost = true } label: {
+                    Text("添加 RDP 主机").font(.system(size: 12)).foregroundStyle(Pal.mauve)
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(Pal.mauve.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(rdpHosts) { host in
+                        RDPHostRow(host: host, model: model)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -199,6 +239,46 @@ struct HostRow: View {
             Button("打开终端") { model.openHostTerminal(host) }
             Button("打开文件") { model.openHostFiles(host) }
             Button("编辑主机") { model.beginEditHost(host) }
+            Divider()
+            Button("删除主机", role: .destructive) { model.deleteHost(host.id) }
+        }
+    }
+}
+
+/// RDP 主机行：点击连接远程桌面。
+struct RDPHostRow: View {
+    let host: Host
+    @ObservedObject var model: AppModel
+    @ObservedObject private var theme = ThemeManager.shared
+    @State private var hover = false
+
+    var body: some View {
+        let active = model.activeHostId == host.id
+        Button {
+            model.openHostRDP(host)
+        } label: {
+            HStack(spacing: 9) {
+                Circle().fill(host.statusColor).frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(host.name).font(.system(size: 13)).foregroundStyle(Pal.text)
+                    Text(host.ipOrHost).font(.system(size: 11)).foregroundStyle(Pal.subtext)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "display").font(.system(size: 11)).foregroundStyle(Pal.overlay)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 7)
+            .background(
+                active ? Pal.mauve.opacity(0.15) : (hover ? Pal.fill(0.05) : Color.clear),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .contextMenu {
+            Button("远程桌面") { model.openHostRDP(host) }
+            Button("编辑主机") { model.editingRDPHost = host }
             Divider()
             Button("删除主机", role: .destructive) { model.deleteHost(host.id) }
         }

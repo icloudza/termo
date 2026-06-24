@@ -95,10 +95,14 @@ enum HostStore {
     static func loadHosts() -> [Host] {
         guard let data = try? Data(contentsOf: hostsURL),
               var hosts = try? JSONDecoder().decode([Host].self, from: data) else { return [] }
-        // JSON 不含密码，从 Keychain 回填
-        for i in hosts.indices where hosts[i].ssh != nil {
+        // JSON 不含密码，从 Keychain 回填（SSH 或 RDP，二者其一）
+        for i in hosts.indices {
             let pw = HostKeychain.load(hosts[i].id)
-            hosts[i].ssh?.password = pw
+            if hosts[i].ssh != nil {
+                hosts[i].ssh?.password = pw
+            } else if hosts[i].rdp != nil {
+                hosts[i].rdp?.password = pw
+            }
         }
         return hosts
     }
@@ -107,6 +111,7 @@ enum HostStore {
         // 密码进 Keychain；JSON 由 SSHConnection.CodingKeys 排除了 password 字段
         for h in hosts {
             if let ssh = h.ssh { HostKeychain.save(ssh.password, for: h.id) }
+            else if let rdp = h.rdp { HostKeychain.save(rdp.password, for: h.id) }
         }
         if let data = try? JSONEncoder().encode(hosts) {
             try? data.write(to: hostsURL, options: .atomic)

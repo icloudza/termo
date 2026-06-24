@@ -84,6 +84,7 @@ final class BrowserState: ObservableObject {
 
 struct FileBrowser: View {
     @ObservedObject var state: BrowserState
+    var onOpenFile: (RemoteFile) -> Void = { _ in }
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
@@ -170,7 +171,9 @@ struct FileBrowser: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(state.visible) { file in
-                            FileRow(file: file) { state.enter(file) }
+                            FileRow(file: file) {
+                                if file.isDir { state.enter(file) } else { onOpenFile(file) }
+                            }
                         }
                     }
                     .padding(.vertical, 4)

@@ -26,7 +26,8 @@ final class RemoteFS {
     struct OpResult { let data: Data; let stderr: Data; let code: Int32 }
 
     /// 执行一条远端命令（经登录 shell）。流式抽干管道，避免大输出时缓冲区填满导致死锁。
-    func run(_ remoteCommand: String, timeout: Double = 20) async -> OpResult {
+    /// `stdin` 非空时写入子进程标准输入（用于写文件等大数据下行）。
+    func run(_ remoteCommand: String, stdin: Data? = nil, timeout: Double = 20) async -> OpResult {
         ensureControlDir()
         return await withCheckedContinuation { (cont: CheckedContinuation<OpResult, Never>) in
             let proc = Process()
@@ -41,6 +42,8 @@ final class RemoteFS {
             let outPipe = Pipe(), errPipe = Pipe()
             proc.standardOutput = outPipe
             proc.standardError = errPipe
+            let inPipe: Pipe? = stdin != nil ? Pipe() : nil
+            if let inPipe { proc.standardInput = inPipe }
 
             var outData = Data(), errData = Data()
             let group = DispatchGroup()
@@ -65,10 +68,66 @@ final class RemoteFS {
                 cont.resume(returning: OpResult(data: Data(), stderr: Data(), code: -1))
                 return
             }
+            // 在独立线程写入 stdin（大数据需分块，避免与 ssh 输出形成管道死锁）
+            if let inPipe, let stdin {
+                DispatchQueue.global().async {
+                    let fh = inPipe.fileHandleForWriting
+                    fh.write(stdin)
+                    try? fh.close()
+                }
+            }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                 if proc.isRunning { proc.terminate() }
             }
         }
+    }
+
+    // MARK: - 文件读写
+
+    /// 读取远端文件（base64 安全传输，二进制安全）。最多读取 `limit` 字节。
+    func read(_ path: String, limit: Int) async -> Result<Data, RemoteFSError> {
+        let b64 = Data(path.utf8).base64EncodedString()
+        // head -c 限制读取量；base64 编码避免控制字符被 shell/传输破坏
+        let cmd = "P=$(printf %s '\(b64)'|base64 -d); " +
+            "if [ ! -e \"$P\" ]; then echo __TERMO_NOENT__ >&2; exit 2; fi; " +
+            "if [ -d \"$P\" ]; then echo __TERMO_ISDIR__ >&2; exit 3; fi; " +
+            "head -c \(limit) \"$P\" | base64"
+        let r = await run(cmd, timeout: 40)
+        if r.code != 0 {
+            let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let msg: String
+            if err.contains("__TERMO_NOENT__") { msg = "文件不存在" }
+            else if err.contains("__TERMO_ISDIR__") { msg = "这是一个目录" }
+            else if err.contains("Permission denied") || err.contains("permission") { msg = "没有读取权限" }
+            else { msg = err.isEmpty ? "无法读取文件（退出码 \(r.code)）" : err }
+            return .failure(RemoteFSError(message: msg))
+        }
+        guard let decoded = Data(base64Encoded: r.data, options: .ignoreUnknownCharacters) else {
+            return .failure(RemoteFSError(message: "内容解码失败"))
+        }
+        return .success(decoded)
+    }
+
+    /// 写入远端文件：内容经 base64 由 stdin 下行，远端先写同目录临时文件再覆盖原文件，
+    /// 用 `cat >` 落地以保留原文件的权限/属主（而非 mv 改 inode）。
+    func write(_ path: String, data: Data) async -> Result<Void, RemoteFSError> {
+        let b64 = Data(path.utf8).base64EncodedString()
+        let payload = Data(data.base64EncodedString().utf8)
+        let cmd = "P=$(printf %s '\(b64)'|base64 -d); " +
+            "T=\"$P.termo-tmp.$$\"; " +
+            "if base64 -d > \"$T\" 2>/dev/null; then " +
+            "  if cat \"$T\" > \"$P\" 2>/dev/null; then rm -f \"$T\"; else rm -f \"$T\"; echo __TERMO_WRITEFAIL__ >&2; exit 7; fi; " +
+            "else rm -f \"$T\" 2>/dev/null; echo __TERMO_TMPFAIL__ >&2; exit 8; fi"
+        let r = await run(cmd, stdin: payload, timeout: 60)
+        if r.code != 0 {
+            let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let msg: String
+            if err.contains("__TERMO_WRITEFAIL__") || err.contains("Permission denied") { msg = "没有写入权限" }
+            else if err.contains("__TERMO_TMPFAIL__") { msg = "无法在目标目录创建临时文件" }
+            else { msg = err.isEmpty ? "保存失败（退出码 \(r.code)）" : err }
+            return .failure(RemoteFSError(message: msg))
+        }
+        return .success(())
     }
 
     /// 断开该主机的 ControlMaster 复用主连接（文件浏览的底层连接）。

@@ -65,8 +65,8 @@ struct ContentView: View {
         .overlay {
             if model.pendingCloseTabId != nil {
                 ConfirmDialog(
-                    title: "关闭此终端？",
-                    message: "「\(model.pendingCloseTitle)」有正在运行的进程，关闭后进程将被终止。",
+                    title: model.pendingCloseDialogTitle,
+                    message: model.pendingCloseDialogMessage,
                     confirmTitle: "关闭",
                     destructive: true,
                     onConfirm: { model.confirmPendingClose() },
@@ -77,20 +77,22 @@ struct ContentView: View {
         }
         .animation(.easeOut(duration: 0.15), value: model.pendingCloseTabId)
         .overlay {
-            if let pending = model.pendingHostKey {
-                HostKeyDialog(pending: pending).transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
-        .overlay {
             if let h = model.connectingHost {
                 ConnectingDialog(host: h,
+                                 verify: { await model.verifyHostKey(h) },
                                  onConnected: { model.finishConnecting() },
                                  onCancel: { model.cancelConnecting() })
                     .transition(.opacity)
             }
         }
         .animation(.easeOut(duration: 0.25), value: model.connectingHost?.id)
+        // 指纹验证弹窗叠在连接弹窗之上（未知主机首次连接时需要用户核对）
+        .overlay {
+            if let pending = model.pendingHostKey {
+                HostKeyDialog(pending: pending).transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
         }
@@ -99,6 +101,12 @@ struct ContentView: View {
         }
         .sheet(item: $model.editingHost) { host in
             AddHostView(model: model, editing: host)
+        }
+        .sheet(isPresented: $model.showAddRDPHost) {
+            AddRDPHostView(model: model)
+        }
+        .sheet(item: $model.editingRDPHost) { host in
+            AddRDPHostView(model: model, editing: host)
         }
         .onAppear { model.applyStartupIfNeeded() }
     }

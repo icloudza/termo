@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum Section: Hashable {
-    case hosts, files, keys, snippets, settings
+    case hosts, files, rdp, snippets, settings
 }
 
 enum SettingsTab: String, CaseIterable, Hashable {
@@ -23,7 +23,7 @@ enum SettingsTab: String, CaseIterable, Hashable {
 }
 
 enum TabKind {
-    case overview, terminal, files
+    case overview, terminal, files, editor, rdp
 }
 
 struct TabItem: Identifiable {
@@ -31,6 +31,7 @@ struct TabItem: Identifiable {
     let kind: TabKind
     var title: String
     var hostId: String?
+    var filePath: String? = nil
 }
 
 enum HostStatus: String, Codable {
@@ -39,7 +40,7 @@ enum HostStatus: String, Codable {
 
 /// 一次主机会话/操作记录（终端、上传、端口转发），用于「最近会话」。
 enum SessionKind: String, Codable {
-    case terminal, files, upload, portForward
+    case terminal, files, upload, portForward, rdp
 
     var icon: String {
         switch self {
@@ -47,6 +48,7 @@ enum SessionKind: String, Codable {
         case .files: return "folder"
         case .upload: return "arrow.up.circle"
         case .portForward: return "arrow.left.arrow.right"
+        case .rdp: return "display"
         }
     }
 }
@@ -170,6 +172,38 @@ struct SSHConnection: Codable {
     }
 }
 
+/// RDP 安全/认证级别。
+enum RDPSecurity: String, Codable, CaseIterable {
+    case auto, nla, tls, rdp
+
+    var label: String {
+        switch self {
+        case .auto: return "自动协商"
+        case .nla:  return "NLA（网络级认证）"
+        case .tls:  return "TLS"
+        case .rdp:  return "标准 RDP"
+        }
+    }
+}
+
+/// 一台主机的 RDP（Windows 远程桌面）连接配置。
+struct RDPConnection: Codable {
+    // 密码不进 JSON（存 Keychain），其余字段全部持久化
+    enum CodingKeys: String, CodingKey {
+        case user, host, port, domain, width, height, colorDepth, security
+    }
+
+    var user: String = "Administrator"
+    var host: String = ""
+    var port: Int = 3389
+    var password: String = ""
+    var domain: String = ""
+    var width: Int = 1920
+    var height: Int = 1080
+    var colorDepth: Int = 32
+    var security: RDPSecurity = .auto
+}
+
 /// SSH 探测得到的主机规格（真实数据，连接成功后填充）。
 struct HostSpecs: Codable {
     var os: String = ""
@@ -183,7 +217,7 @@ struct HostSpecs: Codable {
 struct Host: Identifiable, Codable {
     // latencyMs 是运行时探测结果，不写入 JSON
     enum CodingKeys: String, CodingKey {
-        case id, name, addr, group, status, os, port, ssh, notes, specs
+        case id, name, addr, group, status, os, port, ssh, notes, specs, rdp
     }
 
     let id: String
@@ -197,10 +231,17 @@ struct Host: Identifiable, Codable {
     var notes: String = ""
     var specs: HostSpecs? = nil
     var latencyMs: Int? = nil
+    // RDP（Windows 远程桌面）主机的连接配置；为 nil 表示这是一台 SSH 主机。
+    // 可选字段：旧 hosts.json 无此键时按 nil 解码，不破坏既有数据。
+    var rdp: RDPConnection? = nil
+
+    /// 是否为 RDP（远程桌面）主机。
+    var isRDP: Bool { rdp != nil }
 
     /// 仅主机名/IP（不含登录用户）。
     var ipOrHost: String {
         if let h = ssh?.host, !h.isEmpty { return h }
+        if let h = rdp?.host, !h.isEmpty { return h }
         return addr.contains("@") ? String(addr.split(separator: "@").last ?? "") : addr
     }
 
