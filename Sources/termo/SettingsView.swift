@@ -4,11 +4,6 @@ struct SettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var theme = ThemeManager.shared
     @ObservedObject private var settings = AppSettings.shared
-    @State private var cursorStyle = "block"
-    @State private var fontName = "jetbrains"
-    @State private var fontSize = 14
-    @State private var cursorBlink = true
-    @State private var scrollback = 10000
 
     var body: some View {
         HStack(spacing: 0) {
@@ -100,7 +95,6 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     switch model.settingsTab {
                     case .general: generalSettings
-                    case .appearance: appearanceSettings
                     case .terminal: terminalSettings
                     case .keys: keysSettings
                     case .about: aboutSettings
@@ -121,6 +115,14 @@ struct SettingsView: View {
     private var generalSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
             sectionHeader("通用")
+
+            settingRow("外观模式", description: "切换深色、浅色或跟随系统") {
+                SegmentedControl(
+                    options: AppearanceMode.allCases.map { ($0, $0.rawValue) },
+                    selection: $theme.mode
+                )
+                .frame(width: 240)
+            }
 
             settingRow("启动行为", description: "应用启动时的默认操作") {
                 ThemedDropdown(
@@ -144,22 +146,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 外观
-
-    private var appearanceSettings: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            sectionHeader("外观")
-
-            settingRow("外观模式", description: "切换深色、浅色或跟随系统") {
-                SegmentedControl(
-                    options: AppearanceMode.allCases.map { ($0, $0.rawValue) },
-                    selection: $theme.mode
-                )
-                .frame(width: 240)
-            }
-        }
-    }
-
     // MARK: - 终端
 
     private var terminalSettings: some View {
@@ -169,34 +155,37 @@ struct SettingsView: View {
             settingRow("字体", description: "终端显示使用的字体") {
                 ThemedDropdown(
                     options: [
-                        ("jetbrains", "JetBrainsMono Nerd Font"), ("meslo", "MesloLGM Nerd Font"),
-                        ("firacode", "Fira Code"), ("sfmono", "SF Mono"), ("menlo", "Menlo"),
+                        ("", "自动 (推荐)"),
+                        ("SF Mono", "SF Mono"), ("Menlo", "Menlo"), ("Monaco", "Monaco"),
+                        ("JetBrainsMono Nerd Font", "JetBrains Mono"),
+                        ("FiraCode Nerd Font", "Fira Code"),
+                        ("MesloLGM Nerd Font", "Meslo LGM"),
                     ],
-                    selection: $fontName
+                    selection: $settings.termFont
                 )
                 .frame(width: 220)
             }
 
             settingRow("字号", description: "终端字体大小") {
-                ThemedStepper(value: $fontSize, range: 10...24, suffix: " pt")
+                ThemedStepper(value: $settings.termFontSize, range: 10...24, suffix: " pt")
             }
 
             settingRow("光标样式", description: "终端光标的形状") {
                 SegmentedControl(
                     options: [("block", "方块"), ("bar", "竖线"), ("underline", "下划线")],
-                    selection: $cursorStyle
+                    selection: $settings.termCursorStyle
                 )
                 .frame(width: 220)
             }
 
             settingRow("光标闪烁", description: "光标是否闪烁") {
-                ThemedToggle(isOn: $cursorBlink)
+                ThemedToggle(isOn: $settings.termCursorBlink)
             }
 
             settingRow("滚动缓冲区", description: "终端保留的最大行数") {
                 ThemedDropdown(
                     options: [(1000, "1,000 行"), (5000, "5,000 行"), (10000, "10,000 行"), (50000, "50,000 行")],
-                    selection: $scrollback
+                    selection: $settings.termScrollback
                 )
                 .frame(width: 140)
             }
@@ -228,28 +217,7 @@ struct SettingsView: View {
     private var aboutSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
             sectionHeader("关于")
-
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 14) {
-                    Image(systemName: "server.rack")
-                        .font(.system(size: 28))
-                        .foregroundStyle(Pal.mauve)
-                        .frame(width: 52, height: 52)
-                        .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("termo").font(.system(size: 18, weight: .semibold)).foregroundStyle(Pal.text)
-                        Text("版本 0.1.0 (开发版)")
-                            .font(.system(size: 12)).foregroundStyle(Pal.subtext)
-                    }
-                }
-                Divider().background(Pal.fill(0.06)).padding(.vertical, 6)
-                infoLine("终端引擎", value: "SwiftTerm 1.13")
-                infoLine("渲染", value: "CoreText / AppKit")
-                infoLine("平台", value: "macOS 13+")
-                infoLine("架构", value: "Apple Silicon")
-            }
-            .padding(20)
-            .background(Pal.fill(0.03), in: RoundedRectangle(cornerRadius: 10))
+            AboutContent()   // 与独立「关于」窗口复用同一内容
         }
     }
 
@@ -285,13 +253,5 @@ struct SettingsView: View {
                 .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 5))
         }
         .padding(.vertical, 2)
-    }
-
-    private func infoLine(_ label: String, value: String) -> some View {
-        HStack {
-            Text(label).font(.system(size: 12)).foregroundStyle(Pal.overlay)
-            Spacer()
-            Text(value).font(.system(size: 12)).foregroundStyle(Pal.subtext)
-        }
     }
 }

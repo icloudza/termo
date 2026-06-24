@@ -196,7 +196,7 @@ final class EditorState: ObservableObject {
 
 /// 头部（标题/面包屑）左缩进：让内容左缘越过编辑器行号栏，与代码正文对齐。
 /// 行号栏宽度随行数位数变化（约 38–52px），取 46 覆盖常见 2–4 位行号。
-private let editorHeaderInset: CGFloat = 46
+private let editorHeaderInset: CGFloat = 14
 
 struct FileViewerView: View {
     @ObservedObject var state: EditorState

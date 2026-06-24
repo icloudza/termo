@@ -6,7 +6,6 @@ enum Section: Hashable {
 
 enum SettingsTab: String, CaseIterable, Hashable {
     case general = "通用"
-    case appearance = "外观"
     case terminal = "终端"
     case keys = "快捷键"
     case about = "关于"
@@ -14,7 +13,6 @@ enum SettingsTab: String, CaseIterable, Hashable {
     var icon: String {
         switch self {
         case .general: return "gearshape"
-        case .appearance: return "paintbrush"
         case .terminal: return "terminal"
         case .keys: return "command"
         case .about: return "info.circle"

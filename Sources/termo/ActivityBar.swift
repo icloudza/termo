@@ -23,7 +23,7 @@ struct ActivityBar: View {
         }
         .padding(.top, isFullScreen ? 12 : 52)
         .padding(.bottom, 12)
-        .frame(width: 68)
+        .frame(width: 76)
         .frame(maxHeight: .infinity)
         .background(Pal.crust)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in

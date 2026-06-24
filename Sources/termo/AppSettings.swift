@@ -27,11 +27,36 @@ final class AppSettings: ObservableObject {
         didSet { d.set(editorMinimap, forKey: "editorMinimap") }
     }
 
+    // ---------- 终端 ----------
+    /// 终端字体名（空 = 自动选用预置等宽字体）。
+    @Published var termFont: String {
+        didSet { d.set(termFont, forKey: "termFont") }
+    }
+    @Published var termFontSize: Int {
+        didSet { d.set(termFontSize, forKey: "termFontSize") }
+    }
+    /// 光标形状：block / bar / underline。
+    @Published var termCursorStyle: String {
+        didSet { d.set(termCursorStyle, forKey: "termCursorStyle") }
+    }
+    @Published var termCursorBlink: Bool {
+        didSet { d.set(termCursorBlink, forKey: "termCursorBlink") }
+    }
+    /// 滚动缓冲区行数。
+    @Published var termScrollback: Int {
+        didSet { d.set(termScrollback, forKey: "termScrollback") }
+    }
+
     private init() {
         startupBehavior = StartupBehavior(rawValue: d.string(forKey: "startupBehavior") ?? "") ?? .welcome
         defaultShell = DefaultShell(rawValue: d.string(forKey: "defaultShell") ?? "") ?? .auto
         closeConfirm = d.object(forKey: "closeConfirm") as? Bool ?? true
         editorMinimap = d.object(forKey: "editorMinimap") as? Bool ?? true
+        termFont = d.string(forKey: "termFont") ?? ""
+        termFontSize = d.object(forKey: "termFontSize") as? Int ?? 12
+        termCursorStyle = d.string(forKey: "termCursorStyle") ?? "block"
+        termCursorBlink = d.object(forKey: "termCursorBlink") as? Bool ?? true
+        termScrollback = d.object(forKey: "termScrollback") as? Int ?? 10000
     }
 
     /// 解析出实际的 shell 可执行路径。

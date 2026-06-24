@@ -37,11 +37,11 @@ struct Sidebar: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.top, 13)
+            .padding(.top, 16)
             .padding(.bottom, 10)
 
             if model.section == .hosts {
-                Spacer().frame(height: 8)
+                Spacer().frame(height: 10)
                 searchBox
                 if filteredHosts.isEmpty {
                     hostEmptyState
@@ -51,6 +51,8 @@ struct Sidebar: View {
             } else if model.section == .files {
                 filesPanel
             } else if model.section == .rdp {
+                Spacer().frame(height: 10)
+                searchBox
                 rdpPanel
             } else {
                 Spacer()
@@ -114,11 +116,15 @@ struct Sidebar: View {
         }
     }
 
-    /// 活动栏「RDP」面板：列出 RDP 主机，空时给出添加引导。
+    /// 活动栏「RDP」面板：列出 RDP 主机（支持搜索），空时给出添加引导。
     @ViewBuilder
     private var rdpPanel: some View {
-        let rdpHosts = model.hosts.filter { $0.isRDP }
-        if rdpHosts.isEmpty {
+        let allRDP = model.hosts.filter { $0.isRDP }
+        let q = model.query.lowercased()
+        let rdpHosts = q.isEmpty ? allRDP
+            : allRDP.filter { $0.name.lowercased().contains(q) || $0.addr.lowercased().contains(q) }
+
+        if allRDP.isEmpty {
             VStack(spacing: 10) {
                 Spacer().frame(height: 40)
                 Image(systemName: "display").font(.system(size: 26)).foregroundStyle(Pal.overlay)
@@ -134,6 +140,14 @@ struct Sidebar: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
+        } else if rdpHosts.isEmpty {
+            VStack(spacing: 10) {
+                Spacer().frame(height: 40)
+                Image(systemName: "magnifyingglass").font(.system(size: 26)).foregroundStyle(Pal.overlay)
+                Text("无匹配主机").font(.system(size: 13)).foregroundStyle(Pal.subtext)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {

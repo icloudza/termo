@@ -15,9 +15,65 @@ struct TermoApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var aboutWindow: NSWindow?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         applyAppIcon()
+        setupMainMenu()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// 自定义中文主菜单：应用菜单只保留「关于」「退出」；保留「编辑」菜单以支持
+    /// 输入框/代码编辑器的复制粘贴等（否则这些标准操作会失效）。
+    private func setupMainMenu() {
+        let main = NSMenu()
+
+        // 应用菜单（标题由系统替换为 App 名）
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appItem.submenu = appMenu
+        let about = NSMenuItem(title: "关于 termo", action: #selector(showAbout), keyEquivalent: "")
+        about.target = self
+        appMenu.addItem(about)
+        appMenu.addItem(.separator())
+        appMenu.addItem(NSMenuItem(title: "退出 termo",
+                                   action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        // 编辑菜单（复制/粘贴/撤销等依赖这些菜单项的快捷键注册）
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let edit = NSMenu(title: "编辑")
+        editItem.submenu = edit
+        edit.addItem(NSMenuItem(title: "撤销", action: Selector(("undo:")), keyEquivalent: "z"))
+        let redo = NSMenuItem(title: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(redo)
+        edit.addItem(.separator())
+        edit.addItem(NSMenuItem(title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        edit.addItem(NSMenuItem(title: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        edit.addItem(NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        edit.addItem(NSMenuItem(title: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+
+        NSApp.mainMenu = main
+    }
+
+    @objc private func showAbout() {
+        if aboutWindow == nil {
+            let hosting = NSHostingView(rootView: AboutWindow())
+            let w = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
+                styleMask: [.titled, .closable],
+                backing: .buffered, defer: false)
+            w.title = "关于 termo"
+            w.isReleasedWhenClosed = false
+            w.contentView = hosting
+            w.setContentSize(NSSize(width: 420, height: hosting.fittingSize.height))
+            w.center()
+            aboutWindow = w
+        }
+        aboutWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

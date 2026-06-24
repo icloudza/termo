@@ -375,7 +375,10 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async { self?.applyThemeToTerminals() }
         }
         settingsCancellable = AppSettings.shared.objectWillChange.sink { [weak self] in
-            DispatchQueue.main.async { self?.applyThemeToTerminals() }
+            DispatchQueue.main.async {
+                self?.applyThemeToTerminals()
+                self?.applyTerminalSettings()
+            }
         }
     }
 
@@ -430,21 +433,44 @@ final class AppModel: ObservableObject {
         "if [ -n \"$ZSH_VERSION\" ]; then precmd_functions+=(__t7); " +
         "else PROMPT_COMMAND=\"__t7;${PROMPT_COMMAND}\"; fi; __t7"
 
-    private static let terminalFont: NSFont = {
-        let size: CGFloat = 14
-        let preferred = [
-            "JetBrainsMono Nerd Font",
-            "MesloLGM Nerd Font",
-            "MesloLGS Nerd Font",
-            "Hack Nerd Font",
-            "FiraCode Nerd Font",
-            "FiraCode Nerd Font Mono",
-        ]
-        for name in preferred {
-            if let f = NSFont(name: name, size: size) { return f }
+    /// 当前终端字体（按设置；空名或找不到则回退到预置等宽字体）。
+    private func currentTerminalFont() -> NSFont {
+        let size = CGFloat(AppSettings.shared.termFontSize)
+        let name = AppSettings.shared.termFont
+        if !name.isEmpty, let f = NSFont(name: name, size: size) { return f }
+        for n in ["JetBrainsMono Nerd Font", "MesloLGM Nerd Font", "MesloLGS Nerd Font",
+                  "Hack Nerd Font", "FiraCode Nerd Font", "FiraCode Nerd Font Mono"] {
+            if let f = NSFont(name: n, size: size) { return f }
         }
         return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-    }()
+    }
+
+    /// 按设置（形状 + 闪烁）得到 SwiftTerm 光标样式。
+    private func currentCursorStyle() -> CursorStyle {
+        let blink = AppSettings.shared.termCursorBlink
+        switch AppSettings.shared.termCursorStyle {
+        case "bar": return blink ? .blinkBar : .steadyBar
+        case "underline": return blink ? .blinkUnderline : .steadyUnderline
+        default: return blink ? .blinkBlock : .steadyBlock
+        }
+    }
+
+    /// 应用光标样式与滚动缓冲到某终端。
+    private func applyTerminalConfig(to tv: LocalProcessTerminalView) {
+        let term = tv.getTerminal()
+        term.setCursorStyle(currentCursorStyle())
+        term.changeScrollback(AppSettings.shared.termScrollback)
+    }
+
+    /// 设置变化时刷新所有终端的字体/光标/滚动缓冲。
+    private func applyTerminalSettings() {
+        let font = currentTerminalFont()
+        for tv in terminals.values {
+            tv.font = font
+            applyTerminalConfig(to: tv)
+            tv.setNeedsDisplay(tv.bounds)
+        }
+    }
 
     private static func c(_ r: UInt16, _ g: UInt16, _ b: UInt16) -> SwiftTerm.Color {
         SwiftTerm.Color(red: r * 257, green: g * 257, blue: b * 257)
@@ -486,8 +512,9 @@ final class AppModel: ObservableObject {
 
     private func makeTerminal(ssh: SSHConnection? = nil, hostId: String? = nil, tabId: Int) -> LocalProcessTerminalView {
         let tv = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 480))
-        tv.font = Self.terminalFont
+        tv.font = currentTerminalFont()
         applyTheme(to: tv)
+        applyTerminalConfig(to: tv)
 
         var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
         let lang = ProcessInfo.processInfo.environment["LANG"] ?? ""
