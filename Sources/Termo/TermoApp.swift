@@ -227,7 +227,12 @@ struct ContentView: View {
                     onCancel: { model.pendingFileInfo = nil }
                 ).transition(.opacity)
             }
+            if let task = model.uploadTask {
+                UploadDialog(task: task, onClose: { model.uploadTask = nil })
+                    .transition(.opacity)
+            }
         }
+        .animation(.easeOut(duration: 0.18), value: model.uploadTask?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileDelete?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileRename?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileChmod?.id)

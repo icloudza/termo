@@ -6,6 +6,29 @@ struct RemoteFSError: Error {
     var isConflict: Bool = false
 }
 
+// MARK: - 上传 v2 传输层类型
+
+/// 传输信号（单一原子状态）。
+enum UploadSignal { case run, cancel }
+
+/// 单文件传输控制盒（跨线程，锁保护）：携带信号 + 已发送字节（仅供 UI 进度）。
+final class UploadControl: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _signal: UploadSignal = .run
+    private var _sent: Int64 = 0
+    func set(_ s: UploadSignal) { lock.lock(); _signal = s; lock.unlock() }
+    var signal: UploadSignal { lock.lock(); defer { lock.unlock() }; return _signal }
+    func setSent(_ v: Int64) { lock.lock(); _sent = v; lock.unlock() }
+    var sent: Int64 { lock.lock(); defer { lock.unlock() }; return _sent }
+}
+
+/// 单文件传输结果。续传偏移**不在这里返回**——必须由上层在传输结束后重新 stat 远端 .part 得到
+/// （本地"已发送"含管道缓冲，会高估实际落地字节，当偏移会造成数据空洞，见审查 R1）。
+enum UploadOutcome: Equatable { case completed, cancelled, failed(String) }
+
+/// 上传前探测：远端 .part 半截大小、正式文件是否存在/大小。
+struct UploadProbe { let partSize: Int64; let finalExists: Bool; let finalSize: Int64 }
+
 /// 文件浏览/树的加载状态。
 enum LoadPhase: Equatable { case loading, loaded, error(String) }
 
@@ -26,6 +49,33 @@ struct RemoteFile: Identifiable, Hashable {
 final class RemoteFS {
     private let ssh: SSHConnection
     init(_ ssh: SSHConnection) { self.ssh = ssh }
+
+    // MARK: - SFTP 会话（懒建，串行；传输级失败时本会话粘性回退到 shell-exec）
+    private var _sftp: SFTPSession?
+    private let sftpLock = NSLock()
+    private var sftpUsable = true
+
+    private var isSftpUsable: Bool { sftpLock.lock(); defer { sftpLock.unlock() }; return sftpUsable }
+    private func session() -> SFTPSession {
+        sftpLock.lock(); defer { sftpLock.unlock() }
+        if let s = _sftp { return s }
+        let s = SFTPSession(ssh); _sftp = s; return s
+    }
+    /// 标记 SFTP 不可用 → 后续走 shell-exec；关掉子进程。
+    private func markSftpDown() {
+        sftpLock.lock(); let s = _sftp; sftpUsable = false; _sftp = nil; sftpLock.unlock()
+        Task { await s?.shutdown() }
+    }
+    /// 由 SFTP 权限位判文件类型（缺权限 → .other，审查 R3）。
+    private func kindFromMode(_ perm: UInt32?) -> RemoteFile.Kind {
+        guard let m = perm else { return .other }
+        switch m & 0o170000 {
+        case 0o040000: return .directory
+        case 0o120000: return .symlink
+        case 0o100000: return .file
+        default:       return .other
+        }
+    }
 
     struct OpResult { let data: Data; let stderr: Data; let code: Int32 }
 
@@ -86,11 +136,293 @@ final class RemoteFS {
         }
     }
 
+    // MARK: - 上传（.part 落地 + 续写 + 取消）
+
+    /// SFTP STAT 包装：文件不存在 → nil；其它错误（含 transport）抛出。
+    private func sftpStatOrNil(_ path: String) async throws -> SFTPAttrs? {
+        do { return try await session().stat(path) }
+        catch let e as SFTPError where e.isNoSuchFile { return nil }
+    }
+
+    /// 探测远端：.part 半截大小（续传偏移）、正式文件是否存在/大小（同名询问）。
+    func probeUpload(remotePath: String) async -> UploadProbe {
+        if isSftpUsable {
+            do {
+                let part = try await sftpStatOrNil(remotePath + ".part")
+                let final = try await sftpStatOrNil(remotePath)
+                return UploadProbe(partSize: Int64(part?.size ?? 0),
+                                   finalExists: final != nil,
+                                   finalSize: Int64(final?.size ?? 0))
+            }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch { return UploadProbe(partSize: 0, finalExists: false, finalSize: 0) }
+        }
+        return await probeUploadViaShell(remotePath: remotePath)
+    }
+    private func probeUploadViaShell(remotePath: String) async -> UploadProbe {
+        let b64 = Data(remotePath.utf8).base64EncodedString()
+        let cmd = "P=$(printf %s '\(b64)'|base64 -d); T=\"$P.part\"; ps=-1; fs=-1; fe=0; " +
+            "if [ -e \"$T\" ]; then ps=$(stat -c %s \"$T\" 2>/dev/null || stat -f %z \"$T\" 2>/dev/null); fi; " +
+            "if [ -e \"$P\" ]; then fe=1; fs=$(stat -c %s \"$P\" 2>/dev/null || stat -f %z \"$P\" 2>/dev/null); fi; " +
+            "echo \"$ps $fs $fe\""
+        let r = await run(cmd, timeout: 20)
+        let parts = (String(data: r.data, encoding: .utf8) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ").map { Int64($0) ?? -1 }
+        guard r.code == 0, parts.count >= 3 else {
+            return UploadProbe(partSize: 0, finalExists: false, finalSize: 0)
+        }
+        return UploadProbe(partSize: max(0, parts[0]), finalExists: parts[2] == 1, finalSize: max(0, parts[1]))
+    }
+
+    /// 把 .part 原子落地为正式文件（覆盖已有时先继承其权限，再原子改名）。整文件传完后调。
+    func finalizeUpload(remotePath: String) async -> Result<Void, RemoteFSError> {
+        if isSftpUsable {
+            do { try await sftpFinalize(remotePath); return .success(()) }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch let e as SFTPError { return .failure(RemoteFSError(message: e.message)) }
+            catch { return .failure(RemoteFSError(message: "落地失败")) }
+        }
+        return await finalizeUploadViaShell(remotePath: remotePath)
+    }
+    private func sftpFinalize(_ remotePath: String) async throws {
+        let s = session()
+        let part = remotePath + ".part"
+        if let perm = (try await sftpStatOrNil(remotePath))?.permissions {
+            try? await s.setPermissions(part, perm)        // 继承原权限（best-effort）
+        }
+        if await s.supportsPosixRename {
+            try await s.posixRename(from: part, to: remotePath)    // 原子覆盖（审查 R7）
+        } else {
+            do { try await s.rename(from: part, to: remotePath) }
+            catch { try? await s.remove(remotePath); try await s.rename(from: part, to: remotePath) }
+        }
+    }
+    private func finalizeUploadViaShell(remotePath: String) async -> Result<Void, RemoteFSError> {
+        let b64 = Data(remotePath.utf8).base64EncodedString()
+        let cmd = "P=$(printf %s '\(b64)'|base64 -d); T=\"$P.part\"; " +
+            "if [ -e \"$P\" ]; then chmod --reference=\"$P\" \"$T\" 2>/dev/null || " +
+            "chmod \"$(stat -f %Lp \"$P\" 2>/dev/null)\" \"$T\" 2>/dev/null; fi; " +
+            "mv -f \"$T\" \"$P\""
+        let r = await run(cmd, timeout: 30)
+        return r.code == 0 ? .success(()) : .failure(RemoteFSError(message: "落地失败（退出码 \(r.code)）"))
+    }
+
+    /// 删除远端 .part（取消并放弃时）。best-effort，失败靠下次 probe 自愈。
+    func cleanupPart(remotePath: String) async {
+        if isSftpUsable {
+            do { try await session().remove(remotePath + ".part"); return }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch { return }
+        }
+        let b64 = Data(remotePath.utf8).base64EncodedString()
+        _ = await run("P=$(printf %s '\(b64)'|base64 -d); rm -f \"$P.part\"", timeout: 15)
+    }
+
+    /// 上传单个本地文件到 "$remotePath.part"。SFTP 走原生偏移写（续传天然干净）；否则回退单管道 cat。
+    func upload(localURL: URL, toRemote remotePath: String,
+                startOffset: Int64, control: UploadControl) async -> UploadOutcome {
+        if isSftpUsable {
+            return await sftpUpload(localURL: localURL, toRemote: remotePath, startOffset: startOffset, control: control)
+        }
+        return await uploadViaShell(localURL: localURL, toRemote: remotePath, startOffset: startOffset, control: control)
+    }
+
+    /// SFTP 上传：OPEN(.part) → FSTAT 收敛偏移防空洞（R4）→ 32K WRITE 循环 → CLOSE。
+    /// 自己处理错误（不抛）：transport → markSftpDown + .failed（上层重试时会改走 shell 并重 probe 偏移）。
+    private func sftpUpload(localURL: URL, toRemote remotePath: String,
+                           startOffset: Int64, control: UploadControl) async -> UploadOutcome {
+        let s = session()
+        let part = remotePath + ".part"
+        let pflags = startOffset > 0 ? (SFTPFlag.WRITE | SFTPFlag.CREAT)
+                                     : (SFTPFlag.WRITE | SFTPFlag.CREAT | SFTPFlag.TRUNC)
+        do {
+            let h = try await s.open(part, pflags: pflags)
+            var off: UInt64 = 0
+            if startOffset > 0 {
+                let real = (try await s.fstat(h)).size ?? 0
+                off = min(UInt64(startOffset), real)      // 续传偏移以远端 .part 实际大小为准（R4）
+            }
+            guard let input = try? FileHandle(forReadingFrom: localURL) else {
+                await s.closeHandle(h); return .failed("无法读取本地文件")
+            }
+            if off > 0 { try? input.seek(toOffset: off) }
+            var sent = Int64(off)
+            control.setSent(sent)
+            while true {
+                if control.signal == .cancel { try? input.close(); await s.closeHandle(h); return .cancelled }
+                let chunk: Data
+                do {
+                    guard let c = try input.read(upToCount: 32 * 1024), !c.isEmpty else { break }   // EOF
+                    chunk = c
+                } catch { try? input.close(); await s.closeHandle(h); return .failed("读取本地文件出错") }
+                do { try await s.write(h, offset: UInt64(sent), data: chunk) }
+                catch let e as SFTPError where e.isTransport {
+                    try? input.close(); await s.closeHandle(h); markSftpDown(); return .failed("连接中断")
+                } catch let e as SFTPError {
+                    try? input.close(); await s.closeHandle(h)
+                    return .failed(e.isPermission ? "没有写入权限" : e.message)
+                }
+                sent += Int64(chunk.count)
+                control.setSent(sent)
+            }
+            try? input.close()
+            await s.closeHandle(h)
+            return .completed
+        } catch let e as SFTPError where e.isTransport {
+            markSftpDown(); return .failed("连接中断")
+        } catch let e as SFTPError {
+            return .failed(e.isPermission ? "没有写入权限" : e.message)
+        } catch {
+            return .failed("上传失败")
+        }
+    }
+
+    /// 单管道回退：喂 ssh stdin（cat > / cat >>），与 v1 同一条可靠路径。
+    private func uploadViaShell(localURL: URL, toRemote remotePath: String,
+                startOffset: Int64,
+                control: UploadControl) async -> UploadOutcome {
+        ensureControlDir()
+        let b64 = Data(remotePath.utf8).base64EncodedString()
+        let redir = startOffset > 0 ? ">>" : ">"
+        let remoteCmd = "P=$(printf %s '\(b64)'|base64 -d); T=\"$P.part\"; cat \(redir) \"$T\""
+
+        return await withCheckedContinuation { (cont: CheckedContinuation<UploadOutcome, Never>) in
+            let sshProc = Process()
+            sshProc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            sshProc.arguments = self.ssh.sshArguments(multiplex: true)
+                + ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4",
+                   "-o", "BatchMode=no", remoteCmd]
+            var env = ProcessInfo.processInfo.environment
+            if self.ssh.needsAskpass, let ap = SSHAskpass.envVars(password: self.ssh.password) {
+                for (k, v) in ap { env[k] = v }
+            }
+            sshProc.environment = env
+
+            let errPipe = Pipe(), sshIn = Pipe()
+            sshProc.standardOutput = FileHandle.nullDevice
+            sshProc.standardError = errPipe
+            sshProc.standardInput = sshIn
+            let feed = sshIn.fileHandleForWriting
+
+            let stopLock = NSLock()
+            var cancelled = false
+            var hitEOF = false
+            var feederError: String? = nil
+
+            var errData = Data()
+            let group = DispatchGroup()
+            group.enter()
+            DispatchQueue.global().async {
+                errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                group.leave()
+            }
+            group.notify(queue: .global()) {
+                sshProc.waitUntilExit()
+                stopLock.lock()
+                let c = cancelled; let eof = hitEOF; let ferr = feederError
+                stopLock.unlock()
+                if c { cont.resume(returning: .cancelled); return }
+                if let ferr { cont.resume(returning: .failed(ferr)); return }
+                if eof && sshProc.terminationStatus == 0 {
+                    cont.resume(returning: .completed)
+                } else {
+                    let e = String(data: errData, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    cont.resume(returning: .failed(e.isEmpty
+                        ? "上传中断（ssh \(sshProc.terminationStatus)）" : e))
+                }
+            }
+
+            do { try sshProc.run() }
+            catch { cont.resume(returning: .failed("无法启动 ssh")); return }
+
+            // 取消看门狗：喂入循环结束后若卡在「等 ssh 退出」，取消也能立刻杀掉 ssh（否则取消无效）。
+            DispatchQueue.global().async {
+                while sshProc.isRunning {
+                    if control.signal == .cancel {
+                        stopLock.lock(); cancelled = true; stopLock.unlock()
+                        sshProc.terminate(); break
+                    }
+                    Thread.sleep(forTimeInterval: 0.15)
+                }
+            }
+
+            // 后台喂入：本地文件(seek 到 startOffset) → ssh stdin
+            DispatchQueue.global().async {
+                guard let input = try? FileHandle(forReadingFrom: localURL) else {
+                    stopLock.lock(); feederError = "无法读取本地文件"; stopLock.unlock()
+                    try? feed.close()
+                    if sshProc.isRunning { sshProc.terminate() }
+                    return
+                }
+                if startOffset > 0 { try? input.seek(toOffset: UInt64(startOffset)) }
+                var sent = startOffset
+                control.setSent(sent)
+                while true {
+                    if control.signal == .cancel {
+                        stopLock.lock(); cancelled = true; stopLock.unlock(); break
+                    }
+                    let chunk: Data
+                    do {
+                        guard let c = try input.read(upToCount: 256 * 1024), !c.isEmpty else {
+                            stopLock.lock(); hitEOF = true; stopLock.unlock(); break
+                        }
+                        chunk = c
+                    } catch {
+                        stopLock.lock(); feederError = "读取本地文件出错"; stopLock.unlock(); break
+                    }
+                    do { try feed.write(contentsOf: chunk) }
+                    catch {
+                        stopLock.lock(); if !cancelled { feederError = "连接中断" }; stopLock.unlock(); break
+                    }
+                    sent += Int64(chunk.count)
+                    control.setSent(sent)
+                }
+                try? input.close()
+                try? feed.close()   // 关 ssh stdin → 远端 cat 收 EOF 落地 → ssh 退出
+                if control.signal == .cancel, sshProc.isRunning { sshProc.terminate() }
+            }
+        }
+    }
+
     // MARK: - 文件读写
+
+    func read(_ path: String, limit: Int) async -> Result<(data: Data, version: String?), RemoteFSError> {
+        if isSftpUsable {
+            do { return .success(try await sftpRead(path, limit: limit)) }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch let e as SFTPError {
+                return .failure(RemoteFSError(message: e.isNoSuchFile ? "文件不存在"
+                    : (e.isPermission ? "没有读取权限" : e.message)))
+            }
+            catch { return .failure(RemoteFSError(message: "无法读取文件")) }
+        }
+        return await readViaShell(path, limit: limit)
+    }
+
+    private func sftpRead(_ path: String, limit: Int) async throws -> (data: Data, version: String?) {
+        let s = session()
+        let h = try await s.open(path, pflags: SFTPFlag.READ)
+        do {
+            let version = (try await s.fstat(h)).versionToken   // "mtime:size"，用 FSTAT 跟随链接（审查 R9）
+            var data = Data()
+            while data.count < limit {
+                let want = UInt32(min(32 * 1024, limit - data.count))
+                guard let chunk = try await s.read(h, offset: UInt64(data.count), length: want),
+                      !chunk.isEmpty else { break }
+                data.append(chunk)
+            }
+            await s.closeHandle(h)
+            return (data, version)
+        } catch {
+            await s.closeHandle(h); throw error
+        }
+    }
 
     /// 读取远端文件（base64 安全传输，二进制安全）。最多读取 `limit` 字节。
     /// 返回内容 + **版本令牌**（`mtime:size` 字符串，乐观锁用；stat 不可用时为 nil）。输出首行=版本，其余=base64。
-    func read(_ path: String, limit: Int) async -> Result<(data: Data, version: String?), RemoteFSError> {
+    private func readViaShell(_ path: String, limit: Int) async -> Result<(data: Data, version: String?), RemoteFSError> {
         let b64 = Data(path.utf8).base64EncodedString()
         // head -c 限制读取量；base64 编码避免控制字符被 shell/传输破坏
         let cmd = "P=$(printf %s '\(b64)'|base64 -d); " +
@@ -131,6 +463,51 @@ final class RemoteFS {
     ///   `mv`/继承不可用时（如目录不可写、非 GNU、非 root）回退 `cat >` 原地覆盖（保 inode/属主、零权限要求）。
     /// 成功返回**新版本令牌** `mtime:size`，上层据此更新基准。
     func write(_ path: String, data: Data, expectedVersion: String?) async -> Result<String, RemoteFSError> {
+        if isSftpUsable {
+            do { return .success(try await sftpWrite(path, data: data, expectedVersion: expectedVersion)) }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch let e as RemoteFSError { return .failure(e) }                // 冲突等已映射
+            catch let e as SFTPError { return .failure(RemoteFSError(message: e.isPermission ? "没有写入权限" : e.message)) }
+            catch { return .failure(RemoteFSError(message: "保存失败")) }
+        }
+        return await writeViaShell(path, data: data, expectedVersion: expectedVersion)
+    }
+
+    /// SFTP 写：三态 STAT 冲突检测 → 写 .termo-tmp → 继承权限 → 原子改名（posix-rename 优先）→ 返回新版本令牌。
+    private func sftpWrite(_ path: String, data: Data, expectedVersion: String?) async throws -> String {
+        let s = session()
+        let existing = try await sftpStatOrNil(path)        // 不存在→nil；transport→抛
+        if let st = existing, let exp = expectedVersion, !exp.isEmpty {
+            if let token = st.versionToken {
+                if token != exp { throw RemoteFSError(message: "文件已被其他程序或会话修改", isConflict: true) }
+            } else {
+                throw RemoteFSError(message: "无法校验文件版本", isConflict: true)   // 存在但属性不全（审查 R6）
+            }
+        }
+        let tmp = path + ".termo-tmp"
+        let h = try await s.open(tmp, pflags: SFTPFlag.WRITE | SFTPFlag.CREAT | SFTPFlag.TRUNC)
+        do {
+            var off = 0
+            while off < data.count {
+                let end = min(off + 32 * 1024, data.count)
+                let lo = data.index(data.startIndex, offsetBy: off)
+                let hi = data.index(data.startIndex, offsetBy: end)
+                try await s.write(h, offset: UInt64(off), data: data.subdata(in: lo..<hi))
+                off = end
+            }
+            await s.closeHandle(h)
+        } catch { await s.closeHandle(h); throw error }
+        if let perm = existing?.permissions { try? await s.setPermissions(tmp, perm) }
+        if await s.supportsPosixRename {
+            try await s.posixRename(from: tmp, to: path)
+        } else {
+            do { try await s.rename(from: tmp, to: path) }
+            catch { try? await s.remove(path); try await s.rename(from: tmp, to: path) }
+        }
+        return (try? await s.stat(path))?.versionToken ?? ""
+    }
+
+    private func writeViaShell(_ path: String, data: Data, expectedVersion: String?) async -> Result<String, RemoteFSError> {
         let b64 = Data(path.utf8).base64EncodedString()
         let payload = Data(data.base64EncodedString().utf8)
         let exp = expectedVersion ?? ""          // 我方 stat 得到的 "mtime:size"，纯数字+冒号，内联安全
@@ -165,8 +542,21 @@ final class RemoteFS {
 
     // MARK: - 文件管理（删除 / 重命名 / 权限）
 
-    /// 删除文件或目录（目录用 `rm -rf`）。
+    /// 删除文件或目录。目录递归删除 SFTP v3 无原生支持 → 恒走 shell `rm -rf`（审查 R19）。
     func delete(_ path: String, isDir: Bool) async -> Result<Void, RemoteFSError> {
+        if isDir { return await deleteViaShell(path, isDir: true) }
+        if isSftpUsable {
+            do { try await session().remove(path); return .success(()) }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch let e as SFTPError {
+                return .failure(RemoteFSError(message: e.isPermission ? "没有删除权限"
+                    : (e.isNoSuchFile ? "文件不存在" : e.message)))
+            }
+            catch { return .failure(RemoteFSError(message: "删除失败")) }
+        }
+        return await deleteViaShell(path, isDir: false)
+    }
+    private func deleteViaShell(_ path: String, isDir: Bool) async -> Result<Void, RemoteFSError> {
         let b64 = Data(path.utf8).base64EncodedString()
         let rm = isDir ? "rm -rf" : "rm -f"
         let cmd = "P=$(printf %s '\(b64)'|base64 -d); \(rm) -- \"$P\""
@@ -180,8 +570,24 @@ final class RemoteFS {
         return .success(())
     }
 
-    /// 重命名 / 移动（同目录改名即重命名）。目标已存在则拒绝，避免覆盖。
+    /// 重命名 / 移动。目标已存在则拒绝，避免覆盖。
     func rename(_ from: String, to: String) async -> Result<Void, RemoteFSError> {
+        if isSftpUsable {
+            do {
+                if try await sftpStatOrNil(to) != nil { return .failure(RemoteFSError(message: "目标名称已存在")) }
+                try await session().rename(from: from, to: to)
+                return .success(())
+            }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch let e as SFTPError {
+                // RENAME v3 不覆盖：目标已存在通常回 FAILURE
+                return .failure(RemoteFSError(message: e.isPermission ? "没有重命名权限" : "目标名称已存在"))
+            }
+            catch { return .failure(RemoteFSError(message: "重命名失败")) }
+        }
+        return await renameViaShell(from, to: to)
+    }
+    private func renameViaShell(_ from: String, to: String) async -> Result<Void, RemoteFSError> {
         let bf = Data(from.utf8).base64EncodedString()
         let bt = Data(to.utf8).base64EncodedString()
         let cmd = "F=$(printf %s '\(bf)'|base64 -d); T=$(printf %s '\(bt)'|base64 -d); " +
@@ -200,7 +606,16 @@ final class RemoteFS {
 
     /// 修改权限（mode = 八进制字符串，如 "755"）。
     func chmod(_ path: String, mode: String) async -> Result<Void, RemoteFSError> {
-        // mode 由调用方保证为 3–4 位八进制数字，内联安全
+        if isSftpUsable {
+            guard let m = UInt32(mode, radix: 8) else { return .failure(RemoteFSError(message: "权限值无效")) }
+            do { try await session().setPermissions(path, m); return .success(()) }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch let e as SFTPError { return .failure(RemoteFSError(message: e.isPermission ? "没有修改权限的权限" : e.message)) }
+            catch { return .failure(RemoteFSError(message: "修改权限失败")) }
+        }
+        return await chmodViaShell(path, mode: mode)
+    }
+    private func chmodViaShell(_ path: String, mode: String) async -> Result<Void, RemoteFSError> {
         let b64 = Data(path.utf8).base64EncodedString()
         let cmd = "P=$(printf %s '\(b64)'|base64 -d); chmod \(mode) -- \"$P\""
         let r = await run(cmd)
@@ -213,15 +628,37 @@ final class RemoteFS {
         return .success(())
     }
 
-    /// 路径是否存在（区分"远端已删除"与"瞬时失败/无权限"）。
+    /// 路径是否存在。
     func exists(_ path: String) async -> Bool {
+        if isSftpUsable {
+            do { _ = try await session().stat(path); return true }
+            catch let e as SFTPError where e.isNoSuchFile { return false }
+            catch let e as SFTPError where e.isTransport { markSftpDown(); return await existsViaShell(path) }
+            catch { return false }
+        }
+        return await existsViaShell(path)
+    }
+    private func existsViaShell(_ path: String) async -> Bool {
         let b64 = Data(path.utf8).base64EncodedString()
         let r = await run("P=$(printf %s '\(b64)'|base64 -d); [ -e \"$P\" ] && echo __Y__ || echo __N__")
         return (String(data: r.data, encoding: .utf8) ?? "").contains("__Y__")
     }
 
-    /// 取当前权限（八进制三位，如 0o755 的十进制值）。GNU `stat -c %a` / BSD `stat -f %Lp`。
+    /// 取当前权限（八进制低 12 位，含 setuid/setgid/sticky）。
     func statPerms(_ path: String) async -> Result<Int, RemoteFSError> {
+        if isSftpUsable {
+            do {
+                guard let p = (try await session().stat(path)).permissions else {
+                    return .failure(RemoteFSError(message: "无法读取权限"))
+                }
+                return .success(Int(p & 0o7777))
+            }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch { return .failure(RemoteFSError(message: "无法读取权限")) }
+        }
+        return await statPermsViaShell(path)
+    }
+    private func statPermsViaShell(_ path: String) async -> Result<Int, RemoteFSError> {
         let b64 = Data(path.utf8).base64EncodedString()
         let cmd = "P=$(printf %s '\(b64)'|base64 -d); stat -c '%a' \"$P\" 2>/dev/null || stat -f '%Lp' \"$P\" 2>/dev/null"
         let r = await run(cmd)
@@ -246,13 +683,55 @@ final class RemoteFS {
 
     /// 登录用户的家目录绝对路径。
     func home() async -> String {
+        if isSftpUsable {
+            do { let p = try await session().realpath("."); return p.isEmpty ? "/" : p }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch { /* 业务级失败：退到 shell */ }
+        }
+        return await homeViaShell()
+    }
+    private func homeViaShell() async -> String {
         let r = await run("cd && pwd")
         let s = String(data: r.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return s.isEmpty ? "/" : s
     }
 
-    /// 列出某绝对路径下的条目。优先 GNU `find -printf`（含大小/时间），失败回退到 `ls -1Ap`（仅名称/类型）。
     func list(_ path: String) async -> Result<[RemoteFile], RemoteFSError> {
+        if isSftpUsable {
+            do { return .success(try await sftpList(path)) }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch let e as SFTPError {
+                return .failure(RemoteFSError(message: e.isNoSuchFile ? "目录不存在"
+                    : (e.isPermission ? "没有访问权限" : e.message)))
+            }
+            catch { return .failure(RemoteFSError(message: "列目录失败")) }
+        }
+        return await listViaShell(path)
+    }
+
+    private func sftpList(_ path: String) async throws -> [RemoteFile] {
+        let s = session()
+        let h = try await s.opendir(path)
+        var files: [RemoteFile] = []
+        do {
+            while let batch = try await s.readdir(h) {
+                for (name, attrs) in batch where name != "." && name != ".." {
+                    files.append(RemoteFile(
+                        name: name, path: join(path, name),
+                        kind: kindFromMode(attrs.permissions),
+                        size: Int64(attrs.size ?? 0),
+                        modified: attrs.mtime.map { Date(timeIntervalSince1970: TimeInterval($0)) }))
+                }
+            }
+            await s.closeHandle(h)
+        } catch {
+            await s.closeHandle(h); throw error
+        }
+        return sorted(files)
+    }
+
+    /// 列出某绝对路径下的条目。优先 GNU `find -printf`（含大小/时间），失败回退到 `ls -1Ap`（仅名称/类型）。
+    private func listViaShell(_ path: String) async -> Result<[RemoteFile], RemoteFSError> {
         let b64 = Data(path.utf8).base64EncodedString()
         // 主路径：GNU find，NUL 分隔，字段 = 类型\t字节\t mtime秒 \t basename
         let gnu = "P=$(printf %s '\(b64)'|base64 -d); " +

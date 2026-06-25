@@ -38,6 +38,7 @@ final class AppModel: ObservableObject {
     @Published var pendingFileChmod: ChmodContext? = nil
     @Published var pendingFileRefresh: RefreshConflictContext? = nil
     @Published var pendingFileInfo: FileInfoContext? = nil
+    @Published var uploadTask: UploadTask? = nil   // 非 nil 时展示上传进度弹窗
 
     @Published var hosts: [Host] = []
     /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
@@ -624,7 +625,8 @@ final class AppModel: ObservableObject {
         performCloseTab(tabId)   // 内部已清理该标签的 fileTreeState / tabCwd
         if let hostId, let host = hosts.first(where: { $0.id == hostId }) {
             let stillUsed = tabs.contains { ($0.kind == .terminal || $0.kind == .files) && $0.hostId == hostId }
-            if !stillUsed { RemoteFS(host.ssh ?? SSHConnection()).closeMaster() }
+            // 上传进行中不关主连接（closeMaster 会掐断复用同一 master 的上传，审查 R20）
+            if !stillUsed, !uploadActive { RemoteFS(host.ssh ?? SSHConnection()).closeMaster() }
         }
     }
 
@@ -879,6 +881,39 @@ final class AppModel: ObservableObject {
         case .failed(let msg):
             pendingFileInfo = FileInfoContext(title: "刷新失败", message: msg)
         }
+    }
+
+    /// 某主机是否有上传进行中（用于守卫 closeMaster 不掐断上传连接，审查 R20）。
+    var uploadActive: Bool {
+        guard let t = uploadTask else { return false }
+        return t.phase == .running
+    }
+
+    /// 上传文件到某文件夹：弹系统选择器（可多选文件），在弹窗里逐个上传，支持暂停/续传/压缩/同名询问。
+    func beginUpload(into folder: RemoteFile, host: Host, tree: FileTreeState) {
+        guard folder.isDir else { return }
+        // 单并发：已有上传进行中则拒绝（避免同目标 .part 撞名，审查 R16）
+        if uploadActive {
+            pendingFileInfo = FileInfoContext(title: "已有上传进行中",
+                                              message: "请等当前上传结束后再开始新的上传。")
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "上传"
+        panel.message = "选择要上传到「\(folder.name)」的文件"
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+
+        let folderPath = folder.path
+        let task = UploadTask(files: panel.urls, destDir: folderPath,
+                              fs: RemoteFS(host.ssh ?? SSHConnection())) { [weak tree] in
+            // 有文件落地后刷新目标目录，让新文件出现在树里
+            Task { @MainActor in _ = await tree?.refreshDir(folderPath) }
+        }
+        uploadTask = task
+        task.start()   // 压缩默认开、无需配置 → 选完即开始
     }
 
     func fileMenuRequestDelete(_ file: RemoteFile, host: Host, tree: FileTreeState) {

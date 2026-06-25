@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 目录树节点（纯数据；不再是 ObservableObject——避免上千节点各自观察的开销）。
 final class FileTreeNode {
-    let file: RemoteFile
+    var file: RemoteFile                  // 可变：重命名后本地原地同步名/路径
     var children: [FileTreeNode]? = nil   // nil = 尚未加载
     var isExpanded = false
     var isLoading = false
@@ -203,18 +203,57 @@ final class FileTreeState: ObservableObject {
         return r
     }
 
-    /// 重命名（同目录改名）：成功后刷新所在目录。返回新路径供上层更新已打开编辑器。
+    /// 重命名（同目录改名）：成功后**本地原地同步**（不再 re-list，瞬时、不塌已展开的子目录），
+    /// 保持选中（配合"必要时才滚"自动定位到新位置）。返回新路径供上层同步已打开编辑器。
     func performRename(_ file: RemoteFile, newName: String) async -> Result<String, RemoteFSError> {
-        let newPath = Self.parentPath(file.path) == "/" ? "/" + newName : Self.parentPath(file.path) + "/" + newName
+        let parent = Self.parentPath(file.path)
+        let newPath = parent == "/" ? "/" + newName : parent + "/" + newName
         let r = await fs.rename(file.path, to: newPath)
         switch r {
         case .success:
-            await refreshParent(of: file.path)
+            renameLocally(oldPath: file.path, newName: newName, newPath: newPath)
             selectedPath = newPath
             rebuild()
             return .success(newPath)
         case .failure(let e):
             return .failure(e)
+        }
+    }
+
+    /// 本地同步重命名：更新该节点的 file（名/路径）；目录则递归修正子孙 path 前缀；重排所在目录（名变→序变）。
+    private func renameLocally(oldPath: String, newName: String, newPath: String) {
+        guard let target = node(at: oldPath) else { return }   // 别叫 node：会遮蔽 node(at:) 方法
+        let f = target.file
+        target.file = RemoteFile(name: newName, path: newPath, kind: f.kind, size: f.size, modified: f.modified)
+        if f.isDir, let children = target.children {
+            retargetPaths(children, oldBase: oldPath, newBase: newPath)
+        }
+        // 名字变了，在所在目录里的字母序位置可能变 → 重排
+        let parent = Self.parentPath(oldPath)
+        if let pnode = node(at: parent) {
+            pnode.children = pnode.children.map(sortNodes)
+        } else {
+            roots = sortNodes(roots)   // 顶层（parent == "/"，无对应节点）
+        }
+    }
+
+    /// 递归把子孙节点的 path 前缀从 oldBase 换成 newBase（重命名目录时，子孙名不变、路径前缀变）。
+    private func retargetPaths(_ nodes: [FileTreeNode], oldBase: String, newBase: String) {
+        for n in nodes {
+            let p = n.file.path
+            guard p.hasPrefix(oldBase + "/") else { continue }
+            let nf = n.file
+            n.file = RemoteFile(name: nf.name, path: newBase + String(p.dropFirst(oldBase.count)),
+                                kind: nf.kind, size: nf.size, modified: nf.modified)
+            if let ch = n.children { retargetPaths(ch, oldBase: oldBase, newBase: newBase) }
+        }
+    }
+
+    /// 目录在前、再按名称不区分大小写排序（与 RemoteFS.sorted 一致）。
+    private func sortNodes(_ nodes: [FileTreeNode]) -> [FileTreeNode] {
+        nodes.sorted { a, b in
+            if a.file.isDir != b.file.isDir { return a.file.isDir }
+            return a.file.name.localizedCaseInsensitiveCompare(b.file.name) == .orderedAscending
         }
     }
 
@@ -268,7 +307,9 @@ struct SidebarFileTree: View {
                     }
                     .onChange(of: state.selectedPath) { sel in
                         guard let sel else { return }
-                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(sel, anchor: .center) }
+                        // anchor: nil —— 仅在目标不在视口内时「最小幅度」滚动把它带进来;
+                        // 已可见则不滚动。避免 .center 那样每次点击都强行居中,导致相邻文件来回跳。
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(sel, anchor: nil) }
                     }
                 }
             }
@@ -338,6 +379,12 @@ private struct FlatRow: View {
         .buttonStyle(.plain)
         .onHover { hover = $0 }
         .contextMenu {
+            if node.file.isDir {
+                Button { model.beginUpload(into: node.file, host: host, tree: tree) } label: {
+                    Label("上传文件…", systemImage: "square.and.arrow.up")
+                }
+                Divider()
+            }
             Button { model.fileMenuRefresh(node.file, host: host, tree: tree) } label: {
                 Label("刷新", systemImage: "arrow.clockwise")
             }

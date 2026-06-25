@@ -78,7 +78,7 @@ struct ChmodDialog: View {
                 grid.padding(.top, 2)
 
                 HStack(spacing: 8) {
-                    Text("八进制").font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                    Text("权限码").font(.system(size: 12)).foregroundStyle(Pal.subtext)
                     ThemedTextField(placeholder: "755", text: $octalText)
                         .frame(width: 72)
                         .onChange(of: octalText) { t in

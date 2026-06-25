@@ -25,10 +25,21 @@ let package = Package(
                 .product(name: "CodeEditSourceEditor", package: "CodeEditSourceEditor"),
             ],
             path: "Sources/Termo",
+            exclude: ["Info.plist"],   // 不当源文件扫描；由下方 linker 嵌入
             resources: [
                 .copy("Resources/AppIcon.icns"),
                 .copy("Resources/AppIcon.png"),
                 .copy("Resources/font-logos.ttf"),   // 发行版 logo 字体(OFL),运行时注册
+            ],
+            linkerSettings: [
+                // 把 Info.plist 嵌进可执行文件的 __TEXT,__info_plist 段。SwiftPM 可执行程序没有 .app 外壳，
+                // 这样 Bundle.main 才能拿到 bundle id / 版本等身份信息（影响 UserDefaults 域、Keychain、App 标识）。
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Sources/Termo/Info.plist",
+                ]),
             ]
         ),
     ]
