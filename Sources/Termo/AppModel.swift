@@ -17,9 +17,12 @@ struct PendingHostKey: Identifiable {
 final class AppModel: ObservableObject {
     @Published var section: Section = .hosts
     @Published var query: String = ""
+    // 脱敏显示:开启后隐藏列表/概览里的 IP·主机名(搜索框旁的眼睛按钮切换)。会话级,不持久化。
+    @Published var privacyMode: Bool = false
     @Published var tabs: [TabItem] = []
     @Published var activeTabId: Int? = nil
-    @Published var sidebarWidth: CGFloat = 224
+    // 注意:侧栏宽度已移到独立的 [[LayoutModel]] —— 拖动改宽度时不再触发本「上帝对象」的
+    // objectWillChange,避免 TabBar/Workspace 等重控件每帧重算(见 LayoutModel 注释)。
     @Published var settingsTab: SettingsTab = .general
     @Published var showSettings = false
     @Published var showAddHost = false
@@ -166,13 +169,21 @@ final class AppModel: ObservableObject {
     }
 
     // ---------- 系统信息探测 ----------
-    /// 远端一次性探测脚本：输出 OS/CORES/MEM/DISK 四行 key=value。
-    private static let probeScript =
-        ". /etc/os-release 2>/dev/null; " +
-        "echo \"OS=${PRETTY_NAME:-$(uname -sr)}\"; " +
-        "echo \"CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)\"; " +
-        "echo \"MEM=$(free -h 2>/dev/null | awk 'NR==2{print $2}')\"; " +
-        "echo \"DISK=$(df -h / 2>/dev/null | awk 'NR==2{print $3\"/\"$2}')\""
+    /// 远端一次性探测脚本：输出 key=value 多行。MEM/DISK/VRAM 输出**原始字节**(客户端再按
+    /// 1000 进制统一格式化,避免 free -h/df -h 的 Gi/Mi 浮动);DISK 为「已用 总量」两个字节数;
+    /// VRAM/GPU 仅在有 NVIDIA 显卡(nvidia-smi 可用)时非空。
+    private static let probeScript = """
+    . /etc/os-release 2>/dev/null
+    echo "OS=${PRETTY_NAME:-$(uname -sr)}"
+    echo "CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)"
+    mem=$(awk '/MemTotal/{printf "%.0f", $2*1024; exit}' /proc/meminfo 2>/dev/null)
+    [ -z "$mem" ] && mem=$(sysctl -n hw.memsize 2>/dev/null)
+    echo "MEM=$mem"
+    echo "DISK=$(df -k / 2>/dev/null | awk 'NR==2{printf "%.0f %.0f", $3*1024, $2*1024}')"
+    vram=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1} END{if(s>0) printf "%.0f", s*1048576}')
+    echo "VRAM=$vram"
+    echo "GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+    """
 
     /// 打开主机概览时调用：后台 SSH 跑一次探测脚本，取真实系统信息并缓存。
     func probeHostIfNeeded(_ host: Host) {
@@ -221,8 +232,15 @@ final class AppModel: ObservableObject {
             switch key {
             case "OS": specs.os = val
             case "CORES": specs.cores = val
-            case "MEM": specs.memory = val
-            case "DISK": specs.disk = val
+            case "MEM": if let b = Int64(val) { specs.memory = Self.fmtBytes(b) }
+            case "DISK":
+                // "已用字节 总字节" → "53.7 GB / 215 GB"
+                let p = val.split(separator: " ")
+                if p.count == 2, let u = Int64(p[0]), let t = Int64(p[1]) {
+                    specs.disk = "\(Self.fmtBytes(u)) / \(Self.fmtBytes(t))"
+                }
+            case "VRAM": if let b = Int64(val), b > 0 { specs.vram = Self.fmtBytes(b) }
+            case "GPU": specs.gpu = val
             default: break
             }
         }
@@ -230,6 +248,15 @@ final class AppModel: ObservableObject {
         hosts[idx].specs = specs
         hosts[idx].status = .online            // 探测成功 ⇒ 一定在线
         HostStore.saveHosts(hosts)
+    }
+
+    /// 字节数 → 1000 进制专业单位(KB/MB/GB/TB)。用十进制(decimal)风格,避免 1024 进制
+    /// 的 Gi/Mi 在不同机器/数值间浮动,展示统一专业。例:17179869184 → "17.18 GB"。
+    private static func fmtBytes(_ bytes: Int64) -> String {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
+        f.countStyle = .decimal
+        return f.string(fromByteCount: bytes)
     }
 
     // ---------- 在线状态检测 ----------

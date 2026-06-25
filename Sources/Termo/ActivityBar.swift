@@ -3,6 +3,9 @@ import SwiftUI
 
 struct ActivityBar: View {
     @ObservedObject var model: AppModel
+    // 非 @ObservedObject:本视图只在点击闭包里读写宽度,body 不依赖它。
+    // 若用 @ObservedObject,即便 body 不读宽度也会订阅其变化、拖动时被白白重算。
+    let layout: LayoutModel
     @ObservedObject private var theme = ThemeManager.shared
     @State private var isFullScreen = false
 
@@ -55,12 +58,13 @@ struct ActivityBar: View {
     private func item(_ symbol: String, _ section: Section) -> some View {
         let selected = model.section == section
         Button {
-            if model.section == section && model.sidebarWidth >= 10 {
-                withAnimation(.easeOut(duration: 0.2)) { model.sidebarWidth = 0 }
+            // 瞬间开合(不加动画):宽度滑动动画会逐帧重排工作区 → 卡顿。
+            if model.section == section && layout.sidebarWidth >= 10 {
+                layout.sidebarWidth = 0
             } else {
                 model.section = section
-                if model.sidebarWidth < 10 {
-                    withAnimation(.easeOut(duration: 0.2)) { model.sidebarWidth = 224 }
+                if layout.sidebarWidth < 10 {
+                    layout.sidebarWidth = 224
                 }
             }
         } label: {

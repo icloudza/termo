@@ -204,12 +204,32 @@ struct RDPConnection: Codable {
 
 /// SSH 探测得到的主机规格（真实数据，连接成功后填充）。
 struct HostSpecs: Codable {
+    enum CodingKeys: String, CodingKey { case os, cores, memory, disk, vram, gpu }
+
     var os: String = ""
     var cores: String = ""
     var memory: String = ""
     var disk: String = ""
+    var vram: String = ""   // 显存(检测到 NVIDIA 显卡时填充;空=无独显或无法检测)
+    var gpu: String = ""    // 显卡型号(可选)
 
-    var isEmpty: Bool { os.isEmpty && cores.isEmpty && memory.isEmpty && disk.isEmpty }
+    var isEmpty: Bool {
+        os.isEmpty && cores.isEmpty && memory.isEmpty && disk.isEmpty && vram.isEmpty && gpu.isEmpty
+    }
+}
+
+extension HostSpecs {
+    // 容错解码:老 hosts.json 缺少 vram/gpu(乃至其它)键时按空串处理,
+    // 否则合成解码器会抛 keyNotFound,导致整台主机加载失败。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        os = try c.decodeIfPresent(String.self, forKey: .os) ?? ""
+        cores = try c.decodeIfPresent(String.self, forKey: .cores) ?? ""
+        memory = try c.decodeIfPresent(String.self, forKey: .memory) ?? ""
+        disk = try c.decodeIfPresent(String.self, forKey: .disk) ?? ""
+        vram = try c.decodeIfPresent(String.self, forKey: .vram) ?? ""
+        gpu = try c.decodeIfPresent(String.self, forKey: .gpu) ?? ""
+    }
 }
 
 struct Host: Identifiable, Codable {

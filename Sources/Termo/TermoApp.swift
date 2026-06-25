@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         applyAppIcon()
         setupMainMenu()
+        _ = OSLogo.fontName   // 预注册打包的发行版 logo 字体(Font Logos)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -93,14 +94,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct ContentView: View {
     @StateObject private var model = AppModel()
+    // 侧栏宽度独立成一个对象,拖动它不会牵动 TabBar/Workspace 重算(见 LayoutModel)。
+    @StateObject private var layout = LayoutModel()
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         HStack(spacing: 0) {
-            ActivityBar(model: model)
-            Sidebar(model: model)
-            // 文件栏特权：允许拖到更宽（深层目录树）；其它区上限 320
-            SidebarDivider(width: $model.sidebarWidth, maxWidth: model.section == .files ? 600 : 320)
+            ActivityBar(model: model, layout: layout)
+            Sidebar(model: model, layout: layout)
+            // 文件栏特权：允许拖到更宽（深层目录树）；其它区上限 320。
+            // zIndex(1)：拖动时分隔条会画一条越过工作区的引导线,需盖在工作区之上。
+            SidebarDivider(layout: layout, maxWidth: model.section == .files ? 600 : 320)
+                .zIndex(1)
             VStack(spacing: 0) {
                 TabBar(model: model)
                 Workspace(model: model)
@@ -109,9 +114,10 @@ struct ContentView: View {
             .background(Pal.mantle)
         }
         .onChange(of: model.section) { sec in
-            // 离开文件栏时，若超过常规上限则收回（宽度是文件栏的特权）
-            if sec != .files, model.sidebarWidth > 320 {
-                withAnimation(.easeOut(duration: 0.2)) { model.sidebarWidth = 320 }
+            // 离开文件栏时，若超过常规上限则收回（宽度是文件栏的特权）。
+            // 瞬间收回(不加动画):宽度滑动会逐帧重排工作区 → 卡顿。
+            if sec != .files, layout.sidebarWidth > 320 {
+                layout.sidebarWidth = 320
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

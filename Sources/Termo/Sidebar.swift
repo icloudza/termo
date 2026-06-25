@@ -2,6 +2,7 @@ import SwiftUI
 
 struct Sidebar: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var layout: LayoutModel
     @ObservedObject private var theme = ThemeManager.shared
     @FocusState private var searchFocused: Bool
 
@@ -63,10 +64,10 @@ struct Sidebar: View {
             Spacer(minLength: 0)
             localTerminalButton
         }
-        .frame(width: max(224, model.sidebarWidth), alignment: .leading)
+        .frame(width: max(224, layout.sidebarWidth), alignment: .leading)
         .frame(maxHeight: .infinity)
         .background(Pal.mantle)
-        .frame(width: model.sidebarWidth, alignment: .leading)
+        .frame(width: layout.sidebarWidth, alignment: .leading)
         .clipped()
         .onChange(of: model.activeTabId) { _ in searchFocused = false }
     }
@@ -89,6 +90,15 @@ struct Sidebar: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Pal.text)
                 .focused($searchFocused)
+            // 脱敏开关:开启后隐藏列表/概览里的 IP·主机名(用于截图/共享屏幕)。
+            Button { model.privacyMode.toggle() } label: {
+                Image(systemName: model.privacyMode ? "eye.slash" : "eye")
+                    .font(.system(size: 12))
+                    .foregroundStyle(model.privacyMode ? Pal.mauve : Pal.overlay)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(model.privacyMode ? "显示真实信息" : "脱敏显示(隐藏 IP / 主机名)")
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
@@ -231,11 +241,13 @@ struct HostRow: View {
             model.openHost(host)
         } label: {
             HStack(spacing: 9) {
-                Circle().fill(host.statusColor).frame(width: 7, height: 7)
+                HostLeadingIcon(host: host)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(host.name).font(.system(size: 13)).foregroundStyle(Pal.text)
-                    Text(host.ipOrHost).font(.system(size: 11)).foregroundStyle(Pal.subtext)
+                    Text(host.ipOrHost)
+                        .font(.system(size: 11)).foregroundStyle(Pal.subtext)
                         .lineLimit(1)
+                        .privacyBlur(model.privacyMode)
                 }
                 Spacer()
                 // 延迟统一右对齐到行末，多主机竖排对齐
@@ -275,11 +287,13 @@ struct RDPHostRow: View {
             model.openHostRDP(host)
         } label: {
             HStack(spacing: 9) {
-                Circle().fill(host.statusColor).frame(width: 7, height: 7)
+                HostLeadingIcon(host: host)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(host.name).font(.system(size: 13)).foregroundStyle(Pal.text)
-                    Text(host.ipOrHost).font(.system(size: 11)).foregroundStyle(Pal.subtext)
+                    Text(host.ipOrHost)
+                        .font(.system(size: 11)).foregroundStyle(Pal.subtext)
                         .lineLimit(1)
+                        .privacyBlur(model.privacyMode)
                 }
                 Spacer()
                 Image(systemName: "display").font(.system(size: 11)).foregroundStyle(Pal.overlay)

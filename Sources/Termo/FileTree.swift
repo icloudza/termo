@@ -293,13 +293,12 @@ private struct FlatRow: View {
     let onOpenFile: (RemoteFile) -> Void
     @State private var hover = false
 
-    /// 估算名字是否被截断（行宽 - 缩进 - 箭头/图标/内边距 ≈ 可用文字宽）→ 截断才挂 tooltip。
+    /// 估算名字是否可能被截断 → 截断才挂 tooltip。
+    /// 廉价估算:仅按字符数 + 缩进深度判断,不做 NSString 文本测量、也不读侧栏宽度
+    /// （宽度已移出 AppModel;逐行测量在拖动/滚动时是明显的 CPU 浪费）。阈值按默认侧栏宽
+    /// （≈224px,约可容 30 个字符）取定;侧栏更窄时缩进会进一步压低可用字符数,故计入 depth。
     private var nameTruncated: Bool {
-        let avail = model.sidebarWidth - CGFloat(item.depth) * 12 - 62
-        guard avail > 0 else { return true }
-        let w = (item.node.file.name as NSString)
-            .size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width
-        return w > avail
+        item.node.file.name.count + item.depth * 2 > 30
     }
 
     var body: some View {

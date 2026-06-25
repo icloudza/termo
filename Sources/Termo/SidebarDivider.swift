@@ -1,12 +1,13 @@
 import SwiftUI
 
 struct SidebarDivider: View {
-    @Binding var width: CGFloat
+    @ObservedObject var layout: LayoutModel
     var maxWidth: CGFloat = 320          // 文件栏可传更大上限（深层目录树需要空间）
     @ObservedObject private var theme = ThemeManager.shared
     @State private var isHovering = false
     @State private var isDragging = false
     @State private var dragStartWidth: CGFloat = 0
+    @State private var pendingWidth: CGFloat = 0   // 拖动中的目标宽度（松手才提交给 layout）
 
     private let collapseThreshold: CGFloat = 60
     private var active: Bool { isHovering || isDragging }
@@ -23,32 +24,47 @@ struct SidebarDivider: View {
         }
         .frame(width: 5)
         .contentShape(Rectangle())
+        // 拖动时只移动这条引导线 —— 面板与工作区保持冻结,松手才一次性改宽度。
+        // 因此无论开多少标签 / 多大文件 / 多高吞吐终端,拖动过程恒为 O(1),绝对顺滑;
+        // 真正的重排(终端 reflow、编辑器重布局)只在松手时发生一次。
+        .overlay {
+            if isDragging {
+                Rectangle()
+                    .fill(Pal.mauve.opacity(0.55))
+                    .frame(width: 2)
+                    .offset(x: pendingWidth - dragStartWidth)
+                    .allowsHitTesting(false)
+            }
+        }
         .onHover { hover in
             isHovering = hover
             if hover { NSCursor.resizeLeftRight.push() }
             else { NSCursor.pop() }
         }
         .onTapGesture(count: 2) {
-            withAnimation(.easeOut(duration: 0.2)) {
-                width = width < 10 ? 224 : 0
-            }
+            // 瞬间开合(不加动画):滑动动画会逐帧重排工作区 → 卡顿。
+            layout.sidebarWidth = layout.sidebarWidth < 10 ? 224 : 0
         }
         .gesture(
             DragGesture(minimumDistance: 2, coordinateSpace: .global)
                 .onChanged { value in
                     if !isDragging {
                         isDragging = true
-                        dragStartWidth = width
+                        dragStartWidth = layout.sidebarWidth
+                        pendingWidth = dragStartWidth
                     }
-                    width = min(max(dragStartWidth + value.translation.width, 0), maxWidth)
+                    // 仅更新本地目标宽度,不写 layout —— 拖动中不触发任何重排。
+                    pendingWidth = min(max(dragStartWidth + value.translation.width, 0), maxWidth)
                 }
                 .onEnded { _ in
                     isDragging = false
-                    if width < collapseThreshold {
-                        withAnimation(.easeOut(duration: 0.15)) { width = 0 }
-                    } else if width < 140 {
-                        withAnimation(.easeOut(duration: 0.15)) { width = 140 }
-                    }
+                    var w = pendingWidth
+                    if w < collapseThreshold { w = 0 }
+                    else if w < 140 { w = 140 }
+                    // 松手:带轻动画滑到目标位置(从冻结的起始宽度补间到 w),避免面板"硬跳"。
+                    // 代价:动画期间宽度逐帧变化 → 终端会逐帧 reflow;非终端标签则顺滑。
+                    // 若觉得这段滑动仍顿,把本行换回 `layout.sidebarWidth = w`(瞬间到位)即可。
+                    withAnimation(.easeOut(duration: 0.12)) { layout.sidebarWidth = w }
                 }
         )
     }

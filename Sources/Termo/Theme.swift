@@ -145,6 +145,15 @@ func latencyColor(_ ms: Int) -> Color {
     return Pal.red
 }
 
+extension View {
+    /// 脱敏:开启时用毛玻璃(高斯模糊)遮住敏感内容,而不是替换文字 —— 更美观。
+    /// 用于隐藏列表/概览里的 IP·主机名(截图/共享屏幕时)。
+    @ViewBuilder
+    func privacyBlur(_ on: Bool, radius: CGFloat = 5) -> some View {
+        if on { blur(radius: radius) } else { self }
+    }
+}
+
 extension Color {
     init(hex: UInt32) {
         self.init(

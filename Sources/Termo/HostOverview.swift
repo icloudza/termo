@@ -17,6 +17,7 @@ struct HostOverview: View {
                 }
                 Text("\(host.addr) · 端口 \(host.port)")
                     .font(.system(size: 13)).foregroundStyle(Pal.subtext)
+                    .privacyBlur(model.privacyMode)
                     .padding(.top, 6).padding(.bottom, 16)
 
                 specsRow
@@ -64,6 +65,8 @@ struct HostOverview: View {
                 if !s.cores.isEmpty { specItem("核心", "\(s.cores) 核") }
                 if !s.memory.isEmpty { specItem("内存", s.memory) }
                 if !s.disk.isEmpty { specItem("磁盘", s.disk) }
+                if !s.vram.isEmpty { specItem("显存", s.vram) }
+                if !s.gpu.isEmpty { specItem("显卡", s.gpu) }
             }
             .padding(.bottom, 20)
         } else if model.probingHosts.contains(host.id) {

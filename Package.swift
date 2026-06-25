@@ -28,6 +28,7 @@ let package = Package(
             resources: [
                 .copy("Resources/AppIcon.icns"),
                 .copy("Resources/AppIcon.png"),
+                .copy("Resources/font-logos.ttf"),   // 发行版 logo 字体(OFL),运行时注册
             ]
         ),
     ]
