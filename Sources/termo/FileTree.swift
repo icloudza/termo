@@ -60,18 +60,30 @@ final class FileTreeState: ObservableObject {
         if node.isExpanded, node.children == nil {
             node.isLoading = true
             rebuild()
-            Task { await load(node); rebuild() }
+            Task {
+                let ok = await load(node)
+                // 加载失败（超时/连接抖动）则收起，避免「展开却空」的假象；下次点击会重新拉取
+                if !ok { node.isExpanded = false }
+                rebuild()
+            }
         } else {
             rebuild()
         }
     }
 
-    private func load(_ node: FileTreeNode) async {
+    /// 加载某目录的子节点。返回是否成功——失败**不缓存**（children 保持 nil），
+    /// 否则一次瞬时失败会把目录永久显示成空、再展开也不重拉。
+    @discardableResult
+    private func load(_ node: FileTreeNode) async -> Bool {
         let r = await fs.list(node.file.path)
         node.isLoading = false
         switch r {
-        case .success(let files): node.children = files.map { FileTreeNode(file: $0) }
-        case .failure: node.children = []
+        case .success(let files):
+            node.children = files.map { FileTreeNode(file: $0) }
+            return true
+        case .failure:
+            node.children = nil
+            return false
         }
     }
 
@@ -90,7 +102,8 @@ final class FileTreeState: ObservableObject {
             guard let node = level.first(where: { $0.file.name == comp }) else { break }
             target = node
             guard node.file.isDir else { break }
-            if node.children == nil { await load(node) }
+            // 加载失败则停在这一级，不展开、不缓存空（保持 children == nil 允许重试）
+            if node.children == nil { guard await load(node) else { break } }
             node.isExpanded = true
             level = node.children ?? []
         }
