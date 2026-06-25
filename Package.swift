@@ -2,15 +2,9 @@
 import PackageDescription
 
 let package = Package(
-    name: "termo",
-    // 默认本地化为简体中文：让 AppKit 提供的系统菜单/右键菜单/对话框等也显示中文，
-    // 与 App 自身的中文界面一致（否则在中文系统上这些会回退成英文）。
+    name: "Termo",
     defaultLocalization: "zh-Hans",
     platforms: [.macOS(.v13)],
-    // 可执行产品名为大写 Termo → 构建出的 .app 与 Dock 名称为「Termo」（内部目标仍叫 termo）
-    products: [
-        .executable(name: "Termo", targets: ["termo"]),
-    ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0"),
         // 本地空壳覆盖 CodeEdit 传递依赖的 SwiftLintPlugin，绕过其构建插件在沙盒中崩溃
@@ -20,12 +14,12 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "termo",
+            name: "Termo",
             dependencies: [
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "CodeEditSourceEditor", package: "CodeEditSourceEditor"),
             ],
-            path: "Sources/termo",
+            path: "Sources/Termo",
             resources: [
                 .copy("Resources/AppIcon.icns"),
                 .copy("Resources/AppIcon.png"),
