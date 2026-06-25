@@ -29,6 +29,13 @@ final class AppModel: ObservableObject {
     @Published var pendingHostKey: PendingHostKey? = nil   // 首次连接待验证的主机指纹
     @Published var connectingHost: Host? = nil   // 正在连接的主机（展示连接进度弹窗）
 
+    // 文件栏右键操作弹窗（删除确认 / 重命名 / 权限 / 刷新冲突 / 信息提示）
+    @Published var pendingFileDelete: FileOpContext? = nil
+    @Published var pendingFileRename: FileOpContext? = nil
+    @Published var pendingFileChmod: ChmodContext? = nil
+    @Published var pendingFileRefresh: RefreshConflictContext? = nil
+    @Published var pendingFileInfo: FileInfoContext? = nil
+
     @Published var hosts: [Host] = []
     /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
     @Published var sessions: [SessionEvent] = []
@@ -774,6 +781,9 @@ final class AppModel: ObservableObject {
 
     // ---------- 文件编辑 / 预览 ----------
     private var editorStates: [Int: EditorState] = [:]
+    /// 每个编辑器 tab 的托管视图缓存（NSHostingView 容器）。非 @Published——纯缓存，由 `CachedEditorHost`
+    /// 首次 makeNSView 时填充、关闭 tab 时清理。让编辑器实例脱离 SwiftUI 视图重建、整 tab 生命周期存活。
+    var editorHosts: [Int: NSView] = [:]
 
     func editorState(for tabId: Int) -> EditorState? { editorStates[tabId] }
 
@@ -793,6 +803,132 @@ final class AppModel: ObservableObject {
         st.loadIfNeeded()   // 立刻开始加载（点击即拉取，不等视图出现）
     }
 
+    /// 找到打开了某路径文件的编辑器（用于刷新/重命名时判断是否已打开、是否 dirty）。
+    func openEditor(forPath path: String, host: Host) -> EditorState? {
+        guard let tab = tabs.first(where: { $0.kind == .editor && $0.hostId == host.id && $0.filePath == path }) else {
+            return nil
+        }
+        return editorStates[tab.id]
+    }
+
+    // MARK: - 文件栏右键操作
+
+    /// 刷新：目录→重拉(删了则提示并回退上级)；文件→若在编辑器打开则刷新内容(dirty 先弹窗确认)，
+    /// 否则刷新其所在目录(目录内其它已打开/在改的编辑器不受影响，交由其自身保存冲突机制保护)。
+    func fileMenuRefresh(_ file: RemoteFile, host: Host, tree: FileTreeState) {
+        Task { @MainActor in
+            if file.isDir {
+                handleRefreshOutcome(await tree.refreshDir(file.path), name: file.name, isDir: true, tree: tree, path: file.path)
+            } else if let ed = openEditor(forPath: file.path, host: host) {
+                if ed.isDirty {
+                    pendingFileRefresh = RefreshConflictContext(editorState: ed, fileName: file.name)
+                } else {
+                    ed.reload()
+                }
+            } else {
+                handleRefreshOutcome(await tree.refreshParent(of: file.path), name: file.name, isDir: false, tree: tree, path: file.path)
+            }
+        }
+    }
+
+    func confirmFileRefreshReload() {
+        let ed = pendingFileRefresh?.editorState
+        pendingFileRefresh = nil
+        ed?.reload()
+    }
+
+    private func handleRefreshOutcome(_ outcome: FileTreeState.RefreshOutcome, name: String, isDir: Bool, tree: FileTreeState, path: String) {
+        switch outcome {
+        case .ok:
+            break
+        case .gone:
+            if isDir {
+                tree.removeAndSelectParent(path)
+                pendingFileInfo = FileInfoContext(title: "目录已被删除",
+                    message: "「\(name)」在远端已不存在，已为你移除并定位到上级目录。")
+            } else {
+                pendingFileInfo = FileInfoContext(title: "目录不存在", message: "该文件所在的目录在远端已不存在。")
+            }
+        case .failed(let msg):
+            pendingFileInfo = FileInfoContext(title: "刷新失败", message: msg)
+        }
+    }
+
+    func fileMenuRequestDelete(_ file: RemoteFile, host: Host, tree: FileTreeState) {
+        pendingFileDelete = FileOpContext(file: file, host: host, tree: tree)
+    }
+
+    func confirmFileDelete() {
+        guard let ctx = pendingFileDelete else { return }
+        pendingFileDelete = nil
+        Task { @MainActor in
+            if case .failure(let e) = await ctx.tree.performDelete(ctx.file) {
+                pendingFileInfo = FileInfoContext(title: "删除失败", message: e.message)
+            }
+        }
+    }
+
+    func fileMenuRequestRename(_ file: RemoteFile, host: Host, tree: FileTreeState) {
+        pendingFileRename = FileOpContext(file: file, host: host, tree: tree)
+    }
+
+    func confirmFileRename(newName: String) {
+        guard let ctx = pendingFileRename else { return }
+        pendingFileRename = nil
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("/") else {
+            pendingFileInfo = FileInfoContext(title: "名称无效", message: "名称不能为空或包含「/」。")
+            return
+        }
+        if trimmed == ctx.file.name { return }
+        let oldPath = ctx.file.path
+        Task { @MainActor in
+            switch await ctx.tree.performRename(ctx.file, newName: trimmed) {
+            case .success(let newPath):
+                syncRenamedEditorTab(oldPath: oldPath, newName: trimmed, newPath: newPath,
+                                     kind: ctx.file.kind, size: ctx.file.size, modified: ctx.file.modified,
+                                     host: ctx.host)
+            case .failure(let e):
+                pendingFileInfo = FileInfoContext(title: "重命名失败", message: e.message)
+            }
+        }
+    }
+
+    /// 重命名成功后同步「已打开该文件的编辑器标签」：未保存改动时不动并提示，否则更新标签标题/路径与编辑器的保存目标。
+    private func syncRenamedEditorTab(oldPath: String, newName: String, newPath: String,
+                                      kind: RemoteFile.Kind, size: Int64, modified: Date?, host: Host) {
+        guard let idx = tabs.firstIndex(where: {
+            $0.kind == .editor && $0.hostId == host.id && $0.filePath == oldPath
+        }) else { return }   // 没在编辑器打开 → 仅树已刷新即可
+        let tabId = tabs[idx].id
+        if editorStates[tabId]?.isDirty == true {
+            pendingFileInfo = FileInfoContext(title: "已重命名",
+                message: "该文件在编辑器中有未保存的修改，标签未同步——保存仍会写到原文件名，建议先保存或关闭后再重命名。")
+            return
+        }
+        let newFile = RemoteFile(name: newName, path: newPath, kind: kind, size: size, modified: modified)
+        tabs[idx].title = newName
+        tabs[idx].filePath = newPath
+        editorStates[tabId]?.rebind(to: newFile)
+    }
+
+    func fileMenuRequestChmod(_ file: RemoteFile, host: Host, tree: FileTreeState) {
+        Task { @MainActor in
+            let perms = await tree.currentPerms(file) ?? (file.isDir ? 0o755 : 0o644)
+            pendingFileChmod = ChmodContext(file: file, host: host, tree: tree, mode: perms)
+        }
+    }
+
+    func confirmFileChmod(mode: Int) {
+        guard let ctx = pendingFileChmod else { return }
+        pendingFileChmod = nil
+        Task { @MainActor in
+            if case .failure(let e) = await ctx.tree.performChmod(ctx.file, mode: String(mode, radix: 8)) {
+                pendingFileInfo = FileInfoContext(title: "修改权限失败", message: e.message)
+            }
+        }
+    }
+
     func selectTab(_ id: Int) {
         activeTabId = id
         // 切到编辑器标签时，让资源管理器高亮跟到它打开的文件
@@ -800,6 +936,40 @@ final class AppModel: ObservableObject {
            let path = tab.filePath, let host = host(tab.hostId) {
             revealInExplorer(path, host: host)
         }
+    }
+
+    /// tab keep-alive（Workspace ZStack 全量保活）后，切 tab 不再重建视图、库的 makeNSView 不再触发自动抢焦点。
+    /// 这里在 activeTabId 变化时显式把键盘焦点交给当前 tab，并确保焦点不滞留在已隐藏的会话上（防止键盘打进隐藏终端/编辑器）。
+    func focusActiveTab() {
+        guard let id = activeTabId, let tab = tabs.first(where: { $0.id == id }) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first
+            switch tab.kind {
+            case .terminal:
+                if let tv = self.terminals[id] { (tv.window ?? window)?.makeFirstResponder(tv) }
+            case .editor:
+                if let v = self.editorStates[id]?.focusView {
+                    (v.window ?? window)?.makeFirstResponder(v)
+                } else {
+                    self.resignTabResponderIfNeeded(window)
+                }
+            default:
+                self.resignTabResponderIfNeeded(window)
+            }
+        }
+    }
+
+    /// 仅当当前 first responder 落在某个 tab 视图（终端/编辑器）里时收回焦点，避免键盘打进隐藏 tab；
+    /// 不动侧栏搜索框等无关焦点。
+    private func resignTabResponderIfNeeded(_ window: NSWindow?) {
+        guard let window, let fr = window.firstResponder as? NSView else { return }
+        let inTerminal = terminals.values.contains { fr == $0 || fr.isDescendant(of: $0) }
+        let inEditor = editorStates.values.contains {
+            guard let v = $0.focusView else { return false }
+            return fr == v || fr.isDescendant(of: v)
+        }
+        if inTerminal || inEditor { window.makeFirstResponder(nil) }
     }
 
     @Published var pendingCloseTabId: Int? = nil
@@ -840,6 +1010,7 @@ final class AppModel: ObservableObject {
         fileTreeStates.removeValue(forKey: id)
         editorStates[id]?.cancel()
         editorStates.removeValue(forKey: id)
+        editorHosts.removeValue(forKey: id)   // 释放托管的编辑器实例
         rdpSessions[id]?.disconnect()
         rdpSessions.removeValue(forKey: id)
         tabCwd.removeValue(forKey: id)
@@ -899,4 +1070,33 @@ final class AppModel: ObservableObject {
         default:      return "「\(tab.title)」有正在运行的进程，关闭后进程将被终止。"
         }
     }
+}
+
+// MARK: - 文件栏右键操作的弹窗上下文
+
+struct FileOpContext: Identifiable {
+    let id = UUID()
+    let file: RemoteFile
+    let host: Host
+    let tree: FileTreeState
+}
+
+struct ChmodContext: Identifiable {
+    let id = UUID()
+    let file: RemoteFile
+    let host: Host
+    let tree: FileTreeState
+    let mode: Int   // 当前权限（八进制值，如 0o755）
+}
+
+struct RefreshConflictContext: Identifiable {
+    let id = UUID()
+    let editorState: EditorState
+    let fileName: String
+}
+
+struct FileInfoContext: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }

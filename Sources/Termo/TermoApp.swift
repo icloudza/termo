@@ -158,6 +158,7 @@ struct ContentView: View {
             }
             .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
         }
+        .overlay { fileOpOverlays }
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
         }
@@ -174,6 +175,58 @@ struct ContentView: View {
             AddRDPHostView(model: model, editing: host)
         }
         .onAppear { model.applyStartupIfNeeded() }
+    }
+
+    /// 文件栏右键操作的弹窗叠层（合成一个 overlay，避免 body 里 overlay 链过长导致编译器类型检查超时）。
+    @ViewBuilder
+    private var fileOpOverlays: some View {
+        ZStack {
+            if let ctx = model.pendingFileDelete {
+                ConfirmDialog(
+                    title: "删除「\(ctx.file.name)」？",
+                    message: ctx.file.isDir ? "该目录及其全部内容将被永久删除，不可恢复。" : "该文件将被永久删除，不可恢复。",
+                    confirmTitle: "删除", destructive: true,
+                    onConfirm: { model.confirmFileDelete() },
+                    onCancel: { model.pendingFileDelete = nil }
+                ).transition(.opacity)
+            }
+            if let ctx = model.pendingFileRefresh {
+                ConfirmDialog(
+                    title: "文件有未保存的修改",
+                    message: "「\(ctx.fileName)」在编辑器中有未保存的修改。重新加载会丢弃这些修改。",
+                    confirmTitle: "重新加载", destructive: true,
+                    onConfirm: { model.confirmFileRefreshReload() },
+                    onCancel: { model.pendingFileRefresh = nil }
+                ).transition(.opacity)
+            }
+            if let ctx = model.pendingFileRename {
+                RenameDialog(
+                    originalName: ctx.file.name,
+                    onConfirm: { model.confirmFileRename(newName: $0) },
+                    onCancel: { model.pendingFileRename = nil }
+                ).transition(.opacity)
+            }
+            if let ctx = model.pendingFileChmod {
+                ChmodDialog(
+                    fileName: ctx.file.name, initialMode: ctx.mode,
+                    onConfirm: { model.confirmFileChmod(mode: $0) },
+                    onCancel: { model.pendingFileChmod = nil }
+                ).transition(.opacity)
+            }
+            if let info = model.pendingFileInfo {
+                ConfirmDialog(
+                    title: info.title, message: info.message,
+                    confirmTitle: "好的", showCancel: false,
+                    onConfirm: { model.pendingFileInfo = nil },
+                    onCancel: { model.pendingFileInfo = nil }
+                ).transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: model.pendingFileDelete?.id)
+        .animation(.easeOut(duration: 0.15), value: model.pendingFileRename?.id)
+        .animation(.easeOut(duration: 0.15), value: model.pendingFileChmod?.id)
+        .animation(.easeOut(duration: 0.15), value: model.pendingFileRefresh?.id)
+        .animation(.easeOut(duration: 0.15), value: model.pendingFileInfo?.id)
     }
 }
 

@@ -47,12 +47,12 @@ extension ThemeColors {
         termCaret: 0xaeafad, termSelection: 0x264f78
     )
 
-    // 清新浅色风格
+    // 清新浅色风格——整体较纯白降一档亮度，减少眩光（保持原层次梯度 base>mantle>crust>surface0）
     static let light = ThemeColors(
-        crust: Color(hex: 0xeceef2),
-        mantle: Color(hex: 0xf5f6f8),
-        base: Color(hex: 0xffffff),
-        surface0: Color(hex: 0xe6e9f0),
+        crust: Color(hex: 0xe6e8ed),    // 活动栏（最暗一档）
+        mantle: Color(hex: 0xedeef2),   // 侧栏 / 标签栏
+        base: Color(hex: 0xf5f6f9),     // 工作区 / 编辑器（不再纯白）
+        surface0: Color(hex: 0xdfe2e9),
         text: Color(hex: 0x2e3440),
         textBright: Color(hex: 0x1a1d24),
         subtext: Color(hex: 0x6b7280),
@@ -61,7 +61,7 @@ extension ThemeColors {
         green: Color(hex: 0x10b981),
         yellow: Color(hex: 0xf59e0b),
         red: Color(hex: 0xef4444),
-        termBg: 0xffffff, termFg: 0x2e3440,
+        termBg: 0xf5f6f9, termFg: 0x2e3440,   // 终端/编辑器底同步降亮，去掉纯白眩光
         termCaret: 0x3b82f6, termSelection: 0xbfdbfe
     )
 }

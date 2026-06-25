@@ -7,6 +7,15 @@ final class ScrollMetrics: ObservableObject {
     @Published var visibleW: CGFloat = 0
     var maxScroll: CGFloat { max(0, contentW - visibleW) }
     var scrollTo: ((CGFloat) -> Void)?
+
+    /// 仅在有实际变化时才赋值发布。`@Published` 即便赋相同值也会触发 objectWillChange，
+    /// 而 `updateNSView` 每次更新都回写这些值 → 会形成「回写→重渲染→又回写」的自激环（CPU 跑满）。
+    /// 用阈值比较（亚像素抖动忽略）+ 改了才发布，彻底打破该环。
+    func set(offsetX: CGFloat, contentW: CGFloat, visibleW: CGFloat) {
+        if abs(self.offsetX - offsetX) > 0.5 { self.offsetX = offsetX }
+        if abs(self.contentW - contentW) > 0.5 { self.contentW = contentW }
+        if abs(self.visibleW - visibleW) > 0.5 { self.visibleW = visibleW }
+    }
 }
 
 final class HScroll: NSScrollView {
@@ -75,9 +84,7 @@ struct HScrollRep<Content: View>: NSViewRepresentable {
             let cw = sv.documentView?.frame.width ?? 0
             let vw = sv.contentView.bounds.width
             DispatchQueue.main.async {
-                metrics.offsetX = ox
-                metrics.contentW = cw
-                metrics.visibleW = vw
+                metrics.set(offsetX: ox, contentW: cw, visibleW: vw)
             }
         }
         sv.onScroll = push
@@ -137,9 +144,7 @@ struct HScrollRep<Content: View>: NSViewRepresentable {
                 co.lastActiveKey = activeKey
             }
 
-            metrics.offsetX = sv.contentView.bounds.origin.x
-            metrics.contentW = docW
-            metrics.visibleW = clipW
+            metrics.set(offsetX: sv.contentView.bounds.origin.x, contentW: docW, visibleW: clipW)
         }
     }
 

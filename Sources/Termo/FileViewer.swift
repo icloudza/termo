@@ -13,31 +13,44 @@ enum ViewerMode: Equatable {
 /// 单个文件编辑/预览标签的状态（每标签一份，AppModel 缓存）。
 @MainActor
 final class EditorState: ObservableObject {
-    let file: RemoteFile
+    @Published private(set) var file: RemoteFile   // 可被重命名同步更新（面包屑/语言识别/保存目标都跟随）
     let host: Host
     private let fs: RemoteFS
 
+    /// 文件被重命名后改绑到新路径（内容不变、不重新加载；后续保存写到新路径）。
+    func rebind(to newFile: RemoteFile) { file = newFile }
+
     @Published var phase: LoadPhase = .loading
     @Published var mode: ViewerMode = .text
-    @Published var text: String = "" { didSet { isDirty = (text != savedText) } }
+    @Published var text: String = "" {
+        didSet { isDirty = (text != savedText) }
+    }
     @Published var isDirty = false
+    /// 「基准（上次保存/加载的内容）」的版本号。每次基准变化 +1；编辑器的变更竖条协调器据此从 TextView
+    /// 实时快照新基准并对账。改动竖条本身完全由编辑器侧的 ChangeBarCoordinator 按字符偏移锚定计算，
+    /// 不再走这里的滞后行号管线（彻底消除快速编辑时的错位）。
+    @Published private(set) var savedVersion = 0
     @Published var saving = false
     @Published var saveError: String? = nil
+    /// 保存时检测到文件已被外部修改（乐观锁冲突）→ 弹窗让用户选 覆盖/重新加载/取消。
+    @Published var saveConflict = false
     @Published var image: NSImage? = nil
     @Published var byteSize: Int64 = 0
-    @Published var formatting = false
 
     private var savedText = ""
+    /// 文件版本令牌（`mtime:size`），打开时记录、保存成功后更新；保存前据此做冲突检测。nil=该文件无法 stat（不检测）。
+    private var fileVersion: String?
+    /// 编辑器文本视图（弱引用）：tab keep-alive 后由 AppModel.focusActiveTab 在切到本 tab 时聚焦它。
+    weak var focusView: NSView?
     private var rawData = Data()           // 二进制强制打开时用
     private var loadTask: Task<Void, Never>?
     private var started = false
 
-    // 上限：文本 2MB，图片 16MB
-    private let textLimit = 2_000_000
+    // 上限：文本 5MB，图片 16MB
+    private let textLimit = 5_000_000
     private let imageLimit = 16_000_000
 
     var canSave: Bool { (mode == .text) && isDirty && !saving }
-    var canFormat: Bool { mode == .text && !formatting && Self.formatterCommand(for: file.name) != nil }
     var lineCount: Int {
         guard !text.isEmpty else { return 1 }
         return text.reduce(1) { $0 + ($1 == "\n" ? 1 : 0) }
@@ -68,8 +81,9 @@ final class EditorState: ObservableObject {
             switch result {
             case .failure(let e):
                 phase = .error(e.message)
-            case .success(let data):
+            case .success(let (data, version)):
                 byteSize = file.size > 0 ? file.size : Int64(data.count)
+                fileVersion = version            // 记录基准版本（乐观锁）
                 if data.count > limit {
                     mode = .tooLarge
                     phase = .loaded
@@ -86,6 +100,7 @@ final class EditorState: ObservableObject {
                     savedText = str
                     text = str
                     isDirty = false
+                    savedVersion &+= 1   // 新基准 → 通知协调器重设基准
                     mode = .text
                 } else {
                     mode = .binary
@@ -101,53 +116,33 @@ final class EditorState: ObservableObject {
         savedText = str
         text = str
         isDirty = false
+        savedVersion &+= 1
         mode = .readonlyText
     }
 
     func reload() { load() }
 
-    func save() {
+    /// 保存。`force=true` 时跳过版本比对，强制覆盖（用于冲突弹窗里用户选「覆盖」）。
+    func save(force: Bool = false) {
         guard canSave else { return }
         saving = true
         saveError = nil
         let path = file.path
         let payload = Data(text.utf8)
         let snapshot = text
+        let expected = force ? nil : fileVersion
         Task {
-            let r = await fs.write(path, data: payload)
+            let r = await fs.write(path, data: payload, expectedVersion: expected)
             saving = false
             switch r {
-            case .success:
+            case .success(let newVersion):
                 savedText = snapshot
+                fileVersion = newVersion.isEmpty ? nil : newVersion
                 isDirty = (text != savedText)
+                savedVersion &+= 1   // 保存后基准更新 → 协调器重设基准并清空/重算改动竖条
             case .failure(let e):
+                if e.isConflict { saveConflict = true; return }   // 弹窗交给视图，不当普通错误
                 saveError = e.message
-            }
-        }
-    }
-
-    /// 整篇格式化：把 buffer 经 stdin 喂给远端格式化器，stdout 回写。失败/未安装则提示。
-    func format() {
-        guard canFormat, let cmd = Self.formatterCommand(for: file.name) else { return }
-        formatting = true
-        saveError = nil
-        let payload = Data(text.utf8)
-        let snapshot = text
-        Task {
-            let r = await fs.run(cmd, stdin: payload, timeout: 30)
-            formatting = false
-            let out = String(data: r.data, encoding: .utf8) ?? ""
-            if r.code == 0, !out.isEmpty {
-                if out != snapshot { text = out }   // didSet 标脏
-            } else {
-                let err = (String(data: r.stderr, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if err.contains("command not found") || err.contains("not found") || r.code == 127 {
-                    saveError = "远端未安装该格式化工具"
-                } else if !err.isEmpty {
-                    saveError = "格式化失败：" + String(err.prefix(100))
-                } else {
-                    saveError = "格式化失败（退出码 \(r.code)）"
-                }
             }
         }
     }
@@ -155,24 +150,6 @@ final class EditorState: ObservableObject {
     func cancel() { loadTask?.cancel() }
 
     // MARK: - 工具
-
-    /// 按文件类型返回「读 stdin、写 stdout」的远端格式化命令；不支持则 nil。
-    static func formatterCommand(for name: String) -> String? {
-        let lower = name.lowercased()
-        let ext = (lower as NSString).pathExtension
-        // 安全单引号包裹文件名（供 prettier 推断 parser）
-        let quoted = "'" + name.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        switch ext {
-        case "go": return "gofmt"
-        case "py", "pyi": return "black -q - 2>/dev/null"
-        case "rs": return "rustfmt --emit=stdout 2>/dev/null"
-        case "c", "h", "cpp", "cc", "cxx", "hpp", "hxx", "m", "mm": return "clang-format"
-        case "js", "jsx", "mjs", "cjs", "ts", "tsx", "json", "json5",
-             "css", "scss", "less", "html", "vue", "yaml", "yml", "md", "markdown":
-            return "prettier --stdin-filepath \(quoted)"
-        default: return nil
-        }
-    }
 
     static func isImageName(_ name: String) -> Bool {
         let ext = (name.lowercased() as NSString).pathExtension
@@ -201,6 +178,7 @@ private let editorHeaderInset: CGFloat = 14
 struct FileViewerView: View {
     @ObservedObject var state: EditorState
     @ObservedObject var model: AppModel
+    let tabId: Int
     @ObservedObject private var theme = ThemeManager.shared
     @ObservedObject private var settings = AppSettings.shared
 
@@ -218,6 +196,18 @@ struct FileViewerView: View {
         }
         .background(Pal.base)
         .onAppear { state.loadIfNeeded() }
+        // 乐观锁冲突：保存时发现文件已被外部修改 → 自定义弹窗让用户选覆盖/重载/取消（避免静默丢数据）
+        .overlay {
+            if state.saveConflict {
+                SaveConflictDialog(
+                    onOverwrite: { state.saveConflict = false; state.save(force: true) },
+                    onReload: { state.saveConflict = false; state.reload() },
+                    onCancel: { state.saveConflict = false }
+                )
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.16), value: state.saveConflict)
     }
 
     // MARK: 工具栏
@@ -264,23 +254,6 @@ struct FileViewerView: View {
                 }
                 .buttonStyle(.plain)
                 .help(settings.editorMinimap ? "隐藏缩略图" : "显示缩略图")
-            }
-
-            if state.mode == .text, EditorState.formatterCommand(for: state.file.name) != nil {
-                Button { state.format() } label: {
-                    Group {
-                        if state.formatting { ProgressView().controlSize(.small).scaleEffect(0.6) }
-                        else { Image(systemName: "wand.and.stars").font(.system(size: 12, weight: .medium)) }
-                    }
-                    .foregroundStyle(state.canFormat ? Pal.mauve : Pal.overlay)
-                    .frame(width: 26, height: 26)
-                    .background(Pal.fill(0.05), in: RoundedRectangle(cornerRadius: 6))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!state.canFormat)
-                .keyboardShortcut("f", modifiers: [.option, .shift])
-                .help("格式化（远端 gofmt/black/prettier 等）")
             }
 
             iconButton("arrow.clockwise", help: "重新加载") { state.reload() }
@@ -336,15 +309,9 @@ struct FileViewerView: View {
         case .loaded:
             switch state.mode {
             case .text, .readonlyText:
-                RemoteCodeEditor(
-                    text: $state.text,
-                    editable: state.mode == .text,
-                    fileName: state.file.name,
-                    colors: theme.colors,
-                    isDark: theme.isDark,
-                    font: Self.editorFont,
-                    showMinimap: settings.editorMinimap
-                )
+                // 编辑器实例由模型按 tab 缓存（NSHostingView 托管一次），SwiftUI 再重算也不会重建控制器
+                // → 撤销栈/光标/滚动整个 tab 生命周期存活（避免 setText 清栈丢历史）。
+                CachedEditorHost(model: model, tabId: tabId, state: state)
             case .image:
                 ImagePreviewView(image: state.image)
             case .binary:
@@ -361,14 +328,62 @@ struct FileViewerView: View {
     }
 
     static let editorFont: NSFont = {
-        let size: CGFloat = 13
-        // 用干净等宽字体（Nerd Font 的 leading/行间距过大，会让空行光标行变高两倍）。
-        // 代码编辑器不需要 Nerd 图标，优先 SF Mono / JetBrains Mono / Menlo。
-        for name in ["SF Mono", "JetBrains Mono", "JetBrainsMono-Regular", "Menlo", "Monaco"] {
+        let size: CGFloat = 12   // 与 Xcode 默认一致
+        // 用 SF Mono：NSFont(name:) 取不到家族名时回退 monospacedSystemFont —— 它在现代 macOS 上本身就是 SF Mono。
+        for name in ["SF Mono", "SFMono-Regular"] {
             if let f = NSFont(name: name, size: size) { return f }
         }
         return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }()
+}
+
+/// 把单个编辑器子树用 `NSHostingView` 托管一次、按 tabId 缓存在 `AppModel`（根治撤销/状态丢失）。
+/// `makeNSView` 永远返回缓存实例 → 外层 SwiftUI 再怎么重算/重建本 representable，内部
+/// `TextViewController`（连同 `CEUndoManager` 撤销栈、光标、滚动）都不会被重建/清栈，整 tab 生命周期存活。
+private struct CachedEditorHost: NSViewRepresentable {
+    let model: AppModel
+    let tabId: Int
+    let state: EditorState
+
+    func makeNSView(context: Context) -> NSView {
+        if let cached = model.editorHosts[tabId] { return cached }
+        let container = NSView()
+        let host = NSHostingView(rootView: EditorRoot(state: state))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(host)
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            host.topAnchor.constraint(equalTo: container.topAnchor),
+            host.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+        model.editorHosts[tabId] = container
+        return container
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// 编辑器根视图（被托管一次）：内部观察 theme/settings/state，以响应主题切换、缩略图开关、文本/基准变化，
+/// 全程不依赖外层重建。
+private struct EditorRoot: View {
+    @ObservedObject var state: EditorState
+    @ObservedObject private var theme = ThemeManager.shared
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        RemoteCodeEditor(
+            text: $state.text,
+            editable: state.mode == .text,
+            fileName: state.file.name,
+            colors: theme.colors,
+            isDark: theme.isDark,
+            font: FileViewerView.editorFont,
+            showMinimap: settings.editorMinimap,
+            savedVersion: state.savedVersion,
+            onEditorReady: { [weak state] v in state?.focusView = v }
+        )
+    }
 }
 
 // MARK: - 面包屑路径条（Xcode jump bar 风，可点击跳转左侧资源管理器）
@@ -403,8 +418,8 @@ private struct EditorBreadcrumb: View {
                     // 主机/工作区：单独的小胶囊标签，与目录区分
                     HostPill(name: host.name) { model.jumpToExplorer(path: "/", host: host) }
                     ForEach(crumbs) { crumb in
-                        HStack(spacing: 5) {
-                            Text("/").font(.system(size: 11)).foregroundStyle(Pal.overlay.opacity(0.4))
+                        HStack(spacing: 4) {
+                            Text("/").font(.system(size: 10.5)).foregroundStyle(Pal.overlay.opacity(0.4))
                             CrumbText(name: crumb.name, isLast: crumb.isLast, file: file) {
                                 model.jumpToExplorer(path: crumb.path, host: host)
                             }
@@ -419,7 +434,7 @@ private struct EditorBreadcrumb: View {
                 if let last = crumbs.last { proxy.scrollTo(last.id, anchor: .trailing) }
             }
         }
-        .frame(height: 28)
+        .frame(height: 22)
     }
 }
 
@@ -459,14 +474,14 @@ private struct CrumbText: View {
             HStack(spacing: 4) {
                 if isLast {
                     let ic = FileIcon.info(for: file)
-                    Image(systemName: ic.symbol).font(.system(size: 10)).foregroundStyle(ic.color)
+                    Image(systemName: ic.symbol).font(.system(size: 9.5)).foregroundStyle(ic.color)
                 }
                 Text(name)
-                    .font(.system(size: 11, weight: isLast ? .medium : .regular))
+                    .font(.system(size: 10.5, weight: isLast ? .medium : .regular))
                     .foregroundStyle(isLast ? Pal.text : (hover ? Pal.subtext : Pal.overlay))
                     .lineLimit(1)
             }
-            .padding(.horizontal, 4).padding(.vertical, 2)
+            .padding(.horizontal, 4).padding(.vertical, 1.5)
             .background(hover ? Pal.fill(0.06) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
             .contentShape(Rectangle())
         }
@@ -577,5 +592,72 @@ private struct TooLargeNoticeView: View {
                 .font(.system(size: 12)).foregroundStyle(Pal.subtext)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// 乐观锁冲突弹窗（自定义样式，对齐 [[HostKeyDialog]] 的卡片风，替代系统 .alert）。
+/// 紧凑卡片 + 底部一排精致 pill 按钮，克制用色：覆盖=淡红、重载=灰底、取消=纯文字。
+struct SaveConflictDialog: View {
+    let onOverwrite: () -> Void
+    let onReload: () -> Void
+    let onCancel: () -> Void
+    @ObservedObject private var theme = ThemeManager.shared
+    @State private var hovered: Int? = nil
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(theme.isDark ? 0.42 : 0.20).ignoresSafeArea()
+                .onTapGesture { onCancel() }
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13)).foregroundStyle(Pal.yellow)
+                    Text("文件已被外部修改")
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Pal.text)
+                    Spacer()
+                }
+                .padding(.bottom, 9)
+
+                Text("该文件自你打开后，已被其他程序或会话修改。「覆盖」会丢弃外部改动，「重新加载」会丢弃你未保存的修改。")
+                    .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(3)
+                    .padding(.bottom, 18)
+
+                HStack(spacing: 8) {
+                    Spacer()
+                    pill(0, "取消", fg: Pal.subtext,
+                         base: .clear, hover: Pal.fill(0.07), border: .clear, action: onCancel)
+                    pill(1, "重新加载", fg: Pal.text,
+                         base: Pal.fill(0.07), hover: Pal.fill(0.13), border: Pal.fill(0.10), action: onReload)
+                    pill(2, "覆盖", fg: Pal.red,
+                         base: Pal.red.opacity(0.12), hover: Pal.red.opacity(0.20),
+                         border: Pal.red.opacity(0.28), action: onOverwrite)
+                }
+            }
+            .padding(18)
+            .frame(width: 384)
+            .background(Pal.solidMantle, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Pal.fill(0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(theme.isDark ? 0.40 : 0.14), radius: 20, y: 7)
+        }
+        .preferredColorScheme(theme.isDark ? .dark : .light)
+    }
+
+    private func pill(_ id: Int, _ title: String, fg: Color,
+                      base: Color, hover: Color, border: Color,
+                      action: @escaping () -> Void) -> some View {
+        let isHover = hovered == id
+        return Button(action: action) {
+            Text(title)
+                .font(.system(size: 12.5, weight: .medium)).foregroundStyle(fg)
+                .padding(.horizontal, 14).padding(.vertical, 6.5)
+                .background(isHover ? hover : base, in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(border, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 ? id : (hovered == id ? nil : hovered) }
     }
 }

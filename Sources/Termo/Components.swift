@@ -40,6 +40,8 @@ struct SegmentedControl<T: Hashable>: View {
 struct ThemedTextField: View {
     let placeholder: String
     @Binding var text: String
+    var autofocus: Bool = false
+    var onSubmit: (() -> Void)? = nil
     @FocusState private var focused: Bool
     @ObservedObject private var theme = ThemeManager.shared
 
@@ -49,6 +51,7 @@ struct ThemedTextField: View {
             .font(.system(size: 13))
             .foregroundStyle(Pal.text)
             .focused($focused)
+            .onSubmit { onSubmit?() }
             .padding(.horizontal, 11)
             .padding(.vertical, 8)
             .background(theme.isDark ? Pal.fill(0.05) : Color.white, in: RoundedRectangle(cornerRadius: 8))
@@ -57,6 +60,7 @@ struct ThemedTextField: View {
                     .stroke(focused ? Pal.mauve : Pal.fill(0.12), lineWidth: focused ? 1.5 : 1)
             )
             .animation(.easeOut(duration: 0.12), value: focused)
+            .onAppear { if autofocus { focused = true } }
     }
 }
 
@@ -300,6 +304,31 @@ struct ThemedToggle: View {
     }
 }
 
+/// 自定义勾选框（与 ThemedToggle 同视觉语言：选中=mauve 填充 + 白勾；未选=描边空框）。
+struct ThemedCheckbox: View {
+    let isOn: Bool
+    let action: () -> Void
+    @ObservedObject private var theme = ThemeManager.shared
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.12)) { action() }
+        } label: {
+            RoundedRectangle(cornerRadius: 5)
+                .fill(isOn ? Pal.mauve : Pal.fill(0.10))
+                .overlay(RoundedRectangle(cornerRadius: 5)
+                    .stroke(isOn ? Color.clear : Pal.fill(0.22), lineWidth: 1))
+                .overlay(Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .opacity(isOn ? 1 : 0))
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// 居中确认对话框（带半透明遮罩），用作 NSAlert 的自定义替代。
 struct ConfirmDialog: View {
     let title: String
@@ -307,6 +336,7 @@ struct ConfirmDialog: View {
     var confirmTitle: String = "确认"
     var cancelTitle: String = "取消"
     var destructive: Bool = false
+    var showCancel: Bool = true   // 信息提示型弹窗设 false，仅一个按钮
     let onConfirm: () -> Void
     let onCancel: () -> Void
     @ObservedObject private var theme = ThemeManager.shared
@@ -328,7 +358,7 @@ struct ConfirmDialog: View {
 
                 HStack(spacing: 10) {
                     Spacer()
-                    SecondaryButton(title: cancelTitle, action: onCancel)
+                    if showCancel { SecondaryButton(title: cancelTitle, action: onCancel) }
                     Button(action: onConfirm) {
                         Text(confirmTitle)
                             .font(.system(size: 13, weight: .medium))

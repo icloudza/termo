@@ -100,8 +100,7 @@ struct Sidebar: View {
     @ViewBuilder
     private var filesPanel: some View {
         if let tree = model.sidebarFileTree {
-            SidebarFileTree(state: tree.state,
-                            onOpenFile: { model.openFile($0, host: tree.host) })
+            SidebarFileTree(state: tree.state, host: tree.host, model: model)
                 .id(tree.id)
         } else {
             VStack(spacing: 10) {

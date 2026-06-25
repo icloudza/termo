@@ -15,12 +15,33 @@ struct Workspace: View {
 
     @ViewBuilder
     private var content: some View {
-        if let id = model.activeTabId,
-           let tab = model.tabs.first(where: { $0.id == id }) {
+        if model.tabs.isEmpty {
+            WelcomeView(model: model)
+        } else {
+            // tab 全量保活：所有打开的 tab 视图常驻 ZStack，仅用 opacity/hitTesting 切换可见性、不重建。
+            // → 切 tab 瞬间无卡顿；终端、编辑器（含撤销历史/光标/滚动）随之常驻不销毁。
+            // 焦点不再靠"重建触发 makeNSView 抢焦点"，改由 onChange→focusActiveTab 显式赋予当前 tab。
+            ZStack {
+                ForEach(model.tabs, id: \.id) { tab in
+                    tabView(tab)
+                        .opacity(tab.id == model.activeTabId ? 1 : 0)
+                        .allowsHitTesting(tab.id == model.activeTabId)
+                        .zIndex(tab.id == model.activeTabId ? 1 : 0)
+                        .accessibilityHidden(tab.id != model.activeTabId)
+                }
+            }
+            .onChange(of: model.activeTabId) { _ in model.focusActiveTab() }
+            .onAppear { model.focusActiveTab() }
+        }
+    }
+
+    @ViewBuilder
+    private func tabView(_ tab: TabItem) -> some View {
+        Group {
             switch tab.kind {
             case .terminal:
-                TerminalSurface(terminal: model.terminalView(for: tab.id))
-                    .id(tab.id)
+                TerminalSurface(terminal: model.terminalView(for: tab.id),
+                                isActive: tab.id == model.activeTabId)
                     .padding(10)
             case .overview:
                 if let host = model.host(tab.hostId) {
@@ -30,27 +51,24 @@ struct Workspace: View {
                 if let host = model.host(tab.hostId) {
                     FileBrowser(state: model.browserState(for: tab.id, host: host),
                                 onOpenFile: { model.openFile($0, host: host) })
-                        .id(tab.id)
                 } else {
                     Text("无主机").font(.system(size: 13)).foregroundStyle(Pal.overlay)
                 }
             case .editor:
                 if let st = model.editorState(for: tab.id) {
-                    FileViewerView(state: st, model: model).id(tab.id)
+                    FileViewerView(state: st, model: model, tabId: tab.id)
                 } else {
                     Text("无法打开文件").font(.system(size: 13)).foregroundStyle(Pal.overlay)
                 }
             case .rdp:
                 if let host = model.host(tab.hostId) {
                     RDPSessionView(session: model.rdpSession(for: tab.id, host: host))
-                        .id(tab.id)
                 } else {
                     Text("无主机").font(.system(size: 13)).foregroundStyle(Pal.overlay)
                 }
             }
-        } else {
-            WelcomeView(model: model)
         }
+        .id(tab.id)
     }
 }
 

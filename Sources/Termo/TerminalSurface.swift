@@ -3,19 +3,24 @@ import SwiftUI
 
 struct TerminalSurface: NSViewRepresentable {
     let terminal: LocalProcessTerminalView
+    var isActive: Bool = true     // tab 是否为当前活动 tab（keep-alive 下所有终端常驻，靠这个区分）
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
         terminal.menu = Self.buildContextMenu()
-        DispatchQueue.main.async {
-            terminal.window?.makeFirstResponder(terminal)
+        terminal.isHidden = !isActive
+        // 只让活动终端首次创建时抢焦点；非活动的不抢（keep-alive 下会同时创建多个，避免互相抢）。
+        if isActive {
+            DispatchQueue.main.async { terminal.window?.makeFirstResponder(terminal) }
         }
         return terminal
     }
 
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-        // 不在这里抢焦点：updateNSView 会随任何重绘（主题/设置/hover）频繁触发，
-        // 在此 makeFirstResponder 会在用户于侧栏搜索框等处打字时把键盘焦点抢回终端。
-        // 首次出现与切到终端标签的聚焦由 makeNSView 负责（content 用 .id(tab.id)，切标签会重建）。
+        // 非活动终端 isHidden=true：AppKit 跳过其 draw（比 opacity=0 省），避免 N 个高吞吐后台终端
+        // 叠加离屏重绘的 CPU；进程/PTY 照常运行、输出继续进 SwiftTerm 缓冲。隐藏视图也会自动放弃 first
+        // responder（焦点安全）。切到终端的聚焦由 AppModel.focusActiveTab 显式处理 —— 不在此 makeFirstResponder：
+        // updateNSView 会随主题/设置/hover 任意重绘频繁触发，在此抢焦点会把键盘从侧栏搜索框抢回终端。
+        if nsView.isHidden == isActive { nsView.isHidden = !isActive }
     }
 
     private static func buildContextMenu() -> NSMenu {

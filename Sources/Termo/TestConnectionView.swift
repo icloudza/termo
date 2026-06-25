@@ -26,11 +26,11 @@ struct TestConnectionView: View {
             }
             .padding(.horizontal, 20).padding(.vertical, 16)
 
-            Divider().overlay(Pal.fill(0.06))
+            Rectangle().fill(Pal.fill(0.06)).frame(height: 1)
 
             ConnectionProgressView(tester: tester, targetLabel: targetLabel)
 
-            Divider().overlay(Pal.fill(0.06))
+            Rectangle().fill(Pal.fill(0.06)).frame(height: 1)
 
             // 底部
             HStack {
@@ -83,7 +83,7 @@ struct ConnectionProgressView: View {
             }
             .padding(.horizontal, 20).padding(.bottom, 12)
 
-            Divider().overlay(Pal.fill(0.06))
+            Rectangle().fill(Pal.fill(0.06)).frame(height: 1)
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
@@ -159,6 +159,8 @@ struct ConnectingDialog: View {
     @StateObject private var tester = ConnectionTester()
     @ObservedObject private var theme = ThemeManager.shared
     @State private var verifying = true
+    
+    private let dialogCornerRadius: CGFloat = 14
 
     var body: some View {
         ZStack {
@@ -169,7 +171,7 @@ struct ConnectingDialog: View {
                     Spacer()
                 }
                 .padding(.horizontal, 20).padding(.vertical, 16)
-                Divider().overlay(Pal.fill(0.06))
+                Rectangle().fill(Pal.fill(0.06)).frame(height: 1)
 
                 if verifying {
                     verifyingPanel
@@ -177,7 +179,7 @@ struct ConnectingDialog: View {
                     ConnectionProgressView(tester: tester, targetLabel: targetLabel)
                 }
 
-                Divider().overlay(Pal.fill(0.06))
+                Rectangle().fill(Pal.fill(0.06)).frame(height: 1)
                 HStack {
                     Spacer()
                     if verifying {
@@ -194,9 +196,14 @@ struct ConnectingDialog: View {
                 .padding(.horizontal, 20).padding(.vertical, 14)
             }
             .frame(width: 520, height: 560)
-            .background(Pal.solidMantle, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Pal.fill(0.08), lineWidth: 1))
-            .shadow(color: .black.opacity(0.4), radius: 24, y: 8)
+            .background(Pal.solidMantle)
+            .clipShape(
+                RoundedRectangle(cornerRadius: dialogCornerRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: dialogCornerRadius, style: .continuous)
+                    .strokeBorder(Pal.fill(0.08), lineWidth: 1)
+            }
         }
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .task {

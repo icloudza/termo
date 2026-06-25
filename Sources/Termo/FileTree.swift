@@ -132,12 +132,109 @@ final class FileTreeState: ObservableObject {
         selectedPath = nil
         startIfNeeded()
     }
+
+    // MARK: - 文件管理（右键菜单用）
+
+    enum RefreshOutcome { case ok, gone, failed(String) }
+
+    static func parentPath(_ p: String) -> String {
+        guard let slash = p.lastIndex(of: "/"), slash != p.startIndex else { return "/" }
+        return String(p[p.startIndex..<slash])
+    }
+
+    /// 按路径在树中查找节点（深度优先）。
+    func node(at path: String) -> FileTreeNode? {
+        func walk(_ nodes: [FileTreeNode]) -> FileTreeNode? {
+            for n in nodes {
+                if n.file.path == path { return n }
+                if let ch = n.children, let hit = walk(ch) { return hit }
+            }
+            return nil
+        }
+        return walk(roots)
+    }
+
+    /// 重新拉取某目录（保持展开）。失败时用 exists 区分「远端已删除」与瞬时失败。
+    @discardableResult
+    func refreshDir(_ path: String) async -> RefreshOutcome {
+        if path == "/" || path.isEmpty {
+            let r = await fs.list("/")
+            if case .success(let files) = r { roots = files.map { FileTreeNode(file: $0) }; rebuild(); return .ok }
+            return await fs.exists("/") ? .failed("无法刷新") : .gone
+        }
+        guard let node = node(at: path), node.file.isDir else { return .failed("不是目录") }
+        let r = await fs.list(path)
+        switch r {
+        case .success(let files):
+            node.children = files.map { FileTreeNode(file: $0) }
+            node.isExpanded = true
+            rebuild()
+            return .ok
+        case .failure(let e):
+            return await fs.exists(path) ? .failed(e.message) : .gone
+        }
+    }
+
+    /// 刷新某文件所在的目录。
+    @discardableResult
+    func refreshParent(of filePath: String) async -> RefreshOutcome {
+        await refreshDir(Self.parentPath(filePath))
+    }
+
+    /// 从树中移除某节点（删除后 / 远端已不存在时）并选中其上级。
+    func removeAndSelectParent(_ path: String) {
+        let parent = Self.parentPath(path)
+        func remove(_ nodes: inout [FileTreeNode]) -> Bool {
+            if let idx = nodes.firstIndex(where: { $0.file.path == path }) { nodes.remove(at: idx); return true }
+            for n in nodes where n.children != nil {
+                if remove(&n.children!) { return true }
+            }
+            return false
+        }
+        _ = remove(&roots)
+        selectedPath = (parent == "/") ? nil : parent
+        rebuild()
+    }
+
+    /// 删除：远端删除成功后从树移除并选中上级。
+    func performDelete(_ file: RemoteFile) async -> Result<Void, RemoteFSError> {
+        let r = await fs.delete(file.path, isDir: file.isDir)
+        if case .success = r { removeAndSelectParent(file.path) }
+        return r
+    }
+
+    /// 重命名（同目录改名）：成功后刷新所在目录。返回新路径供上层更新已打开编辑器。
+    func performRename(_ file: RemoteFile, newName: String) async -> Result<String, RemoteFSError> {
+        let newPath = Self.parentPath(file.path) == "/" ? "/" + newName : Self.parentPath(file.path) + "/" + newName
+        let r = await fs.rename(file.path, to: newPath)
+        switch r {
+        case .success:
+            await refreshParent(of: file.path)
+            selectedPath = newPath
+            rebuild()
+            return .success(newPath)
+        case .failure(let e):
+            return .failure(e)
+        }
+    }
+
+    func performChmod(_ file: RemoteFile, mode: String) async -> Result<Void, RemoteFSError> {
+        await fs.chmod(file.path, mode: mode)
+    }
+
+    func currentPerms(_ file: RemoteFile) async -> Int? {
+        if case .success(let v) = await fs.statPerms(file.path) { return v }
+        return nil
+    }
 }
 
 /// 侧栏远程文件目录树（VS Code 资源管理器风格，随终端 cwd 定位）。
 struct SidebarFileTree: View {
     @ObservedObject var state: FileTreeState
-    var onOpenFile: (RemoteFile) -> Void
+    let host: Host
+    let model: AppModel
+    // 注意：不要在此存任何闭包属性。闭包每帧新建会让 SwiftUI 认为输入变化 → 拖动侧栏宽度时
+    // 重算 ForEach(数千行) → 卡顿。打开文件直接用内部的 model.openFile，保持存储属性可比较、可跳过重算。
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
@@ -161,8 +258,9 @@ struct SidebarFileTree: View {
                             ForEach(state.flat) { item in
                                 FlatRow(item: item,
                                         selected: state.selectedPath,
+                                        host: host, model: model, tree: state,
                                         onTap: { state.toggle(item.node) },
-                                        onOpenFile: onOpenFile)
+                                        onOpenFile: { model.openFile($0, host: host) })
                                 .id(item.node.file.path)
                             }
                         }
@@ -188,9 +286,21 @@ struct SidebarFileTree: View {
 private struct FlatRow: View {
     let item: FlatNode
     let selected: String?
+    let host: Host
+    let model: AppModel
+    let tree: FileTreeState
     let onTap: () -> Void
     let onOpenFile: (RemoteFile) -> Void
     @State private var hover = false
+
+    /// 估算名字是否被截断（行宽 - 缩进 - 箭头/图标/内边距 ≈ 可用文字宽）→ 截断才挂 tooltip。
+    private var nameTruncated: Bool {
+        let avail = model.sidebarWidth - CGFloat(item.depth) * 12 - 62
+        guard avail > 0 else { return true }
+        let w = (item.node.file.name as NSString)
+            .size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width
+        return w > avail
+    }
 
     var body: some View {
         let node = item.node
@@ -228,5 +338,22 @@ private struct FlatRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
+        .contextMenu {
+            Button { model.fileMenuRefresh(node.file, host: host, tree: tree) } label: {
+                Label("刷新", systemImage: "arrow.clockwise")
+            }
+            Divider()
+            Button { model.fileMenuRequestRename(node.file, host: host, tree: tree) } label: {
+                Label("重命名", systemImage: "pencil")
+            }
+            Button { model.fileMenuRequestChmod(node.file, host: host, tree: tree) } label: {
+                Label("权限", systemImage: "lock")
+            }
+            Divider()
+            Button(role: .destructive) { model.fileMenuRequestDelete(node.file, host: host, tree: tree) } label: {
+                Label("删除", systemImage: "trash")
+            }
+        }
+        .tooltip(node.file.name, when: nameTruncated)
     }
 }
