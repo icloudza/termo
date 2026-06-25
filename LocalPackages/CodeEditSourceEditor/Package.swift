@@ -1,0 +1,35 @@
+// swift-tools-version: 5.9
+// termo vendored 副本（CodeEditSourceEditor 0.15.2）：为汉化 Find/Replace 面板与右键菜单的写死英文而引入。
+// 相对上游裁剪：删 testTarget 与 swift-custom-dump（仅测试用）。
+// CodeEditTextView 写 from:0.12.1，靠根包 ./LocalPackages/CodeEditTextView（identity=codeedittextview）按 identity
+// 覆盖成修过 inout 遮蔽 bug 的本地版；SwiftLintPlugin 靠根包 ./LocalPackages/SwiftLintPlugin 空壳覆盖绕过沙盒崩溃。
+import PackageDescription
+
+let package = Package(
+    name: "CodeEditSourceEditor",
+    platforms: [.macOS(.v13)],
+    products: [
+        .library(name: "CodeEditSourceEditor", targets: ["CodeEditSourceEditor"])
+    ],
+    dependencies: [
+        .package(url: "https://github.com/CodeEditApp/CodeEditTextView.git", from: "0.12.1"),
+        .package(url: "https://github.com/CodeEditApp/CodeEditLanguages.git", exact: "0.1.20"),
+        .package(url: "https://github.com/CodeEditApp/CodeEditSymbols.git", exact: "0.2.3"),
+        .package(url: "https://github.com/lukepistrol/SwiftLintPlugin", from: "0.2.2"),
+        .package(url: "https://github.com/ChimeHQ/TextFormation", from: "0.8.2"),
+    ],
+    targets: [
+        .target(
+            name: "CodeEditSourceEditor",
+            dependencies: [
+                "CodeEditTextView",
+                "CodeEditLanguages",
+                "TextFormation",
+                "CodeEditSymbols"
+            ],
+            plugins: [
+                .plugin(name: "SwiftLint", package: "SwiftLintPlugin")
+            ]
+        ),
+    ]
+)
