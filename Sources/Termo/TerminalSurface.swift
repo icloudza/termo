@@ -1,5 +1,62 @@
 import SwiftTerm
 import SwiftUI
+import UniformTypeIdentifiers
+
+/// 终端拖放区：外部文件拖入 → 上传到该终端的当前目录（OSC7 跟踪的 cwd）。
+/// 拖拽悬停时叠加蓝色边框、透明填充的反馈层（仅 SSH 终端可上传；本地终端不接管拖放）。
+struct TerminalDropArea: View {
+    let terminal: LocalProcessTerminalView
+    let isActive: Bool
+    let model: AppModel
+    let tabId: Int
+    let canUpload: Bool
+    @State private var targeted = false
+
+    private static let dropBlue = Color(hex: 0x1E90FF)   // 同编辑器改动竖条蓝
+
+    var body: some View {
+        TerminalSurface(terminal: terminal, isActive: isActive)
+            .overlay { if targeted { dropOverlay } }
+            .animation(.easeOut(duration: 0.12), value: targeted)
+            .onDrop(of: [.fileURL], isTargeted: canUpload ? $targeted : nil) { providers in
+                guard canUpload else { return false }
+                loadURLs(providers) { urls in
+                    if !urls.isEmpty { model.uploadDroppedFiles(urls, toTabId: tabId) }
+                }
+                return true
+            }
+    }
+
+    private var dropOverlay: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(Self.dropBlue.opacity(0.07))   // 内容透明、终端可见
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Self.dropBlue, lineWidth: 2))
+            .overlay {
+                VStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.up").font(.system(size: 22, weight: .medium))
+                    Text("松开以上传到当前目录").font(.system(size: 13, weight: .medium))
+                }
+                .foregroundStyle(Self.dropBlue)
+                .padding(.horizontal, 18).padding(.vertical, 14)
+                .background(Pal.solidMantle.opacity(0.92), in: RoundedRectangle(cornerRadius: 10))
+            }
+            .allowsHitTesting(false)
+            .transition(.opacity)
+    }
+
+    private func loadURLs(_ providers: [NSItemProvider], _ completion: @escaping ([URL]) -> Void) {
+        var urls: [URL] = []
+        let group = DispatchGroup()
+        for p in providers {
+            group.enter()
+            _ = p.loadObject(ofClass: URL.self) { url, _ in
+                if let url, url.isFileURL { urls.append(url) }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { completion(urls) }
+    }
+}
 
 struct TerminalSurface: NSViewRepresentable {
     let terminal: LocalProcessTerminalView

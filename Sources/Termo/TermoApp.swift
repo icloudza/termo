@@ -1,14 +1,25 @@
 import AppKit
 import SwiftUI
 
+/// 进程入口：必须在 `NSApplication` 初始化之前对齐语言。文件选择/保存等系统面板由独立服务渲染，
+/// 它沿用进程启动那一刻确定的语言；放到 App.init 里设已太晚。用 bundle 已按系统解析好、剥离地区
+/// 后缀的本地化（如把 zh-Hans-GB 归一为 zh-Hans）覆盖 AppleLanguages，让面板跟随系统语言。
 @main
+enum AppBootstrap {
+    static func main() {
+        let langs = Bundle.main.preferredLocalizations
+        if !langs.isEmpty { UserDefaults.standard.set(langs, forKey: "AppleLanguages") }
+        TermoApp.main()
+    }
+}
+
 struct TermoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                // 三栏布局（活动栏 + 主机侧栏 + 工作区）+ 设置/新增主机弹窗(≈720宽) 的合理下限
+                // 三栏布局（活动栏 + 主机侧栏 + 工作区）与设置/新增主机弹窗(约 720 宽) 的合理下限
                 .frame(minWidth: 860, minHeight: 560)
         }
         .windowStyle(.hiddenTitleBar)
@@ -22,12 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         applyAppIcon()
         setupMainMenu()
-        _ = OSLogo.fontName   // 预注册打包的发行版 logo 字体(Font Logos)
+        _ = OSLogo.fontName   // 预注册随包发行版 Logo 字体(Font Logos)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// 自定义中文主菜单：应用菜单只保留「关于」「退出」；保留「编辑」菜单以支持
-    /// 输入框/代码编辑器的复制粘贴等（否则这些标准操作会失效）。
+    /// 自定义中文主菜单：应用菜单只保留「关于」「退出」；保留「编辑」菜单以注册
+    /// 输入框/代码编辑器复制粘贴等标准操作的快捷键（否则这些操作会失效）。
     private func setupMainMenu() {
         let main = NSMenu()
 
@@ -43,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(NSMenuItem(title: "退出 Termo",
                                    action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
-        // 编辑菜单（复制/粘贴/撤销等依赖这些菜单项的快捷键注册）
+        // 编辑菜单（复制/粘贴/撤销等快捷键依赖这些菜单项才能注册）
         let editItem = NSMenuItem()
         main.addItem(editItem)
         let edit = NSMenu(title: "编辑")
@@ -101,21 +112,21 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             ActivityBar(model: model, layout: layout)
-            Sidebar(model: model, layout: layout)
-            // 文件栏特权：允许拖到更宽（深层目录树）；其它区上限 320。
-            // zIndex(1)：拖动时分隔条会画一条越过工作区的引导线,需盖在工作区之上。
+            Sidebar(model: model, tabs: model.tabsModel, layout: layout)
+            // 文件栏特权：允许拖到更宽（容纳深层目录树）；其它区上限 320。
+            // zIndex(1)：拖动时分隔条会画一条越过工作区的引导线,须盖在工作区之上。
             SidebarDivider(layout: layout, maxWidth: model.section == .files ? 600 : 320)
                 .zIndex(1)
             VStack(spacing: 0) {
-                TabBar(model: model)
-                Workspace(model: model)
+                TabBar(model: model, tabs: model.tabsModel)
+                Workspace(model: model, tabs: model.tabsModel)
                     .padding([.leading, .top], 3)
             }
             .background(Pal.mantle)
         }
         .onChange(of: model.section) { sec in
-            // 离开文件栏时，若超过常规上限则收回（宽度是文件栏的特权）。
-            // 瞬间收回(不加动画):宽度滑动会逐帧重排工作区 → 卡顿。
+            // 离开文件栏时，若超过常规上限则收回（额外宽度是文件栏的特权）。
+            // 瞬间收回(不加动画):宽度动画会逐帧重排工作区,造成卡顿。
             if sec != .files, layout.sidebarWidth > 320 {
                 layout.sidebarWidth = 320
             }
@@ -125,8 +136,8 @@ struct ContentView: View {
         .background(WindowConfigurator())
         .ignoresSafeArea()
         .preferredColorScheme(theme.isDark ? .dark : .light)
-        // 注意：动画必须局限在各自 overlay 的 ZStack 内，不能加在链上——否则会泄漏到
-        // 下方的 .sheet 子树，导致 sheet（如测试连接弹窗）内容出现时被错误动画。
+        // 注意：动画必须局限在各自 overlay 的 ZStack 内，不能加在视图链上——否则会泄漏到
+        // 下方的 .sheet 子树，导致 sheet（如测试连接弹窗）内容出现时被错误地附带动画。
         .overlay {
             ZStack {
                 if model.pendingCloseTabId != nil {
@@ -155,7 +166,7 @@ struct ContentView: View {
             }
             .animation(.easeOut(duration: 0.25), value: model.connectingHost?.id)
         }
-        // 指纹验证弹窗叠在连接弹窗之上（未知主机首次连接时需要用户核对）
+        // 指纹验证弹窗叠在连接弹窗之上（未知主机首次连接时需用户核对）
         .overlay {
             ZStack {
                 if let pending = model.pendingHostKey {
@@ -183,7 +194,7 @@ struct ContentView: View {
         .onAppear { model.applyStartupIfNeeded() }
     }
 
-    /// 文件栏右键操作的弹窗叠层（合成一个 overlay，避免 body 里 overlay 链过长导致编译器类型检查超时）。
+    /// 文件栏右键操作的弹窗叠层（合并为单个 overlay，避免 body 内 overlay 链过长导致编译器类型检查超时）。
     @ViewBuilder
     private var fileOpOverlays: some View {
         ZStack {
@@ -227,12 +238,15 @@ struct ContentView: View {
                     onCancel: { model.pendingFileInfo = nil }
                 ).transition(.opacity)
             }
-            if let task = model.uploadTask {
-                UploadDialog(task: task, onClose: { model.uploadTask = nil })
+            if let task = model.uploadTask, model.showUploadDialog {
+                UploadDialog(task: task,
+                             onHide: { model.showUploadDialog = false },
+                             onClose: { model.uploadTask = nil; model.showUploadDialog = false })
                     .transition(.opacity)
             }
         }
         .animation(.easeOut(duration: 0.18), value: model.uploadTask?.id)
+        .animation(.easeOut(duration: 0.18), value: model.showUploadDialog)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileDelete?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileRename?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileChmod?.id)
@@ -241,7 +255,7 @@ struct ContentView: View {
     }
 }
 
-/// 内容铺满到顶（fullSizeContentView + 透明标题栏），并把系统原生红绿灯整体下移，
+/// 内容铺满到顶（fullSizeContentView + 透明标题栏），并把系统原生窗口控制按钮整体下移，
 /// 与标签栏对齐（不再单独占用顶部一行）。下移量由 lightsDownOffset 控制。
 struct WindowConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
@@ -255,7 +269,7 @@ struct WindowConfigurator: NSViewRepresentable {
     final class Coordinator: NSObject {
         weak var window: NSWindow?
         private var originalY: [ObjectIdentifier: CGFloat] = [:]
-        private let lightsDownOffset: CGFloat = 9 // 红绿灯整体下移量
+        private let lightsDownOffset: CGFloat = 9 // 窗口控制按钮整体下移量
 
         func attach(to v: NSView, attempt: Int = 0) {
             DispatchQueue.main.async { [weak self] in
@@ -268,7 +282,7 @@ struct WindowConfigurator: NSViewRepresentable {
                 w.titlebarAppearsTransparent = true
                 w.titleVisibility = .hidden
                 w.styleMask.insert(.fullSizeContentView)
-                // 不修改标题栏容器高度——保持原生红绿灯外观和交互
+                // 不修改标题栏容器高度——保持原生窗口控制按钮的外观和交互
                 NotificationCenter.default.addObserver(self, selector: #selector(self.reposition), name: NSWindow.didResizeNotification, object: w)
                 NotificationCenter.default.addObserver(self, selector: #selector(self.reposition), name: NSWindow.didBecomeKeyNotification, object: w)
                 self.reposition()

@@ -36,10 +36,17 @@ struct SidebarDivider: View {
                     .allowsHitTesting(false)
             }
         }
-        .onHover { hover in
-            isHovering = hover
-            if hover { NSCursor.resizeLeftRight.push() }
-            else { NSCursor.pop() }
+        // 用 onContinuousHover 在每次移动时重设光标：push/pop 会被 SwiftUI 的 tracking area
+        // 在鼠标移动时重置回箭头，逐帧 set 才能稳定压住，显示左右拉伸光标。
+        .onContinuousHover { phase in
+            switch phase {
+            case .active:
+                if !isHovering { isHovering = true }
+                NSCursor.resizeLeftRight.set()
+            case .ended:
+                if isHovering { isHovering = false }
+                NSCursor.arrow.set()
+            }
         }
         .onTapGesture(count: 2) {
             // 瞬间开合(不加动画):滑动动画会逐帧重排工作区 → 卡顿。
@@ -55,6 +62,8 @@ struct SidebarDivider: View {
                     }
                     // 仅更新本地目标宽度,不写 layout —— 拖动中不触发任何重排。
                     pendingWidth = min(max(dragStartWidth + value.translation.width, 0), maxWidth)
+                    // 拖动中持续断言拉伸光标，防止鼠标移出窄热区时被重置回箭头。
+                    NSCursor.resizeLeftRight.set()
                 }
                 .onEnded { _ in
                     isDragging = false

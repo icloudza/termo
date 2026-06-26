@@ -5,7 +5,7 @@ import SwiftUI
 /// 发行版 Logo —— 用随 App 打包的 **Font Logos**(OFL 许可)字体渲染,运行时注册到本进程,
 /// 因此任何机器(含分发给用户的)都能显示,无需系统装字体。
 /// 数据源:主机探测得到的 `specs.os`(如 "Ubuntu 22.04.3 LTS");未探测/未识别时,
-/// 调用方([[HostLeadingIcon]])回退为原来的状态色圆点。
+/// 调用方([[HostLeadingIcon]])回退为延迟色圆点。
 enum OSLogo {
     /// 注册打包字体并返回其 PostScript 名(供 `.custom` 渲染);资源缺失/注册失败 → nil → 回退圆点。
     /// `static let` 保证只注册一次(在 [[TermoApp]] 启动时预热,首帧即可用)。
@@ -50,33 +50,46 @@ enum OSLogo {
     }
 }
 
-/// 主机行左侧图标:能识别 OS 且字体可用时,显示发行版 logo + 右下角叠加在线状态小点;
-/// 否则回退为原来的状态色圆点。两种形态都占同一 16pt 槽位 → 列表里名字左缘始终对齐。
+/// 主机行左侧图标:实心圆角方块,底色取 OS 品牌色、logo 描白(无 logo 的 Windows/未识别走纯色兜底);
+/// 右下角叠加延迟等级小点。固定 28pt 槽位 → 列表里名字左缘始终对齐。
 struct HostLeadingIcon: View {
     let host: Host
     @ObservedObject private var theme = ThemeManager.shared
 
+    private static let side: CGFloat = 28
+    private static let radius: CGFloat = 7
+
     var body: some View {
-        // SSH 主机用探测到的发行版(specs.os),回退到存储的 os 字段;RDP(Windows)无 logo → 走圆点。
+        // SSH 主机用探测到的发行版(specs.os),回退到存储的 os 字段;RDP 视为 Windows。
         let osStr = host.isRDP ? "windows" : (host.specs?.os ?? host.os)
+        let dotColor = LatencyLevel(ms: host.latencyMs).color   // 延迟等级着色:快绿、慢黄/红,未探测/不可达为灰
+        ZStack(alignment: .bottomTrailing) {
+            iconTile(osStr)
+            Circle()
+                .fill(dotColor)
+                .frame(width: 8, height: 8)
+                .overlay(Circle().stroke(Pal.mantle, lineWidth: 2))   // 描边与侧栏底色融合，使小点从实心底里分离
+                .offset(x: 1, y: 1)
+        }
+        .frame(width: Self.side, height: Self.side)
+    }
+
+    @ViewBuilder
+    private func iconTile(_ osStr: String) -> some View {
         if let name = OSLogo.fontName, let logo = OSLogo.info(for: osStr) {
-            ZStack(alignment: .bottomTrailing) {
-                Text(logo.glyph)
-                    .font(.custom(name, size: 14))
-                    // 离线时整体压暗,在线/未知用品牌色
-                    .foregroundStyle(host.status == .offline ? Pal.overlay : logo.color)
-                    .frame(width: 16, height: 16)
-                // 角标:保留在线/离线/未知的状态颜色(描边与侧栏底色融合)
-                Circle()
-                    .fill(host.statusColor)
-                    .frame(width: 5, height: 5)
-                    .overlay(Circle().stroke(Pal.mantle, lineWidth: 1.5))
-                    .offset(x: 1.5, y: 1.5)
-            }
-            .frame(width: 16, height: 16)
+            RoundedRectangle(cornerRadius: Self.radius)
+                .fill(logo.color)
+                .overlay(Text(logo.glyph).font(.custom(name, size: 16)).foregroundStyle(.white))
+                .frame(width: Self.side, height: Self.side)
         } else {
-            Circle().fill(host.statusColor).frame(width: 7, height: 7)
-                .frame(width: 16, height: 16)
+            // 无 logo（Windows/RDP 或未识别）：纯色底 + 系统符号，保持实心方块风格统一。
+            let bg: Color = host.isRDP ? Color(hex: 0x0078D4) : Pal.fill(0.14)
+            let fg: Color = host.isRDP ? .white : Pal.subtext
+            RoundedRectangle(cornerRadius: Self.radius)
+                .fill(bg)
+                .overlay(Image(systemName: host.isRDP ? "display" : "server.rack")
+                    .font(.system(size: 13, weight: .medium)).foregroundStyle(fg))
+                .frame(width: Self.side, height: Self.side)
         }
     }
 }

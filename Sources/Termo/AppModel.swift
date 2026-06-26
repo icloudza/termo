@@ -17,12 +17,22 @@ struct PendingHostKey: Identifiable {
 final class AppModel: ObservableObject {
     @Published var section: Section = .hosts
     @Published var query: String = ""
-    // 脱敏显示:开启后隐藏列表/概览里的 IP·主机名(搜索框旁的眼睛按钮切换)。会话级,不持久化。
+    // 脱敏显示:开启后隐藏列表/概览里的 IP 与主机名(搜索框旁的眼睛按钮切换)。会话级,不持久化。
     @Published var privacyMode: Bool = false
-    @Published var tabs: [TabItem] = []
-    @Published var activeTabId: Int? = nil
-    // 注意:侧栏宽度已移到独立的 [[LayoutModel]] —— 拖动改宽度时不再触发本「上帝对象」的
-    // objectWillChange,避免 TabBar/Workspace 等重控件每帧重算(见 LayoutModel 注释)。
+
+    // 标签状态独立成 [[TabsModel]]：TabBar/Workspace 只观察它，不被本对象其它 @Published 牵动重算。
+    // 下面两个转发计算属性让 AppModel 内部大量 tabs/activeTabId 引用零改动；视图层改为观察 tabsModel。
+    let tabsModel = TabsModel()
+    var tabs: [TabItem] {
+        get { tabsModel.tabs }
+        set { tabsModel.tabs = newValue }
+    }
+    var activeTabId: Int? {
+        get { tabsModel.activeTabId }
+        set { tabsModel.activeTabId = newValue }
+    }
+    // 侧栏宽度同样移到独立的 [[LayoutModel]]：拖动改宽度时不再触发本对象的
+    // objectWillChange，避免 TabBar/Workspace 等重控件每帧重算（见 LayoutModel 注释）。
     @Published var settingsTab: SettingsTab = .general
     @Published var showSettings = false
     @Published var showAddHost = false
@@ -38,7 +48,8 @@ final class AppModel: ObservableObject {
     @Published var pendingFileChmod: ChmodContext? = nil
     @Published var pendingFileRefresh: RefreshConflictContext? = nil
     @Published var pendingFileInfo: FileInfoContext? = nil
-    @Published var uploadTask: UploadTask? = nil   // 非 nil 时展示上传进度弹窗
+    @Published var uploadTask: UploadTask? = nil   // 当前上传任务（nil=无）
+    @Published var showUploadDialog = false        // 上传弹窗是否展开；隐藏后任务仍在后台跑，齿轮旁显示迷你进度
 
     @Published var hosts: [Host] = []
     /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
@@ -170,9 +181,9 @@ final class AppModel: ObservableObject {
     }
 
     // ---------- 系统信息探测 ----------
-    /// 远端一次性探测脚本：输出 key=value 多行。MEM/DISK/VRAM 输出**原始字节**(客户端再按
-    /// 1000 进制统一格式化,避免 free -h/df -h 的 Gi/Mi 浮动);DISK 为「已用 总量」两个字节数;
-    /// VRAM/GPU 仅在有 NVIDIA 显卡(nvidia-smi 可用)时非空。
+    /// 远端一次性探测脚本：输出多行 key=value。MEM/DISK/VRAM 输出原始字节（客户端再按
+    /// 1000 进制统一格式化，避免 free -h/df -h 的 Gi/Mi 单位浮动）；DISK 为「已用 总量」两个字节数；
+    /// VRAM/GPU 仅在有 NVIDIA 显卡（nvidia-smi 可用）时非空。
     private static let probeScript = """
     . /etc/os-release 2>/dev/null
     echo "OS=${PRETTY_NAME:-$(uname -sr)}"
@@ -186,9 +197,14 @@ final class AppModel: ObservableObject {
     echo "GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
     """
 
+    /// 系统信息缓存有效期：探测结果(OS/配置/磁盘)在此时间内复用，不重新 SSH 探测。
+    private static let specsTTL: TimeInterval = 30 * 60   // 30 分钟
+
     /// 打开主机概览时调用：后台 SSH 跑一次探测脚本，取真实系统信息并缓存。
+    /// 已有未过期的缓存(probedAt 在 specsTTL 内)则跳过——系统信息变化慢，无需每次打开都重探。
     func probeHostIfNeeded(_ host: Host) {
         guard let ssh = host.ssh, !ssh.host.isEmpty, !probingHosts.contains(host.id) else { return }
+        if let probedAt = host.specs?.probedAt, Date().timeIntervalSince(probedAt) < Self.specsTTL { return }
         probingHosts.insert(host.id)
         let id = host.id
 
@@ -246,13 +262,14 @@ final class AppModel: ObservableObject {
             }
         }
         guard !specs.isEmpty else { return }   // 探测失败（连接/认证失败）则保留原样
+        specs.probedAt = Date()                // 标记探测时间，供 TTL 缓存判定
         hosts[idx].specs = specs
         hosts[idx].status = .online            // 探测成功 ⇒ 一定在线
         HostStore.saveHosts(hosts)
     }
 
-    /// 字节数 → 1000 进制专业单位(KB/MB/GB/TB)。用十进制(decimal)风格,避免 1024 进制
-    /// 的 Gi/Mi 在不同机器/数值间浮动,展示统一专业。例:17179869184 → "17.18 GB"。
+    /// 字节数 → 1000 进制单位（KB/MB/GB/TB）。用十进制（decimal）风格，避免 1024 进制
+    /// 的 Gi/Mi 在不同机器/数值间单位浮动，保持展示统一。例：17179869184 → "17.18 GB"。
     private static func fmtBytes(_ bytes: Int64) -> String {
         let f = ByteCountFormatter()
         f.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
@@ -337,8 +354,8 @@ final class AppModel: ObservableObject {
     }
 
     /// 应用层延迟测量：TCP 连到 SSH 端口判断在线，并在隧道建立后测一次纯 1-RTT。
-    /// 注意纯 TCP/ICMP 握手在 TUN 模式代理下会被本地拦截（显示 ~2ms 假值），
-    /// 故改为「收 banner（含代理建隧道开销，丢弃）→ 发版本 → 计时收服务器 KEXINIT」，
+    /// 纯 TCP/ICMP 握手在 TUN 模式代理下会被本地拦截（显示 ~2ms 假值），
+    /// 故改为先收 banner（含代理建隧道开销，丢弃），再发版本、计时收服务器 KEXINIT；
     /// 这次往返穿过代理到真实服务器，反映真实延迟。多采样取首个 ≥3ms 干净值（避开粘包假 0）。
     private nonisolated static func sshLatency(host: String, port: Int) -> (Bool, Int?) {
         var online = false
@@ -348,13 +365,13 @@ final class AppModel: ObservableObject {
             if ok { online = true }
             if let rtt {
                 if rtt >= 3 { return (true, rtt) }   // 干净样本，直接用
-                smallSample = rtt                    // <3ms：可能粘包，先记着，继续采样
+                smallSample = rtt                    // <3ms：疑似粘包，先记下，继续采样
             }
         }
         return (online, online ? smallSample : nil)
     }
 
-    /// 单次探测：连接 → 读 banner → 发版本 → 计时读服务器 KEXINIT。返回 (TCP是否连通, 纯RTTms?)。
+    /// 单次探测：连接 → 读 banner → 发版本 → 计时读服务器 KEXINIT。返回 (TCP 是否连通, 纯 RTT 毫秒?)。
     private nonisolated static func probeOnce(host: String, port: Int, timeoutSec: Double) -> (Bool, Int?) {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
@@ -372,7 +389,7 @@ final class AppModel: ObservableObject {
         let flags = fcntl(fd, F_GETFL, 0)
         _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
 
-        // 1) 连接（非阻塞 + poll）
+        // 连接（非阻塞 + poll）
         if connect(fd, addr, info.pointee.ai_addrlen) != 0 {
             if errno != EINPROGRESS { return (false, nil) }
             if !waitFD(fd, POLLOUT, timeoutSec) { return (false, nil) }
@@ -383,10 +400,10 @@ final class AppModel: ObservableObject {
         }
         // TCP 已连通 ⇒ 在线
         var buf = [UInt8](repeating: 0, count: 512)
-        // 2) 读 banner（首包，含代理建隧道开销，丢弃）
+        // 读 banner（首包，含代理建隧道开销，丢弃）
         if !waitFD(fd, POLLIN, timeoutSec) { return (true, nil) }
         if recv(fd, &buf, buf.count, 0) <= 0 { return (true, nil) }
-        // 3) 发我方版本，计时等服务器 KEXINIT（隧道已建立 ⇒ 纯 1 RTT）
+        // 发我方版本，计时等服务器 KEXINIT（隧道已建立 ⇒ 纯 1 RTT）
         let ver = "SSH-2.0-termo\r\n"
         _ = ver.withCString { send(fd, $0, strlen($0), 0) }
         let t = DispatchTime.now()
@@ -425,7 +442,7 @@ final class AppModel: ObservableObject {
         // 启动即对所有主机做一次轻量在线检测
         defer { refreshAllStatuses() }
 
-        // 所有用 Pal 配色的视图都已直接 @ObservedObject ThemeManager.shared / AppSettings.shared，
+        // 用主题配色的视图都已直接 @ObservedObject ThemeManager.shared / AppSettings.shared，
         // 无需再把它们的 objectWillChange 转发到 AppModel（那样会让整棵视图树重复重建）。
         // 这里只订阅副作用：主题/设置变化时刷新各终端的配色与透明度。
         themeCancellable = ThemeManager.shared.objectWillChange.sink { [weak self] in
@@ -489,12 +506,12 @@ final class AppModel: ObservableObject {
     private var tabCwd: [Int: String] = [:]
     private var termDelegates: [Int: TerminalSessionDelegate] = [:]
     func handleTerminalCwd(tabId: Int, path: String) {
-        guard tabCwd[tabId] != path else { return }   // 去重：同一目录不重复定位（OSC7 每次提示符都会发）
+        guard tabCwd[tabId] != path else { return }   // 去重：同一目录不重复定位（OSC 7 每次提示符都会发）
         tabCwd[tabId] = path
         fileTreeStates[tabId]?.reveal(path)
     }
 
-    /// SSH 登录后注入的 OSC 7 钩子：bash/zsh 每次提示符上报当前目录。
+    /// SSH 登录后注入的 OSC 7 钩子：bash/zsh 在每次提示符上报当前目录。
     private static let osc7Hook =
         "__t7(){ printf '\\033]7;file://%s%s\\033\\\\' \"${HOSTNAME:-h}\" \"$PWD\"; }; " +
         "if [ -n \"$ZSH_VERSION\" ]; then precmd_functions+=(__t7); " +
@@ -596,7 +613,7 @@ final class AppModel: ObservableObject {
                 for (k, v) in askpass { env.append("\(k)=\(v)") }
             }
             tv.startProcess(executable: "/usr/bin/ssh", args: args, environment: env)
-            // 连接后注入 OSC7 钩子 + 初始命令 / 默认路径（best-effort）
+            // 连接后注入 OSC 7 钩子 + 初始命令 / 默认路径（尽力而为）
             scheduleInitialCommands(tv, ssh: ssh)
         } else {
             let shell = AppSettings.shared.resolvedShell
@@ -625,7 +642,7 @@ final class AppModel: ObservableObject {
         performCloseTab(tabId)   // 内部已清理该标签的 fileTreeState / tabCwd
         if let hostId, let host = hosts.first(where: { $0.id == hostId }) {
             let stillUsed = tabs.contains { ($0.kind == .terminal || $0.kind == .files) && $0.hostId == hostId }
-            // 上传进行中不关主连接（closeMaster 会掐断复用同一 master 的上传，审查 R20）
+            // 上传进行中不关主连接（closeMaster 会掐断复用同一 master 的上传；审查 R20）
             if !stillUsed, !uploadActive { RemoteFS(host.ssh ?? SSHConnection()).closeMaster() }
         }
     }
@@ -647,7 +664,7 @@ final class AppModel: ObservableObject {
     private func scheduleInitialCommands(_ tv: LocalProcessTerminalView, ssh: SSHConnection) {
         let path = ssh.defaultPath.trimmingCharacters(in: .whitespaces)
         let cmd = ssh.initialCommand.trimmingCharacters(in: .whitespaces)
-        // 总是注入 OSC7 钩子（用于 cwd 跟踪）；随后清屏隐藏该命令的回显（banner 仍保留在 scrollback，
+        // 总是注入 OSC 7 钩子（用于 cwd 跟踪）；随后清屏隐藏该命令的回显（banner 仍留在 scrollback，
         // 向上滚动可见），再附加可选的 cd / 初始命令（其输出落在清屏后的干净界面上）。
         var tail = ""
         if !path.isEmpty && path != "~" { tail += "cd \(path)" }
@@ -810,8 +827,8 @@ final class AppModel: ObservableObject {
 
     // ---------- 文件编辑 / 预览 ----------
     private var editorStates: [Int: EditorState] = [:]
-    /// 每个编辑器 tab 的托管视图缓存（NSHostingView 容器）。非 @Published——纯缓存，由 `CachedEditorHost`
-    /// 首次 makeNSView 时填充、关闭 tab 时清理。让编辑器实例脱离 SwiftUI 视图重建、整 tab 生命周期存活。
+    /// 每个编辑器 tab 的托管视图缓存（NSHostingView 容器）。非 @Published，纯缓存，由 `CachedEditorHost`
+    /// 在首次 makeNSView 时填充、关闭 tab 时清理。让编辑器实例脱离 SwiftUI 视图重建、贯穿整个 tab 生命周期存活。
     var editorHosts: [Int: NSView] = [:]
 
     func editorState(for tabId: Int) -> EditorState? { editorStates[tabId] }
@@ -842,8 +859,8 @@ final class AppModel: ObservableObject {
 
     // MARK: - 文件栏右键操作
 
-    /// 刷新：目录→重拉(删了则提示并回退上级)；文件→若在编辑器打开则刷新内容(dirty 先弹窗确认)，
-    /// 否则刷新其所在目录(目录内其它已打开/在改的编辑器不受影响，交由其自身保存冲突机制保护)。
+    /// 刷新：目录 → 重拉（已删则提示并回退上级）；文件 → 若在编辑器打开则刷新内容（dirty 先弹窗确认），
+    /// 否则刷新其所在目录（目录内其它已打开/在改的编辑器不受影响，交由其自身的保存冲突机制保护）。
     func fileMenuRefresh(_ file: RemoteFile, host: Host, tree: FileTreeState) {
         Task { @MainActor in
             if file.isDir {
@@ -889,15 +906,10 @@ final class AppModel: ObservableObject {
         return t.phase == .running
     }
 
-    /// 上传文件到某文件夹：弹系统选择器（可多选文件），在弹窗里逐个上传，支持暂停/续传/压缩/同名询问。
-    func beginUpload(into folder: RemoteFile, host: Host, tree: FileTreeState) {
+    /// 上传文件到某文件夹：弹系统选择器（可多选文件），逐个上传，支持续传/压缩/同名询问。
+    func beginUpload(into folder: RemoteFile, host: Host) {
         guard folder.isDir else { return }
-        // 单并发：已有上传进行中则拒绝（避免同目标 .part 撞名，审查 R16）
-        if uploadActive {
-            pendingFileInfo = FileInfoContext(title: "已有上传进行中",
-                                              message: "请等当前上传结束后再开始新的上传。")
-            return
-        }
+        if uploadActive { uploadBusyNotice(); return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -905,33 +917,79 @@ final class AppModel: ObservableObject {
         panel.prompt = "上传"
         panel.message = "选择要上传到「\(folder.name)」的文件"
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
-
-        let folderPath = folder.path
-        let task = UploadTask(files: panel.urls, destDir: folderPath,
-                              fs: RemoteFS(host.ssh ?? SSHConnection())) { [weak tree] in
-            // 有文件落地后刷新目标目录，让新文件出现在树里
-            Task { @MainActor in _ = await tree?.refreshDir(folderPath) }
-        }
-        uploadTask = task
-        task.start()   // 压缩默认开、无需配置 → 选完即开始
+        startUpload(files: panel.urls, destDir: folder.path, host: host)
     }
 
-    func fileMenuRequestDelete(_ file: RemoteFile, host: Host, tree: FileTreeState) {
-        pendingFileDelete = FileOpContext(file: file, host: host, tree: tree)
+    /// 外部文件拖入终端：上传到该终端的当前目录（OSC7 跟踪的 cwd；未知则取远端家目录）。仅 SSH 终端。
+    func uploadDroppedFiles(_ urls: [URL], toTabId tabId: Int) {
+        guard let tab = tabs.first(where: { $0.id == tabId }),
+              let host = host(tab.hostId), let ssh = host.ssh, !ssh.host.isEmpty else { return }
+        // 只传文件，跳过目录
+        let files = urls.filter { !((try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false) }
+        guard !files.isEmpty else {
+            pendingFileInfo = FileInfoContext(title: "无法上传", message: "暂不支持拖拽文件夹，请拖入文件。")
+            return
+        }
+        if uploadActive { uploadBusyNotice(); return }
+        Task { @MainActor in
+            let cwd: String
+            if let known = tabCwd[tabId] { cwd = known } else { cwd = await RemoteFS(ssh).home() }
+            startUpload(files: files, destDir: cwd, host: host)
+        }
+    }
+
+    /// 启动上传任务（核心）：直接上传给定文件到目标目录；落地后局部刷新相关文件树缓存。
+    /// 单并发：已有上传进行中则拒绝（避免同目标 .part 撞名，审查 R16）。
+    private func startUpload(files: [URL], destDir: String, host: Host) {
+        guard !files.isEmpty, !uploadActive else { return }
+        let task = UploadTask(files: files, destDir: destDir,
+                              fs: RemoteFS(host.ssh ?? SSHConnection())) { [weak self] in
+            self?.refreshTreesAfterUpload(host: host, dir: destDir)
+        }
+        uploadTask = task
+        showUploadDialog = true
+        task.start()
+    }
+
+    /// 上传落地后：只**局部**刷新该主机各缓存文件树/浏览器里「上传目标目录」这一层——
+    /// 重列该目录、保留其余展开，不全量重载；树中未加载该目录的直接跳过（node 查找命中失败即返回，无网络开销）。
+    private func refreshTreesAfterUpload(host: Host, dir: String) {
+        Task { @MainActor in
+            if let t = hostExplorerTrees[host.id] { _ = await t.refreshDir(dir) }   // 编辑器侧栏共用的主机级树
+            for (tabId, t) in fileTreeStates where tabHostId(tabId) == host.id {     // 各会话 tab 的文件树
+                _ = await t.refreshDir(dir)
+            }
+            for (tabId, b) in browserStates where tabHostId(tabId) == host.id && b.path == dir {  // 正展示该目录的 SFTP 浏览器
+                b.reload()
+            }
+        }
+    }
+
+    private func tabHostId(_ tabId: Int) -> String? {
+        tabs.first(where: { $0.id == tabId })?.hostId
+    }
+
+    private func uploadBusyNotice() {
+        pendingFileInfo = FileInfoContext(title: "已有上传进行中",
+                                          message: "请等当前上传结束后再开始新的上传。")
+    }
+
+    func fileMenuRequestDelete(_ file: RemoteFile, host: Host, target: any FileOpsTarget) {
+        pendingFileDelete = FileOpContext(file: file, host: host, target: target)
     }
 
     func confirmFileDelete() {
         guard let ctx = pendingFileDelete else { return }
         pendingFileDelete = nil
         Task { @MainActor in
-            if case .failure(let e) = await ctx.tree.performDelete(ctx.file) {
+            if case .failure(let e) = await ctx.target.performDelete(ctx.file) {
                 pendingFileInfo = FileInfoContext(title: "删除失败", message: e.message)
             }
         }
     }
 
-    func fileMenuRequestRename(_ file: RemoteFile, host: Host, tree: FileTreeState) {
-        pendingFileRename = FileOpContext(file: file, host: host, tree: tree)
+    func fileMenuRequestRename(_ file: RemoteFile, host: Host, target: any FileOpsTarget) {
+        pendingFileRename = FileOpContext(file: file, host: host, target: target)
     }
 
     func confirmFileRename(newName: String) {
@@ -945,7 +1003,7 @@ final class AppModel: ObservableObject {
         if trimmed == ctx.file.name { return }
         let oldPath = ctx.file.path
         Task { @MainActor in
-            switch await ctx.tree.performRename(ctx.file, newName: trimmed) {
+            switch await ctx.target.performRename(ctx.file, newName: trimmed) {
             case .success(let newPath):
                 syncRenamedEditorTab(oldPath: oldPath, newName: trimmed, newPath: newPath,
                                      kind: ctx.file.kind, size: ctx.file.size, modified: ctx.file.modified,
@@ -974,10 +1032,10 @@ final class AppModel: ObservableObject {
         editorStates[tabId]?.rebind(to: newFile)
     }
 
-    func fileMenuRequestChmod(_ file: RemoteFile, host: Host, tree: FileTreeState) {
+    func fileMenuRequestChmod(_ file: RemoteFile, host: Host, target: any FileOpsTarget) {
         Task { @MainActor in
-            let perms = await tree.currentPerms(file) ?? (file.isDir ? 0o755 : 0o644)
-            pendingFileChmod = ChmodContext(file: file, host: host, tree: tree, mode: perms)
+            let perms = await target.currentPerms(file) ?? (file.isDir ? 0o755 : 0o644)
+            pendingFileChmod = ChmodContext(file: file, host: host, target: target, mode: perms)
         }
     }
 
@@ -985,7 +1043,7 @@ final class AppModel: ObservableObject {
         guard let ctx = pendingFileChmod else { return }
         pendingFileChmod = nil
         Task { @MainActor in
-            if case .failure(let e) = await ctx.tree.performChmod(ctx.file, mode: String(mode, radix: 8)) {
+            if case .failure(let e) = await ctx.target.performChmod(ctx.file, mode: String(mode, radix: 8)) {
                 pendingFileInfo = FileInfoContext(title: "修改权限失败", message: e.message)
             }
         }
@@ -1000,8 +1058,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// tab keep-alive（Workspace ZStack 全量保活）后，切 tab 不再重建视图、库的 makeNSView 不再触发自动抢焦点。
-    /// 这里在 activeTabId 变化时显式把键盘焦点交给当前 tab，并确保焦点不滞留在已隐藏的会话上（防止键盘打进隐藏终端/编辑器）。
+    /// Workspace 用 ZStack 全量保活后，切 tab 不再重建视图，makeNSView 也不再自动抢焦点。
+    /// 这里在 activeTabId 变化时显式把键盘焦点交给当前 tab，并确保焦点不滞留在已隐藏的会话上（防止键盘打进隐藏的终端/编辑器）。
     func focusActiveTab() {
         guard let id = activeTabId, let tab = tabs.first(where: { $0.id == id }) else { return }
         DispatchQueue.main.async { [weak self] in
@@ -1140,14 +1198,14 @@ struct FileOpContext: Identifiable {
     let id = UUID()
     let file: RemoteFile
     let host: Host
-    let tree: FileTreeState
+    let target: any FileOpsTarget
 }
 
 struct ChmodContext: Identifiable {
     let id = UUID()
     let file: RemoteFile
     let host: Host
-    let tree: FileTreeState
+    let target: any FileOpsTarget
     let mode: Int   // 当前权限（八进制值，如 0o755）
 }
 

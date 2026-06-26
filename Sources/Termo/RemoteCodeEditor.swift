@@ -4,10 +4,10 @@ import CodeEditSourceEditor
 import CodeEditLanguages
 import CodeEditTextView   // 改动竖条要用 layoutManager.textLineForIndex / textView.textInsets
 
-/// 代码编辑器视图：包一层 CodeEditSourceEditor 的 SourceEditor（原生 TextKit 内核）。
-/// 高亮 / 补全 UI / 查找替换(⌘F) / 缩略图 / 自动缩进 / 括号配对 全由该成熟库提供。
+/// 代码编辑器视图：包一层 CodeEditSourceEditor 的 SourceEditor（基于 TextKit 内核）。
+/// 高亮 / 补全 UI / 查找替换(⌘F) / 缩略图 / 自动缩进 / 括号配对 全由该库提供。
 ///
-/// 接入对齐官方 Example：传配置 + `.frame(maxWidth/maxHeight: .infinity)` 占满。
+/// 接入方式：传配置 + `.frame(maxWidth/maxHeight: .infinity)` 占满。
 /// 不换行时库会把文本视图撑到 `max(最长行, 视口)` 宽并开横滚（依赖 vendored 修复的 CodeEditTextView，
 /// 上游 0.12.1 的 inout 遮蔽 bug 会让行宽算不出来导致没有横滚——见 LocalPackages/CodeEditTextView）。
 /// 横滚条常驻 + 缩略图隐藏拦点击/显示盖正文，由 `EditorFixer` 在视图层级上微调修正。
@@ -23,8 +23,10 @@ struct RemoteCodeEditor: View {
     var onEditorReady: ((NSView) -> Void)? = nil   // 文本视图就绪回调（keep-alive 聚焦登记用）
 
     @State private var editorState = SourceEditorState()
-    @State private var changeBars = ChangeBarCoordinator()
-    @State private var undoBreaker = TypingUndoBreaker()   // 快速打字撤销细粒度（停手即分段）
+    // 用 @StateObject（autoclosure，仅构造一次）而非 @State——后者的默认值会在每次 body 重建时
+    // 重新 new 一个再丢弃，编辑器滚动/编辑每帧都白白分配一份协调器（瞬时分配源之一）。
+    @StateObject private var changeBars = ChangeBarCoordinator()
+    @StateObject private var undoBreaker = TypingUndoBreaker()   // 快速打字撤销细粒度（停手即分段）
 
     private var language: CodeLanguage {
         // detectLanguageFrom 只读路径扩展名/文件名，不访问磁盘；远程文件用 fileURLWithPath 构造即可
@@ -50,11 +52,11 @@ struct RemoteCodeEditor: View {
                 peripherals: .init(
                     showGutter: true,                 // 行号
                     showMinimap: showMinimap,         // 隐藏/避让交给库原生处理
-                    showFoldingRibbon: false           // 关掉那条杂乱的常驻折叠竖条（Xcode 也不常驻显示）
+                    showFoldingRibbon: false           // 关掉那条杂乱的常驻折叠竖条
                 )
             ),
             state: $editorState,
-            // plainText（.txt/.log 等无语法）不挂 TreeSitter —— 省掉它的 setUp/解析/内存，
+            // plainText（.txt/.log 等无语法）不挂 tree-sitter —— 省掉它的 setUp/解析/内存，
             // 也消除编辑纯文本时反复 "setting up with language: plainText" 的开销。代码文件传 nil 用默认高亮。
             highlightProviders: language.id == .plainText ? [] : nil,
             coordinators: [changeBars, undoBreaker]   // 改动竖条 + 撤销空闲打断
@@ -64,7 +66,7 @@ struct RemoteCodeEditor: View {
         .id(showMinimap)
         // 占满可用宽高（对齐官方 Example），保证文本容器拿到确定的视口尺寸。
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // 视图层级微调（不改库逻辑）：① 横滚条常驻；② 缩略图隐藏移除/显示避让。
+        // 视图层级微调（不改库逻辑）：横滚条常驻；缩略图隐藏移除、显示避让。
         .background(EditorFixer(showMinimap: showMinimap))
         .onAppear {
             if let cb = onEditorReady { undoBreaker.registerReady(cb) }
@@ -74,16 +76,16 @@ struct RemoteCodeEditor: View {
     }
 }
 
-/// 修正 CodeEditSourceEditor 在我们嵌入下的两个问题（只动视图层级，不改库逻辑）。
+/// 修正 CodeEditSourceEditor 在本应用嵌入下的两个问题（只动视图层级，不改库逻辑）。
 /// 用一个零尺寸的背景 NSView 作锚点：它随 SwiftUI 在 `showMinimap` 变化时收到 `updateNSView`，
 /// 用 `async` 延后到当帧布局（含库的 reloadUI/styleScrollView）跑完之后再施加，避免被库重置覆盖。
 ///
-/// ① 横滚条常驻：库的 `styleScrollView` 写死 `scrollerStyle = .overlay`（只在滚动瞬间浮现）。
-///    改成 `.legacy` + 不自动隐藏 → 一条常驻、可拖动的横向滚动条。
-/// ② 缩略图：
-///    - 隐藏时：仅靠库的 `isHidden` 在我们嵌入下仍会拦截缩略图那条区域的点击 → 直接 `removeFromSuperview`。
-///    - 显示时：库初次算文本 inset 时缩略图宽常为 0、正文会钻到缩略图底下 → 等它有了宽度后补发
-///      `contentView` 帧变化通知，触发库 `updateTextInsets()` 重算，让正文尽量以缩略图左缘为界。
+/// 横滚条常驻：库的 `styleScrollView` 写死 `scrollerStyle = .overlay`（只在滚动瞬间浮现）。
+/// 改成 `.legacy` + 不自动隐藏 → 一条常驻、可拖动的横向滚动条。
+///
+/// 缩略图隐藏：仅靠库的 `isHidden` 在嵌入下仍会拦截缩略图那条区域的点击 → 直接 `removeFromSuperview`。
+/// 缩略图显示：库初次算文本 inset 时缩略图宽常为 0、正文会钻到缩略图底下 → 等它有了宽度后补发
+/// `contentView` 帧变化通知，触发库 `updateTextInsets()` 重算，让正文尽量以缩略图左缘为界。
 private struct EditorFixer: NSViewRepresentable {
     let showMinimap: Bool
 
@@ -108,10 +110,10 @@ private struct EditorFixer: NSViewRepresentable {
     @discardableResult
     private static func apply(in root: NSView, show: Bool) -> Bool {
         guard let scroll = findEditorScrollView(in: root) else { return false }
-        // ① 常驻横向滚动条（每次都重设，抵消库 reloadUI→styleScrollView 的 .overlay 重置）
+        // 常驻横向滚动条（每次都重设，抵消库 reloadUI→styleScrollView 的 .overlay 重置）
         if scroll.scrollerStyle != .legacy { scroll.scrollerStyle = .legacy }
         if scroll.autohidesScrollers { scroll.autohidesScrollers = false }
-        // ② 缩略图
+        // 缩略图
         if show {
             guard let minimap = findMinimap(in: root), minimap.frame.width > 1 else { return false }
             NotificationCenter.default.post(name: NSView.frameDidChangeNotification, object: scroll.contentView)
@@ -166,8 +168,8 @@ private struct EditorFixer: NSViewRepresentable {
 
 /// 快速连续打字撤销细粒度：CEUndoManager 默认把一串相邻同向输入并成一个撤销组（一次 ⌘Z 删一大片，
 /// 用户感觉「丢了撤销历史」）。这里在停止输入约 0.35s 后调 `breakTypingGroup()` 打断分组，
-/// 让下一次输入起新组 —— 仿 Xcode/Ghostty 的细粒度撤销。仅作用于普通打字，不干扰库的缩进/注释等原子分组。
-final class TypingUndoBreaker: TextViewCoordinator {
+/// 让下一次输入起新组，实现细粒度撤销。仅作用于普通打字，不干扰库的缩进/注释等原子分组。
+final class TypingUndoBreaker: TextViewCoordinator, ObservableObject {
     private weak var controller: TextViewController?
     private var work: DispatchWorkItem?
     /// keep-alive 聚焦用：编辑器文本视图就绪时回调（上层据此把它登记到 EditorState.focusView）。
@@ -200,13 +202,13 @@ final class TypingUndoBreaker: TextViewCoordinator {
 }
 
 /// 行号栏「已改行」竖条（相对上次保存，由 EditorState 逐行 diff 得出）。
-/// 用官方 `TextViewCoordinator` 拿到 controller，把一块与 gutter 同样定位的浮层叠在 gutter 之上，
+/// 用 `TextViewCoordinator` 拿到 controller，把一块与 gutter 同样定位的浮层叠在 gutter 之上，
 /// 在每条已改行左缘画一条主题色竖条。不改库逻辑、不拦截点击。
-/// 变更竖条协调器——**位置锚定式（sticky）**，对齐 VSCode 脏 diff / CodeMirror RangeSet.map 的成熟做法。
-/// 标记以「字符偏移」锚定在**当前文本坐标系**：每次编辑由 NSTextStorageDelegate **同步**把锚点随文本平移，
+/// 变更竖条协调器——**位置锚定式（sticky）**：标记以「字符偏移」锚定在**当前文本坐标系**。
+/// 每次编辑由 NSTextStorageDelegate **同步**把锚点随文本平移，
 /// 因此**永不因异步滞后而错位**；后台 hunk-diff 仅做权威对账（算完用代际号核对文本未变才采纳）。
 /// baseline（上次保存内容）直接从 TextView 快照，绕开 SwiftUI 绑定回灌的滞后。
-final class ChangeBarCoordinator: NSObject, TextViewCoordinator, NSTextStorageDelegate {
+final class ChangeBarCoordinator: NSObject, TextViewCoordinator, NSTextStorageDelegate, ObservableObject {
     private weak var controller: TextViewController?
     private var barView: ChangeBarView?
     private var observers: [NSObjectProtocol] = []
@@ -306,8 +308,8 @@ final class ChangeBarCoordinator: NSObject, TextViewCoordinator, NSTextStorageDe
 
     private static func splitLines(_ s: String) -> [String] { s.components(separatedBy: "\n") }
 
-    /// diff（hunk 分类，与 VSCode 一致）→ 当前文本的「行首 UTF-16 偏移」锚点（竖条 = Added∪Modified 行首）。
-    /// 纯删除不画任何标记（用户选择去掉删除三角）。偏移用 UTF-16 前缀和（与 NSTextStorage 同坐标）。
+    /// diff（按 hunk 分类）→ 当前文本的「行首 UTF-16 偏移」锚点（竖条 = Added∪Modified 行首）。
+    /// 纯删除不画任何标记（刻意去掉删除三角）。偏移用 UTF-16 前缀和（与 NSTextStorage 同坐标）。
     private static func computeOffsets(curText: String, baselineLines: [String]) -> Set<Int> {
         let curLines = splitLines(curText)
         let diff = curLines.difference(from: baselineLines)
@@ -555,7 +557,7 @@ private final class ChangeBarView: NSView {
 }
 
 extension EditorTheme {
-    /// 从 termo 的 ThemeColors + VSCode Dark+/Light+ 风配色映射出 EditorTheme（颜色均为 NSColor）。
+    /// 从 termo 的 ThemeColors + 一套深/浅色语法配色映射出 EditorTheme（颜色均为 NSColor）。
     static func termo(colors: ThemeColors, isDark: Bool) -> EditorTheme {
         let fg = NSColor(hex: colors.termFg)
         let bg = NSColor(hex: colors.termBg)

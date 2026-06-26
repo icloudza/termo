@@ -19,7 +19,7 @@ struct FlatNode: Identifiable {
 /// 某主机某标签的文件树状态。核心：把展开的树拍平成 `flat`，
 /// LazyVStack 据此只渲染屏幕可见行 —— 树再大也不卡。
 @MainActor
-final class FileTreeState: ObservableObject {
+final class FileTreeState: ObservableObject, FileOpsTarget {
     private let fs: RemoteFS
     private var roots: [FileTreeNode] = []
     @Published var flat: [FlatNode] = []
@@ -265,9 +265,10 @@ final class FileTreeState: ObservableObject {
         if case .success(let v) = await fs.statPerms(file.path) { return v }
         return nil
     }
+
 }
 
-/// 侧栏远程文件目录树（VS Code 资源管理器风格，随终端 cwd 定位）。
+/// 侧栏远程文件目录树（资源管理器风格，随终端 cwd 定位）。
 struct SidebarFileTree: View {
     @ObservedObject var state: FileTreeState
     let host: Host
@@ -307,8 +308,8 @@ struct SidebarFileTree: View {
                     }
                     .onChange(of: state.selectedPath) { sel in
                         guard let sel else { return }
-                        // anchor: nil —— 仅在目标不在视口内时「最小幅度」滚动把它带进来;
-                        // 已可见则不滚动。避免 .center 那样每次点击都强行居中,导致相邻文件来回跳。
+                        // anchor: nil —— 仅在目标不在视口内时「最小幅度」滚动把它带进来；
+                        // 已可见则不滚动。避免 .center 那样每次点击都强行居中，导致相邻文件来回跳。
                         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(sel, anchor: nil) }
                     }
                 }
@@ -335,9 +336,9 @@ private struct FlatRow: View {
     @State private var hover = false
 
     /// 估算名字是否可能被截断 → 截断才挂 tooltip。
-    /// 廉价估算:仅按字符数 + 缩进深度判断,不做 NSString 文本测量、也不读侧栏宽度
-    /// （宽度已移出 AppModel;逐行测量在拖动/滚动时是明显的 CPU 浪费）。阈值按默认侧栏宽
-    /// （≈224px,约可容 30 个字符）取定;侧栏更窄时缩进会进一步压低可用字符数,故计入 depth。
+    /// 廉价估算：仅按字符数 + 缩进深度判断，不做 NSString 文本测量、也不读侧栏宽度
+    /// （宽度已移出 AppModel；逐行测量在拖动/滚动时是明显的 CPU 浪费）。阈值按默认侧栏宽
+    /// （≈224px，约可容 30 个字符）取定；侧栏更窄时缩进会进一步压低可用字符数，故计入 depth。
     private var nameTruncated: Bool {
         item.node.file.name.count + item.depth * 2 > 30
     }
@@ -378,28 +379,8 @@ private struct FlatRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
-        .contextMenu {
-            if node.file.isDir {
-                Button { model.beginUpload(into: node.file, host: host, tree: tree) } label: {
-                    Label("上传文件…", systemImage: "square.and.arrow.up")
-                }
-                Divider()
-            }
-            Button { model.fileMenuRefresh(node.file, host: host, tree: tree) } label: {
-                Label("刷新", systemImage: "arrow.clockwise")
-            }
-            Divider()
-            Button { model.fileMenuRequestRename(node.file, host: host, tree: tree) } label: {
-                Label("重命名", systemImage: "pencil")
-            }
-            Button { model.fileMenuRequestChmod(node.file, host: host, tree: tree) } label: {
-                Label("权限", systemImage: "lock")
-            }
-            Divider()
-            Button(role: .destructive) { model.fileMenuRequestDelete(node.file, host: host, tree: tree) } label: {
-                Label("删除", systemImage: "trash")
-            }
-        }
+        .fileOpsMenu(file: node.file, host: host, model: model, target: tree,
+                     onRefresh: { model.fileMenuRefresh(node.file, host: host, tree: tree) })
         .tooltip(node.file.name, when: nameTruncated)
     }
 }

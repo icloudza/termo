@@ -140,11 +140,13 @@ final class UploadTask: ObservableObject {
             if item.state == .done || item.state == .skipped || item.state == .cancelled {
                 index += 1; continue
             }
-            let resuming = item.interrupted
-
             item.state = .checking
             pendingBaselineReset = true
             let probe = await fs.probeUpload(remotePath: item.remotePath)
+            // 续传：本会话失败留半截（interrupted），或上次取消/失败保留的远端 .part
+            //（远端有未完整 .part 且无正式文件 → 从上次断点接着传）。
+            let resuming = item.interrupted
+                || (probe.partSize > 0 && probe.partSize < item.localSize && !probe.finalExists)
 
             if !resuming, probe.finalExists {
                 switch await resolveOverwrite(item: item, finalSize: probe.finalSize) {
@@ -224,7 +226,7 @@ final class UploadTask: ObservableObject {
         if landedAny { onAllDone() }
     }
 
-    // MARK: 速度采样（0.1s + EMA 平滑；压缩时把"已传压缩字节"映射回原始字节空间）
+    // MARK: 速度采样（0.1s + EMA 平滑；压缩时把「已传压缩字节」映射回原始字节空间）
 
     private func sampleLoop() async {
         let dt = 0.1
@@ -260,12 +262,29 @@ final class UploadTask: ObservableObject {
         return Double(effectiveTotal - overallSent) / speed
     }
     var hasFailures: Bool { items.contains { if case .failed = $0.state { return true }; return false } }
+
+    /// 是否存在"传了一半被取消/失败"的远端残留 .part（可保留以便下次续传，或删除）。
+    var hasPartials: Bool { items.contains { partialRemotePath($0) != nil } }
+
+    /// 删除所有残留 .part（用户取消时选择"删除残留"）。best-effort，失败靠下次 probe 自愈。
+    func cleanupPartials() {
+        let paths = items.compactMap(partialRemotePath)
+        guard !paths.isEmpty else { return }
+        let fs = self.fs
+        Task { for p in paths { await fs.cleanupPart(remotePath: p) } }
+    }
+
+    private func partialRemotePath(_ it: UploadItem) -> String? {
+        guard it.sent > 0, it.sent < it.localSize else { return nil }
+        switch it.state { case .cancelled, .failed: return it.remotePath; default: return nil }
+    }
 }
 
 // MARK: - 上传弹窗
 
 struct UploadDialog: View {
     @ObservedObject var task: UploadTask
+    let onHide: () -> Void
     let onClose: () -> Void
     @ObservedObject private var theme = ThemeManager.shared
 
@@ -283,6 +302,11 @@ struct UploadDialog: View {
             fileList
             infoRow
             if let ask = task.pendingAsk { askPanel(ask) }
+            if task.phase == .cancelled, task.hasPartials {
+                Text("已取消，远端残留半截文件。「保留」可下次从断点续传，「删除残留」清掉它。")
+                    .font(.system(size: 11)).foregroundStyle(Pal.subtext)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             buttons
         }
         .padding(18)
@@ -306,6 +330,15 @@ struct UploadDialog: View {
             }
             Spacer()
             statusBadge
+            Button(action: onHide) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(Pal.overlay)
+                    .frame(width: 24, height: 24)
+                    .background(Pal.fill(0.06), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("后台运行（在左下角继续显示进度）")
         }
     }
 
@@ -376,6 +409,9 @@ struct UploadDialog: View {
                 pill("续传失败项", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.retryFailed(resume: true) }
                 pill("重试", fg: Pal.subtext, base: Pal.fill(0.07)) { task.retryFailed(resume: false) }
                 pill("关闭", fg: Pal.overlay, base: Pal.fill(0.07), action: onClose)
+            case .cancelled where task.hasPartials:
+                pill("保留残留（下次续传）", fg: Pal.mauve, base: Pal.mauve.opacity(0.14), action: onClose)
+                pill("删除残留", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cleanupPartials(); onClose() }
             case .done, .cancelled:
                 pill(task.phase == .done ? "完成" : "关闭",
                      fg: Pal.mauve, base: Pal.mauve.opacity(0.14), action: onClose)
@@ -464,6 +500,66 @@ struct UploadRow: View {
         case .skipped:   return "已跳过"
         case .failed(let m): return m.isEmpty ? "失败" : m
         case .cancelled: return "已取消"
+        }
+    }
+}
+
+// MARK: - 后台上传迷你进度
+
+/// 上传弹窗隐藏后，显示在活动栏底部的迷你进度环；点击重新展开弹窗。
+struct UploadMiniIndicator: View {
+    @ObservedObject var task: UploadTask
+    let onTap: () -> Void
+    @State private var hover = false
+
+    private var fraction: CGFloat {
+        task.totalBytes > 0 ? CGFloat(min(1, Double(task.overallSent) / Double(task.totalBytes))) : 0
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack {
+                Circle().stroke(Pal.fill(0.14), lineWidth: 3)
+                Circle().trim(from: 0, to: task.phase == .running ? max(0.03, fraction) : 1)
+                    .stroke(ringColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.linear(duration: 0.15), value: fraction)
+                Image(systemName: centerIcon).font(.system(size: 9, weight: .bold)).foregroundStyle(ringColor)
+            }
+            .frame(width: 22, height: 22)
+            .frame(width: 38, height: 38)
+            .background(hover ? Pal.fill(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(helpText)
+        // 后台运行时若需用户确认（同名文件），自动展开弹窗，避免静默卡住。
+        .onChange(of: task.pendingAsk?.id) { id in if id != nil { onTap() } }
+    }
+
+    private var ringColor: Color {
+        if task.pendingAsk != nil { return Pal.yellow }
+        switch task.phase {
+        case .running:   return Pal.mauve
+        case .done:      return task.hasFailures ? Pal.yellow : Pal.green
+        case .cancelled: return Pal.overlay
+        }
+    }
+    private var centerIcon: String {
+        if task.pendingAsk != nil { return "questionmark" }
+        switch task.phase {
+        case .running:   return "arrow.up"
+        case .done:      return task.hasFailures ? "exclamationmark" : "checkmark"
+        case .cancelled: return "xmark"
+        }
+    }
+    private var helpText: String {
+        if task.pendingAsk != nil { return "需要确认（同名文件）· 点击处理" }
+        switch task.phase {
+        case .running:   return "上传中 \(Int(fraction * 100))% · 点击展开"
+        case .done:      return task.hasFailures ? "上传部分失败 · 点击查看" : "上传完成 · 点击查看"
+        case .cancelled: return "上传已取消 · 点击查看"
         }
     }
 }

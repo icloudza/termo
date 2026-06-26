@@ -12,7 +12,11 @@ struct HostOverview: View {
                     Text(host.name).font(.system(size: 20, weight: .medium)).foregroundStyle(Pal.textBright)
                     statusBadge
                     if host.status == .online, let ms = host.latencyMs {
-                        Text("\(ms) ms").font(.system(size: 12, design: .monospaced)).foregroundStyle(latencyColor(ms))
+                        let level = LatencyLevel(ms: ms)
+                        HStack(spacing: 6) {
+                            Text("\(ms) ms").font(.system(size: 12, design: .monospaced)).foregroundStyle(level.color)
+                            Text(level.title).font(.system(size: 12)).foregroundStyle(Pal.overlay)
+                        }
                     }
                 }
                 Text("\(host.addr) · 端口 \(host.port)")
@@ -104,7 +108,7 @@ struct HostOverview: View {
             VStack(spacing: 8) {
                 Image(systemName: symbol).font(.system(size: 21))
                     .foregroundStyle(primary ? Pal.mauve : Pal.subtext)
-                    .frame(height: 24)   // 固定图标高度，消除不同字形导致的卡片高度差
+                    .frame(height: 24)   // 固定图标高度，避免不同字形造成卡片高度参差
                 Text(label).font(.system(size: 12)).foregroundStyle(Pal.text)
             }
             .frame(maxWidth: .infinity)
@@ -122,7 +126,7 @@ struct HostOverview: View {
         .buttonStyle(.plain)
     }
 
-    /// 把时间格式化为「12 分钟前 / 1 小时前 / 昨天」等中文相对时间。
+    /// 将时间格式化为「12 分钟前 / 1 小时前 / 昨天」等中文相对时间。
     static func relativeTime(_ date: Date) -> String {
         let f = RelativeDateTimeFormatter()
         f.locale = Locale(identifier: "zh_Hans")

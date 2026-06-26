@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct Workspace: View {
-    @ObservedObject var model: AppModel
+    // model 用纯 let 持有（只调方法、不订阅）：AppModel 的无关 @Published 变化不再触发 Workspace 重算。
+    let model: AppModel
+    @ObservedObject var tabs: TabsModel
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
@@ -15,7 +17,7 @@ struct Workspace: View {
 
     @ViewBuilder
     private var content: some View {
-        if model.tabs.isEmpty {
+        if tabs.tabs.isEmpty {
             WelcomeView(model: model)
         } else {
             // 渲染策略（混合）：
@@ -26,18 +28,18 @@ struct Workspace: View {
             // - **其它 tab（终端/文件/概览/RDP）只渲染活动的**。终端视图是模型持有的裸 NSView，detach/attach 不重建、
             //   PTY 后台不断；其它要么无状态、要么模型持有。这把"标签越多越卡"的大头（终端 reflow×N）压到 O(1)。
             ZStack {
-                ForEach(model.tabs.filter { $0.kind == .editor }, id: \.id) { tab in
+                ForEach(tabs.tabs.filter { $0.kind == .editor }, id: \.id) { tab in
                     tabView(tab)
-                        .opacity(tab.id == model.activeTabId ? 1 : 0)
-                        .allowsHitTesting(tab.id == model.activeTabId)
-                        .zIndex(tab.id == model.activeTabId ? 1 : 0)
-                        .accessibilityHidden(tab.id != model.activeTabId)
+                        .opacity(tab.id == tabs.activeTabId ? 1 : 0)
+                        .allowsHitTesting(tab.id == tabs.activeTabId)
+                        .zIndex(tab.id == tabs.activeTabId ? 1 : 0)
+                        .accessibilityHidden(tab.id != tabs.activeTabId)
                 }
-                if let active = model.tabs.first(where: { $0.id == model.activeTabId }), active.kind != .editor {
+                if let active = tabs.tabs.first(where: { $0.id == tabs.activeTabId }), active.kind != .editor {
                     tabView(active).zIndex(2)
                 }
             }
-            .onChange(of: model.activeTabId) { _ in model.focusActiveTab() }
+            .onChange(of: tabs.activeTabId) { _ in model.focusActiveTab() }
             .onAppear { model.focusActiveTab() }
         }
     }
@@ -47,8 +49,10 @@ struct Workspace: View {
         Group {
             switch tab.kind {
             case .terminal:
-                TerminalSurface(terminal: model.terminalView(for: tab.id),
-                                isActive: tab.id == model.activeTabId)
+                TerminalDropArea(terminal: model.terminalView(for: tab.id),
+                                 isActive: tab.id == tabs.activeTabId,
+                                 model: model, tabId: tab.id,
+                                 canUpload: model.host(tab.hostId)?.ssh != nil)
                     .padding(10)
             case .overview:
                 if let host = model.host(tab.hostId) {
@@ -57,6 +61,7 @@ struct Workspace: View {
             case .files:
                 if let host = model.host(tab.hostId) {
                     FileBrowser(state: model.browserState(for: tab.id, host: host),
+                                host: host, model: model,
                                 onOpenFile: { model.openFile($0, host: host) })
                 } else {
                     Text("无主机").font(.system(size: 13)).foregroundStyle(Pal.overlay)

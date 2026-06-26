@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 单个文件浏览标签的导航状态（每标签一份，AppModel 缓存）。
 @MainActor
-final class BrowserState: ObservableObject {
+final class BrowserState: ObservableObject, FileOpsTarget {
     @Published var path: String = ""
     @Published var entries: [RemoteFile] = []
     @Published var phase: LoadPhase = .loading
@@ -80,12 +80,47 @@ final class BrowserState: ObservableObject {
     }
 
     func cancel() { loadTask?.cancel() }
+
+    // MARK: - FileOpsTarget（与侧栏文件树共用同一套右击操作）
+
+    func performDelete(_ file: RemoteFile) async -> Result<Void, RemoteFSError> {
+        let r = await fs.delete(file.path, isDir: file.isDir)
+        if case .success = r { reload() }
+        return r
+    }
+
+    func performRename(_ file: RemoteFile, newName: String) async -> Result<String, RemoteFSError> {
+        let parent = (file.path as NSString).deletingLastPathComponent
+        let newPath = (parent == "/" || parent.isEmpty) ? "/" + newName : parent + "/" + newName
+        let r = await fs.rename(file.path, to: newPath)
+        switch r {
+        case .success: reload(); return .success(newPath)
+        case .failure(let e): return .failure(e)
+        }
+    }
+
+    func performChmod(_ file: RemoteFile, mode: String) async -> Result<Void, RemoteFSError> {
+        await fs.chmod(file.path, mode: mode)
+    }
+
+    func currentPerms(_ file: RemoteFile) async -> Int? {
+        if case .success(let v) = await fs.statPerms(file.path) { return v }
+        return nil
+    }
 }
 
 struct FileBrowser: View {
     @ObservedObject var state: BrowserState
+    let host: Host
+    let model: AppModel
     var onOpenFile: (RemoteFile) -> Void = { _ in }
     @ObservedObject private var theme = ThemeManager.shared
+
+    /// 当前目录作为上传目标。
+    private var currentDir: RemoteFile {
+        let name = state.path == "/" ? "/" : (state.path as NSString).lastPathComponent
+        return RemoteFile(name: name, path: state.path, kind: .directory, size: 0, modified: nil)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -113,6 +148,15 @@ struct FileBrowser: View {
                 .lineLimit(1).truncationMode(.head)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
+
+            Button { model.beginUpload(into: currentDir, host: host) } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                    .frame(width: 26, height: 26).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("上传文件到当前目录")
+            .disabled(state.path.isEmpty)
 
             Button { state.showHidden.toggle() } label: {
                 Image(systemName: state.showHidden ? "eye" : "eye.slash")
@@ -165,21 +209,39 @@ struct FileBrowser: View {
                 .padding(.horizontal, 40)
             }
         case .loaded:
-            if state.visible.isEmpty {
-                centered { Text("空目录").font(.system(size: 13)).foregroundStyle(Pal.overlay) }
-            } else {
+            // 用 GeometryReader 把内容撑满视口，使「行以下的空白区」也算内容、可右击空白菜单。
+            GeometryReader { geo in
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(state.visible) { file in
                             FileRow(file: file) {
                                 if file.isDir { state.enter(file) } else { onOpenFile(file) }
                             }
+                            .fileOpsMenu(file: file, host: host, model: model,
+                                         target: state, onRefresh: { state.reload() })
+                        }
+                        if state.visible.isEmpty {
+                            Text("空目录").font(.system(size: 13)).foregroundStyle(Pal.overlay)
+                                .frame(maxWidth: .infinity).padding(.top, 60)
                         }
                     }
                     .padding(.vertical, 4)
+                    .frame(minHeight: geo.size.height, alignment: .top)
+                    .contentShape(Rectangle())                  // 空白区参与命中
+                    .contextMenu { blankAreaMenu }              // 右击空白：上传到当前目录 / 刷新（行自身菜单仍优先）
                 }
             }
         }
+    }
+
+    /// 右击文件列表空白处的菜单：上传到当前目录、刷新。
+    @ViewBuilder
+    private var blankAreaMenu: some View {
+        Button { model.beginUpload(into: currentDir, host: host) } label: {
+            Label("上传文件到此处", systemImage: "square.and.arrow.up")
+        }
+        Divider()
+        Button { state.reload() } label: { Label("刷新", systemImage: "arrow.clockwise") }
     }
 
     private func centered<C: View>(@ViewBuilder _ c: () -> C) -> some View {

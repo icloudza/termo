@@ -20,6 +20,13 @@
 	<string>1</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh-Hans</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh-Hans</string>
+		<string>en</string>
+	</array>
+	<key>CFBundleAllowMixedLocalizations</key>
+	<true/>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>

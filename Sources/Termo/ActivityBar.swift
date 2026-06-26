@@ -22,6 +22,9 @@ struct ActivityBar: View {
                 item(symbol, section)
             }
             Spacer()
+            if let task = model.uploadTask, !model.showUploadDialog {
+                UploadMiniIndicator(task: task) { model.showUploadDialog = true }
+            }
             settingsButton
         }
         .padding(.top, isFullScreen ? 12 : 52)
@@ -38,26 +41,14 @@ struct ActivityBar: View {
     }
 
     private var settingsButton: some View {
-        Button {
+        ActivityBarButton(symbol: "gearshape", selected: model.showSettings) {
             model.showSettings = true
-        } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 16))
-                .foregroundStyle(model.showSettings ? Pal.mauve : Pal.overlay)
-                .frame(width: 38, height: 38)
-                .background(
-                    model.showSettings ? Pal.mauve.opacity(0.16) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 9)
-                )
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder
     private func item(_ symbol: String, _ section: Section) -> some View {
-        let selected = model.section == section
-        Button {
+        ActivityBarButton(symbol: symbol, selected: model.section == section) {
             // 瞬间开合(不加动画):宽度滑动动画会逐帧重排工作区 → 卡顿。
             if model.section == section && layout.sidebarWidth >= 10 {
                 layout.sidebarWidth = 0
@@ -67,17 +58,30 @@ struct ActivityBar: View {
                     layout.sidebarWidth = 224
                 }
             }
-        } label: {
+        }
+    }
+}
+
+/// 活动栏图标按钮：选中=主色高亮底，hover=淡底 + 图标提亮（与左下迷你进度环的 hover 一致）。
+private struct ActivityBarButton: View {
+    let symbol: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 16))
-                .foregroundStyle(selected ? Pal.mauve : Pal.overlay)
+                .foregroundStyle(selected ? Pal.mauve : (hover ? Pal.subtext : Pal.overlay))
                 .frame(width: 38, height: 38)
                 .background(
-                    selected ? Pal.mauve.opacity(0.16) : Color.clear,
+                    selected ? Pal.mauve.opacity(0.16) : (hover ? Pal.fill(0.08) : Color.clear),
                     in: RoundedRectangle(cornerRadius: 9)
                 )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hover = $0 }
     }
 }

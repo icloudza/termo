@@ -29,7 +29,7 @@ struct ThemeColors {
 }
 
 extension ThemeColors {
-    // VSCode Dark+ 风格：中性灰调，侧栏比编辑区稍亮
+    // 深色主题：中性灰调，侧栏比编辑区稍亮
     static let dark = ThemeColors(
         crust: Color(hex: 0x333333),    // 活动栏
         mantle: Color(hex: 0x252526),   // 侧栏 / 标签栏
@@ -39,7 +39,7 @@ extension ThemeColors {
         textBright: Color(hex: 0xffffff),
         subtext: Color(hex: 0x9d9d9d),
         overlay: Color(hex: 0x7a7a7a),
-        mauve: Color(hex: 0x569cd6),    // VSCode 蓝作强调色
+        mauve: Color(hex: 0x569cd6),    // 蓝色强调色
         green: Color(hex: 0x4ec9b0),
         yellow: Color(hex: 0xd7ba7d),
         red: Color(hex: 0xf14c4c),
@@ -47,7 +47,7 @@ extension ThemeColors {
         termCaret: 0xaeafad, termSelection: 0x264f78
     )
 
-    // 清新浅色风格——整体较纯白降一档亮度，减少眩光（保持原层次梯度 base>mantle>crust>surface0）
+    // 清新浅色主题——整体较纯白降一档亮度以减少眩光（保持层次梯度 base>mantle>crust>surface0）
     static let light = ThemeColors(
         crust: Color(hex: 0xe6e8ed),    // 活动栏（最暗一档）
         mantle: Color(hex: 0xedeef2),   // 侧栏 / 标签栏
@@ -138,16 +138,45 @@ enum Pal {
     }
 }
 
-/// 延迟着色：低绿、中黄、高红（主机概览与主机列表共用）。
-func latencyColor(_ ms: Int) -> Color {
-    if ms < 80 { return Pal.green }
-    if ms < 1000 { return Pal.yellow }
-    return Pal.red
+/// 延迟等级：按往返毫秒映射到语义档位，颜色与文字标签共置，主机概览与主机列表共用。
+enum LatencyLevel {
+    case unknown   // 未探测、失败或超时
+    case good      // < 80ms，交互流畅
+    case warning   // 80–499ms，可用但有延迟感
+    case poor      // ≥ 500ms，明显影响交互
+
+    /// 由单次延迟值判定等级；nil 或负值视为未探测。
+    init(ms: Int?) {
+        guard let ms, ms >= 0 else { self = .unknown; return }
+        switch ms {
+        case ..<80:  self = .good
+        case ..<500: self = .warning
+        default:     self = .poor
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .unknown: return Pal.overlay
+        case .good:    return Pal.green
+        case .warning: return Pal.yellow
+        case .poor:    return Pal.red
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .unknown: return "未探测"
+        case .good:    return "流畅"
+        case .warning: return "延迟较高"
+        case .poor:    return "延迟很高"
+        }
+    }
 }
 
 extension View {
-    /// 脱敏:开启时用毛玻璃(高斯模糊)遮住敏感内容,而不是替换文字 —— 更美观。
-    /// 用于隐藏列表/概览里的 IP·主机名(截图/共享屏幕时)。
+    /// 脱敏:开启时用高斯模糊遮住敏感内容,而非替换文字,视觉更自然。
+    /// 用于截图/共享屏幕时隐藏列表/概览里的 IP、主机名。
     @ViewBuilder
     func privacyBlur(_ on: Bool, radius: CGFloat = 5) -> some View {
         if on { blur(radius: radius) } else { self }

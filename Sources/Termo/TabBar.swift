@@ -1,20 +1,21 @@
 import SwiftUI
 
 struct TabBar: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
+    @ObservedObject var tabs: TabsModel
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
             TabStrip(
-                newKey: model.tabs.count,
-                activeKey: model.activeTabId ?? 0,
-                activeIndex: model.tabs.firstIndex(where: { $0.id == model.activeTabId }) ?? 0,
-                tabCount: model.tabs.count
+                newKey: tabs.tabs.count,
+                activeKey: tabs.activeTabId ?? 0,
+                activeIndex: tabs.tabs.firstIndex(where: { $0.id == tabs.activeTabId }) ?? 0,
+                tabCount: tabs.tabs.count
             ) {
                 HStack(spacing: 4) {
-                    ForEach(model.tabs) { tab in
-                        TabChip(tab: tab, model: model)
+                    ForEach(tabs.tabs) { tab in
+                        TabChip(tab: tab, model: model, tabs: tabs)
                     }
                 }
             }
@@ -36,7 +37,8 @@ struct TabBar: View {
 
 struct TabChip: View {
     let tab: TabItem
-    @ObservedObject var model: AppModel
+    let model: AppModel
+    @ObservedObject var tabs: TabsModel
     @ObservedObject private var theme = ThemeManager.shared
     @State private var hover = false
 
@@ -50,11 +52,22 @@ struct TabChip: View {
         }
     }
 
+    /// tab 图标：主机概览 tab 用该主机的发行版 logo（单色、不带品牌色）；其余用功能符号。
+    @ViewBuilder
+    private func tabIcon(active: Bool) -> some View {
+        let fg = active ? Pal.text : Pal.overlay
+        if tab.kind == .overview, let host = model.host(tab.hostId), let fontName = OSLogo.fontName,
+           let logo = OSLogo.info(for: host.isRDP ? "windows" : (host.specs?.os ?? host.os)) {
+            Text(logo.glyph).font(.custom(fontName, size: 12)).foregroundStyle(fg)
+        } else {
+            Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(fg)
+        }
+    }
+
     var body: some View {
-        let active = model.activeTabId == tab.id
+        let active = tabs.activeTabId == tab.id
         HStack(spacing: 7) {
-            Image(systemName: symbol).font(.system(size: 11))
-                .foregroundStyle(active ? Pal.text : Pal.overlay)
+            tabIcon(active: active)
             Text(tab.title).font(.system(size: 12))
                 .foregroundStyle(active ? Pal.text : Pal.subtext)
                 .lineLimit(1)

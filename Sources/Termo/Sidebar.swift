@@ -2,12 +2,14 @@ import SwiftUI
 
 struct Sidebar: View {
     @ObservedObject var model: AppModel
+    // 切换 tab 时侧栏需重算（activeHostId 高亮、文件面板 sidebarFileTree），故一并观察 TabsModel。
+    @ObservedObject var tabs: TabsModel
     @ObservedObject var layout: LayoutModel
     @ObservedObject private var theme = ThemeManager.shared
     @FocusState private var searchFocused: Bool
 
     private var filteredHosts: [Host] {
-        // 「主机」面板只列 SSH 主机；RDP 主机归到 RDP 面板
+        // 「主机」面板只列 SSH 主机；RDP 主机归入 RDP 面板
         let sshHosts = model.hosts.filter { !$0.isRDP }
         guard !model.query.isEmpty else { return sshHosts }
         let q = model.query.lowercased()
@@ -69,7 +71,7 @@ struct Sidebar: View {
         .background(Pal.mantle)
         .frame(width: layout.sidebarWidth, alignment: .leading)
         .clipped()
-        .onChange(of: model.activeTabId) { _ in searchFocused = false }
+        .onChange(of: tabs.activeTabId) { _ in searchFocused = false }
     }
 
     private var sectionTitle: String {
@@ -90,7 +92,7 @@ struct Sidebar: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Pal.text)
                 .focused($searchFocused)
-            // 脱敏开关:开启后隐藏列表/概览里的 IP·主机名(用于截图/共享屏幕)。
+            // 脱敏开关：开启后隐藏列表/概览中的 IP、主机名（便于截图或共享屏幕）。
             Button { model.privacyMode.toggle() } label: {
                 Image(systemName: model.privacyMode ? "eye.slash" : "eye")
                     .font(.system(size: 12))
@@ -161,7 +163,7 @@ struct Sidebar: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(rdpHosts) { host in
-                        RDPHostRow(host: host, model: model)
+                        RDPHostRow(host: host, model: model, isActive: model.activeHostId == host.id)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -195,13 +197,13 @@ struct Sidebar: View {
     }
 
     private var hostList: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             ForEach(groups, id: \.self) { group in
                 Text(group)
                     .font(.system(size: 11)).foregroundStyle(Pal.overlay)
                     .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
                 ForEach(filteredHosts.filter { $0.group == group }) { host in
-                    HostRow(host: host, model: model)
+                    HostRow(host: host, model: model, isActive: model.activeHostId == host.id)
                 }
             }
         }
@@ -232,11 +234,11 @@ struct Sidebar: View {
 struct HostRow: View {
     let host: Host
     @ObservedObject var model: AppModel
+    let isActive: Bool   // 由父级 Sidebar（观察 TabsModel）下传，确保切主机时高亮即时刷新
     @ObservedObject private var theme = ThemeManager.shared
     @State private var hover = false
 
     var body: some View {
-        let active = model.activeHostId == host.id
         Button {
             model.openHost(host)
         } label: {
@@ -250,16 +252,18 @@ struct HostRow: View {
                         .privacyBlur(model.privacyMode)
                 }
                 Spacer()
-                // 延迟统一右对齐到行末，多主机竖排对齐
+                // 延迟值统一右对齐到行末，多主机竖排时对齐整齐
                 if host.status == .online, let ms = host.latencyMs {
-                    Text("\(ms) ms").font(.system(size: 11)).foregroundStyle(latencyColor(ms))
+                    Text("\(ms) ms").font(.system(size: 11)).foregroundStyle(LatencyLevel(ms: ms).color)
                 }
             }
-            .padding(.horizontal, 8).padding(.vertical, 7)
+            .padding(.horizontal, 8).padding(.vertical, 9)
             .background(
-                active ? Pal.mauve.opacity(0.15) : (hover ? Pal.fill(0.05) : Color.clear),
+                isActive ? Pal.mauve.opacity(0.15) : (hover ? Pal.fill(0.05) : Color.clear),
                 in: RoundedRectangle(cornerRadius: 8)
             )
+            .animation(.easeOut(duration: 0.18), value: isActive)   // 选中高亮丝滑淡入淡出
+            .animation(.easeOut(duration: 0.12), value: hover)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -278,11 +282,11 @@ struct HostRow: View {
 struct RDPHostRow: View {
     let host: Host
     @ObservedObject var model: AppModel
+    let isActive: Bool   // 同 HostRow：由 Sidebar 下传以即时刷新高亮
     @ObservedObject private var theme = ThemeManager.shared
     @State private var hover = false
 
     var body: some View {
-        let active = model.activeHostId == host.id
         Button {
             model.openHostRDP(host)
         } label: {
@@ -298,11 +302,13 @@ struct RDPHostRow: View {
                 Spacer()
                 Image(systemName: "display").font(.system(size: 11)).foregroundStyle(Pal.overlay)
             }
-            .padding(.horizontal, 8).padding(.vertical, 7)
+            .padding(.horizontal, 8).padding(.vertical, 9)
             .background(
-                active ? Pal.mauve.opacity(0.15) : (hover ? Pal.fill(0.05) : Color.clear),
+                isActive ? Pal.mauve.opacity(0.15) : (hover ? Pal.fill(0.05) : Color.clear),
                 in: RoundedRectangle(cornerRadius: 8)
             )
+            .animation(.easeOut(duration: 0.18), value: isActive)   // 选中高亮丝滑淡入淡出
+            .animation(.easeOut(duration: 0.12), value: hover)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
