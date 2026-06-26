@@ -222,7 +222,7 @@ struct SettingsView: View {
 
             settingRow("滚动缓冲区", description: "终端保留的最大行数") {
                 ThemedDropdown(
-                    options: [(1000, "1,000 行"), (5000, "5,000 行"), (10000, "10,000 行"), (50000, "50,000 行")],
+                    options: [(500, "500 行"), (1000, "1,000 行"), (5000, "5,000 行"), (10000, "10,000 行"), (50000, "50,000 行")],
                     selection: $settings.termScrollback
                 )
                 .frame(width: 140)

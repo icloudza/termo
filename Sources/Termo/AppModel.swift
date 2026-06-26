@@ -271,7 +271,7 @@ final class AppModel: ObservableObject {
         specs.memory = "128 GB"
         specs.disk = "9.2 TB / 12.8 TB"   // 与监控面板三块盘的合计大致一致
         specs.vram = "48 GB"
-        specs.gpu = "NVIDIA RTX 4090 ×2"
+        specs.gpu = "NVIDIA RTX 5090 ×2"
         specs.probedAt = Date()
         return Host(id: Host.mockHostId, name: "Mock 演示主机", addr: "mock.demo", group: "mock",
                     status: .online, os: "ubuntu", ssh: ssh,
@@ -528,7 +528,6 @@ final class AppModel: ObservableObject {
     private var terminals: [Int: LocalProcessTerminalView] = [:]
     private var rdpSessions: [Int: RDPSession] = [:]
     private var nextTabId = 1
-    private var terminalCount = 0
     private var themeCancellable: AnyCancellable?
 
     private var settingsCancellable: AnyCancellable?
@@ -870,8 +869,8 @@ final class AppModel: ObservableObject {
 
     // ---------- 标签操作 ----------
     func openLocalTerminal() {
-        terminalCount += 1
-        addTab(.terminal, title: "本地终端 \(terminalCount)", hostId: nil)
+        let title = uniqueTabTitle("终端") { $0.kind == .terminal && $0.hostId == nil }
+        addTab(.terminal, title: title, hostId: nil)
     }
 
     func openHost(_ host: Host) {
@@ -891,7 +890,8 @@ final class AppModel: ObservableObject {
     func finishConnecting() {
         guard let host = connectingHost else { return }
         connectingHost = nil
-        addTab(.terminal, title: host.name, hostId: host.id)
+        let title = uniqueTabTitle(host.name) { $0.kind == .terminal && $0.hostId == host.id }
+        addTab(.terminal, title: title, hostId: host.id)
         recordSession(hostId: host.id, kind: .terminal, detail: "终端会话")
         prewarmExplorer(for: host)
     }
@@ -1391,6 +1391,8 @@ final class AppModel: ObservableObject {
     }
 
     @Published var pendingCloseTabId: Int? = nil
+    @Published var pendingTabRename: TabRenameContext? = nil      // 重命名标签输入弹窗
+    @Published var pendingMultiClose: MultiCloseContext? = nil    // 批量关闭聚合确认弹窗
 
     func closeTab(_ id: Int) {
         if shouldConfirmClose(id) {
@@ -1410,6 +1412,53 @@ final class AppModel: ObservableObject {
     func cancelPendingClose() {
         pendingCloseTabId = nil
     }
+
+    /// 在符合条件的现有标签标题内，为 base 取不重复标题：首个用 base，其后追加 " 2"、" 3"…
+    private func uniqueTabTitle(_ base: String, among predicate: (TabItem) -> Bool) -> String {
+        let taken = Set(tabs.filter(predicate).map(\.title))
+        if !taken.contains(base) { return base }
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
+    /// 请求重命名标签（弹输入框）。
+    func requestRenameTab(_ id: Int) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        pendingTabRename = TabRenameContext(id: id, currentTitle: tab.title)
+    }
+
+    /// 重命名标签：与其它标签同名则拒绝（便于区分），否则原地改名。
+    func renameTab(_ id: Int, to newName: String) {
+        pendingTabRename = nil
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        if tabs.contains(where: { $0.id != id && $0.title == trimmed }) {
+            pendingFileInfo = FileInfoContext(title: "名称已被占用",
+                message: "已有标签使用「\(trimmed)」，换一个名称以便区分。")
+            return
+        }
+        tabs[idx].title = trimmed
+    }
+
+    /// 关闭其它标签 / 关闭全部：逐个走 performCloseTab 完成资源拆除；有需确认的（运行中会话/未保存）先聚合确认一次。
+    func closeOtherTabs(keep id: Int) { requestMultiClose(tabs.filter { $0.id != id }.map(\.id)) }
+    func closeAllTabs() { requestMultiClose(tabs.map(\.id)) }
+
+    private func requestMultiClose(_ ids: [Int]) {
+        guard !ids.isEmpty else { return }
+        if ids.contains(where: { shouldConfirmClose($0) }) {
+            pendingMultiClose = MultiCloseContext(ids: ids)
+        } else {
+            ids.forEach { performCloseTab($0) }
+        }
+    }
+
+    func confirmMultiClose() {
+        pendingMultiClose?.ids.forEach { performCloseTab($0) }
+        pendingMultiClose = nil
+    }
+    func cancelMultiClose() { pendingMultiClose = nil }
 
     private func performCloseTab(_ id: Int) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
@@ -1493,6 +1542,18 @@ final class AppModel: ObservableObject {
         default:      return "「\(tab.title)」有正在运行的进程，关闭后进程将被终止。"
         }
     }
+}
+
+// MARK: - 标签右键操作的弹窗上下文
+
+struct TabRenameContext: Identifiable {
+    let id: Int            // 目标标签 id
+    let currentTitle: String
+}
+
+struct MultiCloseContext: Identifiable {
+    let id = UUID()
+    let ids: [Int]         // 待关闭的标签 id 集合
 }
 
 // MARK: - 文件栏右键操作的弹窗上下文

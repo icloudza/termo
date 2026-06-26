@@ -32,7 +32,9 @@ struct Workspace: View {
             // GeometryReader 取实时尺寸：活动编辑器随之填满并重排（仅 1 个，开销等同只开一个标签）；
             // 隐藏编辑器钉死在 frozenEditorSize，缩放/拖侧栏时容器尺寸不变 → 不重排。切到它时才取实时尺寸重排一次。
             GeometryReader { geo in
-                ZStack {
+                // topLeading 对齐：活动编辑器钉在左上 (0,0) 填满；隐藏编辑器即便冻结在更大尺寸也只向右下溢出，
+                // 不会把活动编辑器居中挤偏（窗口缩到比 frozenEditorSize 小时尤为关键）。
+                ZStack(alignment: .topLeading) {
                     ForEach(tabs.tabs.filter { $0.kind == .editor }, id: \.id) { tab in
                         let isActive = tab.id == tabs.activeTabId
                         tabView(tab)
@@ -49,6 +51,10 @@ struct Workspace: View {
                             .zIndex(2)
                     }
                 }
+                // 钉死为当前 geo 尺寸：窗口缩到比 frozenEditorSize 小时，ZStack 不会被那个更大的隐藏编辑器撑大、
+                // 进而把活动编辑器居中错位；超出部分裁掉（隐藏编辑器本就不可见）。
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                .clipped()
                 .onAppear { if frozenEditorSize == .zero { frozenEditorSize = geo.size } }
                 .onChange(of: geo.size) { s in if frozenEditorSize == .zero { frozenEditorSize = s } }
             }

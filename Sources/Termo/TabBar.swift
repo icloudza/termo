@@ -4,20 +4,28 @@ struct TabBar: View {
     let model: AppModel
     @ObservedObject var tabs: TabsModel
     @ObservedObject private var theme = ThemeManager.shared
+    @State private var frames: [Int: CGRect] = [:]   // 各标签 chip 在内容坐标系的位置，供“点击边缘标签露出相邻标签”
 
     var body: some View {
+        let active = tabs.activeTabId.flatMap { frames[$0] }
         HStack(alignment: .center, spacing: 6) {
             TabStrip(
                 newKey: tabs.tabs.count,
                 activeKey: tabs.activeTabId ?? 0,
-                activeIndex: tabs.tabs.firstIndex(where: { $0.id == tabs.activeTabId }) ?? 0,
-                tabCount: tabs.tabs.count
+                activeMinX: active?.minX ?? 0,
+                activeMaxX: active?.maxX ?? 0
             ) {
                 HStack(spacing: 4) {
                     ForEach(tabs.tabs) { tab in
                         TabChip(tab: tab, model: model, tabs: tabs)
+                            .background(GeometryReader { g in
+                                Color.clear.preference(key: TabFramesKey.self,
+                                                       value: [tab.id: g.frame(in: .named("tabstrip"))])
+                            })
                     }
                 }
+                .coordinateSpace(name: "tabstrip")
+                .onPreferenceChange(TabFramesKey.self) { frames = $0 }
             }
             Button {
                 model.openLocalTerminal()
@@ -33,6 +41,14 @@ struct TabBar: View {
         .padding(.top, 10)
         .frame(maxWidth: .infinity)
         .background(Pal.mantle)
+    }
+}
+
+/// 收集各标签 chip 在内容坐标系的布局框，供“点击边缘标签时滚动露出相邻标签”定位。
+private struct TabFramesKey: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 
@@ -59,9 +75,10 @@ struct TabChip: View {
         let fg = active ? Pal.text : Pal.overlay
         if tab.kind == .overview, let host = model.host(tab.hostId), let fontName = OSLogo.fontName,
            let logo = OSLogo.info(for: host.isRDP ? "windows" : (host.specs?.os ?? host.os)) {
-            Text(logo.glyph).font(.custom(fontName, size: 12)).foregroundStyle(fg)
+            // 固定宽度：标签行宽度不足时图标不会被当成唯一柔性元素压扁（标题已 fixedSize、关闭按钮已定宽）。
+            Text(logo.glyph).font(.custom(fontName, size: 12)).foregroundStyle(fg).frame(width: 12)
         } else {
-            Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(fg)
+            Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(fg).frame(width: 12)
         }
     }
 
@@ -71,7 +88,7 @@ struct TabChip: View {
             tabIcon(active: active)
             Text(tab.title).font(.system(size: 12))
                 .foregroundStyle(active ? Pal.text : Pal.subtext)
-                .lineLimit(1)
+                .lineLimit(1).fixedSize(horizontal: true, vertical: false)   // 不截断；超出由标签栏横向滚动
             // 编辑器标签：未保存时显示圆点（hover 时让位给关闭按钮）
             if tab.kind == .editor, let st = model.editorState(for: tab.id) {
                 EditorTabClose(state: st, hover: hover, active: active) { model.closeTab(tab.id) }
@@ -101,6 +118,13 @@ struct TabChip: View {
         .onHover { hover = $0 }
         .pointerCursor()
         .accessibilityIdentifier(String(tab.id))
+        .contextMenu {
+            Button { model.closeTab(tab.id) } label: { Label("关闭当前", systemImage: "xmark") }
+            Button { model.closeOtherTabs(keep: tab.id) } label: { Label("关闭其他", systemImage: "xmark.circle") }
+            Button { model.closeAllTabs() } label: { Label("关闭所有", systemImage: "xmark.octagon") }
+            Divider()
+            Button { model.requestRenameTab(tab.id) } label: { Label("重命名", systemImage: "pencil") }
+        }
     }
 }
 

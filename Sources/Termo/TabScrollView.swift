@@ -57,8 +57,8 @@ struct HScrollRep<Content: View>: NSViewRepresentable {
     @ObservedObject var metrics: ScrollMetrics
     var newKey: Int
     var activeKey: Int
-    var activeIndex: Int
-    var tabCount: Int
+    var activeMinX: CGFloat   // 活动标签在内容坐标系的左右缘（真实测量，兼容不等宽标签）
+    var activeMaxX: CGFloat
     @ViewBuilder var content: Content
 
     func makeNSView(context: Context) -> HScroll {
@@ -112,38 +112,24 @@ struct HScrollRep<Content: View>: NSViewRepresentable {
             let docW = doc.frame.width
             let maxScrollX = max(0, docW - clipW)
             let curX = sv.contentView.bounds.origin.x
-
             let isNew = newKey > co.lastKey
             co.lastKey = newKey
-
-            // 新建标签：平滑滚到最右
+            let switched = activeKey != co.lastActiveKey
+            co.lastActiveKey = activeKey
+            // 新建标签：平滑滚到最右露出新标签（放得下则 maxScrollX=0、不滚）。
             if isNew {
-                co.lastActiveKey = activeKey
                 smoothScroll(sv, to: maxScrollX)
-            }
-            // 切换标签（非新建时）：若点中的标签贴在边缘，平滑滚动露出其后方/前方的邻居
-            else if activeKey != co.lastActiveKey, docW > clipW {
-                co.lastActiveKey = activeKey
-                let tc = max(1, tabCount)
-                let tabW = docW / CGFloat(tc)
-                let tabLeft = CGFloat(activeIndex) * tabW
-                let tabRight = tabLeft + tabW
-
+            } else if switched, docW > clipW, activeMaxX > activeMinX {
+                // 切换到的标签贴在可视边缘时，滚动露出它及相邻标签的一段（用真实 frame，不等宽也准确）。
+                let peek: CGFloat = 48, margin: CGFloat = 24
                 var targetX = curX
-                if tabRight > curX + clipW - tabW * 0.5 {
-                    // 点中右边缘的标签，滚动露出其后方相邻的一个
-                    targetX = min(maxScrollX, tabRight - clipW + tabW)
-                } else if tabLeft < curX + tabW * 0.5 {
-                    // 点中左边缘的标签，滚动露出其前方相邻的一个
-                    targetX = max(0, tabLeft - tabW)
+                if activeMaxX > curX + clipW - margin {        // 右缘贴边 → 露出后方相邻标签一段
+                    targetX = min(maxScrollX, activeMaxX + peek - clipW)
+                } else if activeMinX < curX + margin {          // 左缘贴边 → 露出前方相邻标签一段
+                    targetX = max(0, activeMinX - peek)
                 }
-                if abs(targetX - curX) > 1 {
-                    smoothScroll(sv, to: targetX)
-                }
-            } else {
-                co.lastActiveKey = activeKey
+                if abs(targetX - curX) > 1 { smoothScroll(sv, to: targetX) }
             }
-
             metrics.set(offsetX: sv.contentView.bounds.origin.x, contentW: docW, visibleW: clipW)
         }
     }
@@ -223,24 +209,24 @@ struct HWheelScroll<Content: View>: NSViewRepresentable {
 struct TabStrip<Content: View>: View {
     var newKey: Int
     var activeKey: Int
-    var activeIndex: Int
-    var tabCount: Int
+    var activeMinX: CGFloat
+    var activeMaxX: CGFloat
     @ViewBuilder var content: Content
     @StateObject private var metrics = ScrollMetrics()
     @State private var hovering = false
     @State private var dragStart: CGFloat?
 
-    init(newKey: Int, activeKey: Int, activeIndex: Int = 0, tabCount: Int = 0, @ViewBuilder content: () -> Content) {
+    init(newKey: Int, activeKey: Int, activeMinX: CGFloat = 0, activeMaxX: CGFloat = 0, @ViewBuilder content: () -> Content) {
         self.newKey = newKey
         self.activeKey = activeKey
-        self.activeIndex = activeIndex
-        self.tabCount = tabCount
+        self.activeMinX = activeMinX
+        self.activeMaxX = activeMaxX
         self.content = content()
     }
 
     var body: some View {
         VStack(spacing: 3) {
-            HScrollRep(metrics: metrics, newKey: newKey, activeKey: activeKey, activeIndex: activeIndex, tabCount: tabCount) { content }
+            HScrollRep(metrics: metrics, newKey: newKey, activeKey: activeKey, activeMinX: activeMinX, activeMaxX: activeMaxX) { content }
                 .frame(height: 34)
             scrollbar
                 .frame(height: 5)

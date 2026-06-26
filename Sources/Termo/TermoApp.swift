@@ -159,11 +159,32 @@ struct ContentView: View {
                     )
                     .transition(.opacity)
                 }
+                if let ctx = model.pendingMultiClose {
+                    ConfirmDialog(
+                        title: "关闭 \(ctx.ids.count) 个标签？",
+                        message: "其中有运行中的会话或未保存的修改，关闭将中断或丢弃。",
+                        confirmTitle: "全部关闭",
+                        destructive: true,
+                        onConfirm: { model.confirmMultiClose() },
+                        onCancel: { model.cancelMultiClose() }
+                    )
+                    .transition(.opacity)
+                }
+                if let ctx = model.pendingTabRename {
+                    RenameDialog(
+                        originalName: ctx.currentTitle, title: "重命名标签",
+                        onConfirm: { model.renameTab(ctx.id, to: $0) },
+                        onCancel: { model.pendingTabRename = nil }
+                    )
+                    .transition(.opacity)
+                }
             }
             .animation(.easeOut(duration: 0.15), value: model.pendingCloseTabId)
+            .animation(.easeOut(duration: 0.15), value: model.pendingMultiClose?.id)
+            .animation(.easeOut(duration: 0.15), value: model.pendingTabRename?.id)
             // 无弹窗时整层不吃点击：避免 .transition 关闭后残留的透明命中层挡住下方内容
             //（SwiftUI overlay+transition+ignoresSafeArea 的已知缺陷，下同）。
-            .allowsHitTesting(model.pendingCloseTabId != nil)
+            .allowsHitTesting(model.pendingCloseTabId != nil || model.pendingMultiClose != nil || model.pendingTabRename != nil)
         }
         .overlay {
             ZStack {

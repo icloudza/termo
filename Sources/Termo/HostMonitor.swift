@@ -333,8 +333,8 @@ final class HostMonitor: ObservableObject {
             ("/backup", 8_000_000_000, 8_000_000_000 * 0.92),   // 高占用，演示 CRITICAL 转红
         ]
         simGpus = [
-            ("NVIDIA RTX 4090", 72, 24576 * 0.55, 24576, 68),
-            ("NVIDIA RTX 4090", 18, 24576 * 0.12, 24576, 51),
+            ("NVIDIA RTX 5090", 72, 24576 * 0.55, 24576, 68),
+            ("NVIDIA RTX 5090", 18, 24576 * 0.12, 24576, 51),
         ]
         simRx = 6_000_000
         simTx = 1_200_000

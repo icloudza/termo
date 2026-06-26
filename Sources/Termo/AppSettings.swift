@@ -77,7 +77,7 @@ final class AppSettings: ObservableObject {
         termFontSize = d.object(forKey: "termFontSize") as? Int ?? 12
         termCursorStyle = d.string(forKey: "termCursorStyle") ?? "block"
         termCursorBlink = d.object(forKey: "termCursorBlink") as? Bool ?? true
-        termScrollback = d.object(forKey: "termScrollback") as? Int ?? 10000
+        termScrollback = d.object(forKey: "termScrollback") as? Int ?? 1000
         downloadDir = d.string(forKey: "downloadDir") ?? ""
         downloadAskEachTime = d.object(forKey: "downloadAskEachTime") as? Bool ?? false
         resourceAlerts = d.object(forKey: "resourceAlerts") as? Bool ?? true
