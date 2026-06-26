@@ -3,13 +3,16 @@ import SwiftUI
 /// 重命名弹窗（自定义样式，与 ConfirmDialog 一致）。
 struct RenameDialog: View {
     let originalName: String
+    let title: String
     let onConfirm: (String) -> Void
     let onCancel: () -> Void
     @State private var name: String
     @ObservedObject private var theme = ThemeManager.shared
 
-    init(originalName: String, onConfirm: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+    init(originalName: String, title: String = "重命名",
+         onConfirm: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
         self.originalName = originalName
+        self.title = title
         self.onConfirm = onConfirm
         self.onCancel = onCancel
         _name = State(initialValue: originalName)
@@ -25,8 +28,8 @@ struct RenameDialog: View {
         ZStack {
             Color.black.opacity(0.35).ignoresSafeArea().onTapGesture(perform: onCancel)
             VStack(alignment: .leading, spacing: 14) {
-                Text("重命名").font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
-                ThemedTextField(placeholder: "新名称", text: $name, autofocus: true, onSubmit: submit)
+                Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
+                ThemedTextField(placeholder: "名称", text: $name, autofocus: true, onSubmit: submit)
                 HStack(spacing: 10) {
                     Spacer()
                     SecondaryButton(title: "取消", action: onCancel)

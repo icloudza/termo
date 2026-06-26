@@ -8,6 +8,8 @@ protocol FileOpsTarget: AnyObject {
     func performRename(_ file: RemoteFile, newName: String) async -> Result<String, RemoteFSError>
     func performChmod(_ file: RemoteFile, mode: String) async -> Result<Void, RemoteFSError>
     func currentPerms(_ file: RemoteFile) async -> Int?
+    /// 在 dir 下新建文件或文件夹，成功后局部刷新。
+    func performCreate(_ name: String, isDir: Bool, inDir dir: String) async -> Result<Void, RemoteFSError>
 }
 
 extension View {
@@ -20,6 +22,17 @@ extension View {
             if file.isDir {
                 Button { model.beginUpload(into: file, host: host) } label: {
                     Label("上传文件…", systemImage: "square.and.arrow.up")
+                }
+                Button { model.fileMenuRequestCreate(isDir: false, inDir: file.path, host: host, target: target) } label: {
+                    Label("新建文件", systemImage: "doc.badge.plus")
+                }
+                Button { model.fileMenuRequestCreate(isDir: true, inDir: file.path, host: host, target: target) } label: {
+                    Label("新建文件夹", systemImage: "folder.badge.plus")
+                }
+                Divider()
+            } else {
+                Button { model.downloadFiles([file], host: host) } label: {
+                    Label("下载", systemImage: "square.and.arrow.down")
                 }
                 Divider()
             }

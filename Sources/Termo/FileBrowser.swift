@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 单个文件浏览标签的导航状态（每标签一份，AppModel 缓存）。
@@ -7,6 +8,7 @@ final class BrowserState: ObservableObject, FileOpsTarget {
     @Published var entries: [RemoteFile] = []
     @Published var phase: LoadPhase = .loading
     @Published var showHidden = false
+    @Published var selection: Set<String> = []   // 选中文件路径（多选下载）
 
     private let fs: RemoteFS
     private var backStack: [String] = []
@@ -21,6 +23,26 @@ final class BrowserState: ObservableObject, FileOpsTarget {
     /// 可见条目（按隐藏文件开关过滤）。
     var visible: [RemoteFile] {
         showHidden ? entries : entries.filter { !$0.name.hasPrefix(".") }
+    }
+
+    /// 当前选中的条目。
+    var selectedFiles: [RemoteFile] { visible.filter { selection.contains($0.path) } }
+
+    private var anchorPath: String?   // 范围选择的锚点
+
+    /// 点击选择：普通=单选；⌘=切换；⇧=从锚点到此的区间选。
+    func click(_ p: String, cmd: Bool, shift: Bool) {
+        let paths = visible.map(\.path)
+        if shift, let anchor = anchorPath,
+           let a = paths.firstIndex(of: anchor), let b = paths.firstIndex(of: p) {
+            selection = Set(paths[min(a, b)...max(a, b)])   // 锚点保持不变
+        } else if cmd {
+            if selection.contains(p) { selection.remove(p) } else { selection.insert(p) }
+            anchorPath = p
+        } else {
+            selection = [p]
+            anchorPath = p
+        }
     }
 
     /// 首次出现时加载家目录。
@@ -73,6 +95,8 @@ final class BrowserState: ObservableObject, FileOpsTarget {
             if pushBack, let from, !from.isEmpty { backStack.append(from) }
             path = newPath
             entries = files
+            selection = []      // 切目录清空选择
+            anchorPath = nil
             phase = .loaded
         case .failure(let e):
             phase = .error(e.message)
@@ -106,6 +130,13 @@ final class BrowserState: ObservableObject, FileOpsTarget {
     func currentPerms(_ file: RemoteFile) async -> Int? {
         if case .success(let v) = await fs.statPerms(file.path) { return v }
         return nil
+    }
+
+    func performCreate(_ name: String, isDir: Bool, inDir dir: String) async -> Result<Void, RemoteFSError> {
+        let path = (dir == "/" ? "" : dir) + "/" + name
+        let r = isDir ? await fs.mkdir(path) : await fs.createFile(path)
+        if case .success = r { reload() }
+        return r
     }
 }
 
@@ -148,6 +179,21 @@ struct FileBrowser: View {
                 .lineLimit(1).truncationMode(.head)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
+
+            if !state.selectedFiles.isEmpty {
+                Button { model.downloadFiles(state.selectedFiles, host: host) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.and.arrow.down").font(.system(size: 11))
+                        Text("下载 (\(state.selectedFiles.count))").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(Pal.mauve)
+                    .padding(.horizontal, 9).frame(height: 26)
+                    .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("下载选中的文件")
+            }
 
             Button { model.beginUpload(into: currentDir, host: host) } label: {
                 Image(systemName: "square.and.arrow.up")
@@ -214,11 +260,11 @@ struct FileBrowser: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(state.visible) { file in
-                            FileRow(file: file) {
-                                if file.isDir { state.enter(file) } else { onOpenFile(file) }
-                            }
-                            .fileOpsMenu(file: file, host: host, model: model,
-                                         target: state, onRefresh: { state.reload() })
+                            FileRow(file: file, selected: state.selection.contains(file.path),
+                                    onOpen: { if file.isDir { state.enter(file) } else { onOpenFile(file) } },
+                                    onClick: { cmd, shift in state.click(file.path, cmd: cmd, shift: shift) })
+                                .fileOpsMenu(file: file, host: host, model: model,
+                                             target: state, onRefresh: { state.reload() })
                         }
                         if state.visible.isEmpty {
                             Text("空目录").font(.system(size: 13)).foregroundStyle(Pal.overlay)
@@ -240,6 +286,12 @@ struct FileBrowser: View {
         Button { model.beginUpload(into: currentDir, host: host) } label: {
             Label("上传文件到此处", systemImage: "square.and.arrow.up")
         }
+        Button { model.fileMenuRequestCreate(isDir: false, inDir: state.path, host: host, target: state) } label: {
+            Label("新建文件", systemImage: "doc.badge.plus")
+        }
+        Button { model.fileMenuRequestCreate(isDir: true, inDir: state.path, host: host, target: state) } label: {
+            Label("新建文件夹", systemImage: "folder.badge.plus")
+        }
         Divider()
         Button { state.reload() } label: { Label("刷新", systemImage: "arrow.clockwise") }
     }
@@ -251,7 +303,9 @@ struct FileBrowser: View {
 
 private struct FileRow: View {
     let file: RemoteFile
+    let selected: Bool
     let onOpen: () -> Void
+    let onClick: (_ cmd: Bool, _ shift: Bool) -> Void
     @State private var hover = false
 
     private static let dateFmt: DateFormatter = {
@@ -277,9 +331,45 @@ private struct FileRow: View {
                 .frame(width: 150, alignment: .trailing)
         }
         .padding(.horizontal, 16).padding(.vertical, 6)
-        .background(hover ? Pal.fill(0.05) : Color.clear)
+        .background(selected ? Pal.mauve.opacity(0.16) : (hover ? Pal.fill(0.05) : Color.clear))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .onTapGesture(count: 2) { onOpen() }
+        // 用 AppKit mouseDown 接管：按下即响应（无双击消歧延迟）、clickCount 分单/双击、modifierFlags 可靠读 ⌘/⇧。
+        .overlay(RowClicks(onSelect: onClick, onOpen: onOpen))
+    }
+}
+
+/// 行点击捕获：左键单击→选择（带 ⌘/⇧），双击→打开；右键交还给下层 SwiftUI 的 contextMenu。
+private struct RowClicks: NSViewRepresentable {
+    let onSelect: (_ cmd: Bool, _ shift: Bool) -> Void
+    let onOpen: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        ClickView(onSelect: onSelect, onOpen: onOpen)
+    }
+    func updateNSView(_ v: NSView, context: Context) {
+        guard let cv = v as? ClickView else { return }
+        cv.onSelect = onSelect; cv.onOpen = onOpen
+    }
+
+    final class ClickView: NSView {
+        var onSelect: (Bool, Bool) -> Void
+        var onOpen: () -> Void
+        init(onSelect: @escaping (Bool, Bool) -> Void, onOpen: @escaping () -> Void) {
+            self.onSelect = onSelect; self.onOpen = onOpen
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount >= 2 {
+                onOpen()
+            } else {
+                let m = event.modifierFlags
+                onSelect(m.contains(.command), m.contains(.shift))
+            }
+        }
+        // 右键不接管：把菜单请求交还给下层 SwiftUI 视图（.fileOpsMenu）。
+        override func menu(for event: NSEvent) -> NSMenu? { superview?.menu(for: event) }
     }
 }

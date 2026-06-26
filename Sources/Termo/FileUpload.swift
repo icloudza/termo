@@ -14,6 +14,7 @@ enum ItemState: Equatable {
 }
 
 enum SessionPhase: Equatable { case running, done, cancelled }
+enum TransferDirection { case upload, download }
 
 enum OverwriteDecision { case overwrite, skip, cancel }
 enum AskAction { case overwrite, skip, overwriteAll, skipAll, cancel }
@@ -32,11 +33,20 @@ final class UploadItem: ObservableObject, Identifiable {
     @Published var sent: Int64 = 0          // 已确认字节（用于进度与总量）
     var interrupted = false                 // 失败留下半截、可续传
 
+    /// 上传项：url=本地源文件，remotePath=远端目标。
     init(url: URL, destDir: String) {
         self.url = url
         self.name = url.lastPathComponent
         self.localSize = UploadItem.fileSize(url)
         self.remotePath = destDir.hasSuffix("/") ? destDir + name : destDir + "/" + name
+    }
+
+    /// 下载项：remotePath=远端源，url=本地目标，localSize=远端大小（用作进度分母）。
+    init(download file: RemoteFile, toLocalDir dir: URL) {
+        self.url = dir.appendingPathComponent(file.name)
+        self.name = file.name
+        self.localSize = file.size
+        self.remotePath = file.path
     }
 
     var fraction: Double {
@@ -59,6 +69,7 @@ struct AskContext: Identifiable {
 @MainActor
 final class UploadTask: ObservableObject {
     nonisolated let id = UUID()
+    let direction: TransferDirection
     let destDir: String
     let totalBytes: Int64
     private let fs: RemoteFS
@@ -79,10 +90,22 @@ final class UploadTask: ObservableObject {
     private var started = false
 
     init(files: [URL], destDir: String, fs: RemoteFS, onAllDone: @escaping () -> Void) {
+        self.direction = .upload
         self.destDir = destDir
         self.fs = fs
         self.onAllDone = onAllDone
         let mapped = files.map { UploadItem(url: $0, destDir: destDir) }
+        self.items = mapped
+        self.totalBytes = mapped.reduce(0) { $0 + $1.localSize }
+    }
+
+    /// 下载任务：把远端文件拉到本地目录。
+    init(download files: [RemoteFile], toLocalDir dir: URL, fs: RemoteFS, onAllDone: @escaping () -> Void) {
+        self.direction = .download
+        self.destDir = dir.path
+        self.fs = fs
+        self.onAllDone = onAllDone
+        let mapped = files.map { UploadItem(download: $0, toLocalDir: dir) }
         self.items = mapped
         self.totalBytes = mapped.reduce(0) { $0 + $1.localSize }
     }
@@ -92,7 +115,11 @@ final class UploadTask: ObservableObject {
         started = true
         pendingBaselineReset = true
         Task { await sampleLoop() }
-        Task { await runFrom() }
+        Task { await run() }
+    }
+
+    private func run() async {
+        if direction == .download { await runDownload() } else { await runFrom() }
     }
 
     func cancel() {
@@ -116,7 +143,7 @@ final class UploadTask: ObservableObject {
         control.set(.run)
         pendingBaselineReset = true
         Task { await sampleLoop() }
-        Task { await runFrom() }
+        Task { await run() }
     }
 
     func resolveAsk(_ a: AskAction) {
@@ -195,6 +222,34 @@ final class UploadTask: ObservableObject {
         finish()
     }
 
+    /// 下载主循环：逐个把远端文件流式拉到本地（带进度/取消）。无同名询问/续传（更简单）。
+    private func runDownload() async {
+        while index < items.count {
+            if control.signal == .cancel { break }
+            let item = items[index]
+            if item.state == .done { index += 1; continue }
+            item.state = .uploading        // 复用「传输中」态
+            control.set(.run)
+            control.setSent(0)
+            pendingBaselineReset = true
+            let outcome = await fs.download(item.remotePath, to: item.url, control: control)
+            switch outcome {
+            case .completed:
+                item.sent = item.localSize
+                item.state = .done
+                index += 1
+            case .cancelled:
+                control.set(.cancel)
+            case .failed(let msg):
+                try? FileManager.default.removeItem(at: item.url)   // 删掉下了一半的本地残文件
+                item.state = .failed(msg)
+                index += 1
+            }
+            if control.signal == .cancel { break }
+        }
+        finish()
+    }
+
     private func resolveOverwrite(item: UploadItem, finalSize: Int64) async -> OverwriteDecision {
         if control.signal == .cancel { return .cancel }
         switch bulkPolicy {
@@ -216,14 +271,27 @@ final class UploadTask: ObservableObject {
             for it in items {
                 switch it.state {
                 case .done, .skipped, .failed: break
-                default: it.state = .cancelled
+                default:
+                    it.state = .cancelled
+                    if direction == .download { try? FileManager.default.removeItem(at: it.url) }   // 删半截本地文件
                 }
             }
             phase = .cancelled
         } else {
             phase = .done
+            postCompletionNotification()
         }
         if landedAny { onAllDone() }
+    }
+
+    private func postCompletionNotification() {
+        let verb = direction == .upload ? "上传" : "下载"
+        let done = items.filter { $0.state == .done }.count
+        if hasFailures {
+            Notifier.notify(title: "\(verb)部分失败", body: "成功 \(done)/\(items.count) 个文件")
+        } else {
+            Notifier.notify(title: "\(verb)完成", body: "\(done) 个文件 · \(humanSize(totalBytes))")
+        }
     }
 
     // MARK: 速度采样（0.1s + EMA 平滑；压缩时把「已传压缩字节」映射回原始字节空间）
@@ -263,8 +331,8 @@ final class UploadTask: ObservableObject {
     }
     var hasFailures: Bool { items.contains { if case .failed = $0.state { return true }; return false } }
 
-    /// 是否存在"传了一半被取消/失败"的远端残留 .part（可保留以便下次续传，或删除）。
-    var hasPartials: Bool { items.contains { partialRemotePath($0) != nil } }
+    /// 是否存在"传了一半被取消/失败"的远端残留 .part（可保留以便下次续传，或删除）。仅上传有此概念。
+    var hasPartials: Bool { direction == .upload && items.contains { partialRemotePath($0) != nil } }
 
     /// 删除所有残留 .part（用户取消时选择"删除残留"）。best-effort，失败靠下次 probe 自愈。
     func cleanupPartials() {
@@ -317,13 +385,14 @@ struct UploadDialog: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "square.and.arrow.up")
+        let isUp = task.direction == .upload
+        return HStack(spacing: 10) {
+            Image(systemName: isUp ? "square.and.arrow.up" : "square.and.arrow.down")
                 .font(.system(size: 15, weight: .medium)).foregroundStyle(Pal.mauve)
                 .frame(width: 30, height: 30)
                 .background(Pal.mauve.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 2) {
-                Text("上传文件").font(.system(size: 14, weight: .semibold)).foregroundStyle(Pal.text)
+                Text(isUp ? "上传文件" : "下载文件").font(.system(size: 14, weight: .semibold)).foregroundStyle(Pal.text)
                 Text("到 \(task.destDir)")
                     .font(.system(size: 11)).foregroundStyle(Pal.overlay)
                     .lineLimit(1).truncationMode(.middle)
@@ -358,7 +427,7 @@ struct UploadDialog: View {
     private var fileList: some View {
         ScrollView {
             VStack(spacing: 0) {
-                ForEach(task.items) { item in UploadRow(item: item) }
+                ForEach(task.items) { item in UploadRow(item: item, direction: task.direction) }
             }
         }
         .frame(maxHeight: 176)
@@ -406,7 +475,9 @@ struct UploadDialog: View {
             case .running:
                 pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
             case .done where task.hasFailures:
-                pill("续传失败项", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.retryFailed(resume: true) }
+                if task.direction == .upload {   // 续传仅上传支持（远端 .part）
+                    pill("续传失败项", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.retryFailed(resume: true) }
+                }
                 pill("重试", fg: Pal.subtext, base: Pal.fill(0.07)) { task.retryFailed(resume: false) }
                 pill("关闭", fg: Pal.overlay, base: Pal.fill(0.07), action: onClose)
             case .cancelled where task.hasPartials:
@@ -440,6 +511,7 @@ struct UploadDialog: View {
 /// 文件列表行（单独订阅 item）。
 struct UploadRow: View {
     @ObservedObject var item: UploadItem
+    var direction: TransferDirection = .upload
 
     var body: some View {
         HStack(spacing: 8) {
@@ -474,7 +546,7 @@ struct UploadRow: View {
         case .waiting:   return "clock"
         case .checking:  return "magnifyingglass"
         case .asking:    return "questionmark.circle"
-        case .uploading: return "arrow.up.circle"
+        case .uploading: return direction == .upload ? "arrow.up.circle" : "arrow.down.circle"
         case .done:      return "checkmark.circle.fill"
         case .skipped:   return "forward.circle"
         case .failed:    return "xmark.circle.fill"
@@ -549,17 +621,18 @@ struct UploadMiniIndicator: View {
     private var centerIcon: String {
         if task.pendingAsk != nil { return "questionmark" }
         switch task.phase {
-        case .running:   return "arrow.up"
+        case .running:   return task.direction == .upload ? "arrow.up" : "arrow.down"
         case .done:      return task.hasFailures ? "exclamationmark" : "checkmark"
         case .cancelled: return "xmark"
         }
     }
     private var helpText: String {
+        let verb = task.direction == .upload ? "上传" : "下载"
         if task.pendingAsk != nil { return "需要确认（同名文件）· 点击处理" }
         switch task.phase {
-        case .running:   return "上传中 \(Int(fraction * 100))% · 点击展开"
-        case .done:      return task.hasFailures ? "上传部分失败 · 点击查看" : "上传完成 · 点击查看"
-        case .cancelled: return "上传已取消 · 点击查看"
+        case .running:   return "\(verb)中 \(Int(fraction * 100))% · 点击展开"
+        case .done:      return task.hasFailures ? "\(verb)部分失败 · 点击查看" : "\(verb)完成 · 点击查看"
+        case .cancelled: return "\(verb)已取消 · 点击查看"
         }
     }
 }

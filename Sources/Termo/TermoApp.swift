@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyAppIcon()
         setupMainMenu()
         _ = OSLogo.fontName   // 预注册随包发行版 Logo 字体(Font Logos)
+        Notifier.requestAuthIfNeeded()   // 申请系统通知权限（上传/下载完成提醒）
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -230,6 +231,13 @@ struct ContentView: View {
                     onCancel: { model.pendingFileChmod = nil }
                 ).transition(.opacity)
             }
+            if let ctx = model.pendingFileCreate {
+                RenameDialog(
+                    originalName: "", title: ctx.isDir ? "新建文件夹" : "新建文件",
+                    onConfirm: { model.confirmFileCreate(name: $0) },
+                    onCancel: { model.pendingFileCreate = nil }
+                ).transition(.opacity)
+            }
             if let info = model.pendingFileInfo {
                 ConfirmDialog(
                     title: info.title, message: info.message,
@@ -250,6 +258,7 @@ struct ContentView: View {
         .animation(.easeOut(duration: 0.15), value: model.pendingFileDelete?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileRename?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileChmod?.id)
+        .animation(.easeOut(duration: 0.15), value: model.pendingFileCreate?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileRefresh?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileInfo?.id)
     }

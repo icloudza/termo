@@ -266,6 +266,12 @@ final class FileTreeState: ObservableObject, FileOpsTarget {
         return nil
     }
 
+    func performCreate(_ name: String, isDir: Bool, inDir dir: String) async -> Result<Void, RemoteFSError> {
+        let path = (dir == "/" ? "" : dir) + "/" + name
+        let r = isDir ? await fs.mkdir(path) : await fs.createFile(path)
+        if case .success = r { _ = await refreshDir(dir) }
+        return r
+    }
 }
 
 /// 侧栏远程文件目录树（资源管理器风格，随终端 cwd 定位）。

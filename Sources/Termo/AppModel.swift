@@ -46,6 +46,7 @@ final class AppModel: ObservableObject {
     @Published var pendingFileDelete: FileOpContext? = nil
     @Published var pendingFileRename: FileOpContext? = nil
     @Published var pendingFileChmod: ChmodContext? = nil
+    @Published var pendingFileCreate: CreateContext? = nil   // 新建文件/文件夹的名称输入弹窗
     @Published var pendingFileRefresh: RefreshConflictContext? = nil
     @Published var pendingFileInfo: FileInfoContext? = nil
     @Published var uploadTask: UploadTask? = nil   // 当前上传任务（nil=无）
@@ -970,8 +971,9 @@ final class AppModel: ObservableObject {
     }
 
     private func uploadBusyNotice() {
-        pendingFileInfo = FileInfoContext(title: "已有上传进行中",
-                                          message: "请等当前上传结束后再开始新的上传。")
+        let verb = uploadTask?.direction == .download ? "下载" : "上传"
+        pendingFileInfo = FileInfoContext(title: "已有\(verb)进行中",
+                                          message: "请等当前\(verb)结束后再开始新的传输。")
     }
 
     func fileMenuRequestDelete(_ file: RemoteFile, host: Host, target: any FileOpsTarget) {
@@ -1047,6 +1049,57 @@ final class AppModel: ObservableObject {
                 pendingFileInfo = FileInfoContext(title: "修改权限失败", message: e.message)
             }
         }
+    }
+
+    // MARK: - 新建文件 / 文件夹
+
+    func fileMenuRequestCreate(isDir: Bool, inDir dir: String, host: Host, target: any FileOpsTarget) {
+        pendingFileCreate = CreateContext(dir: dir, isDir: isDir, host: host, target: target)
+    }
+
+    func confirmFileCreate(name: String) {
+        guard let ctx = pendingFileCreate else { return }
+        pendingFileCreate = nil
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("/") else {
+            pendingFileInfo = FileInfoContext(title: "名称无效", message: "名称不能为空或包含「/」。")
+            return
+        }
+        Task { @MainActor in
+            if case .failure(let e) = await ctx.target.performCreate(trimmed, isDir: ctx.isDir, inDir: ctx.dir) {
+                pendingFileInfo = FileInfoContext(title: ctx.isDir ? "新建文件夹失败" : "新建文件失败", message: e.message)
+            }
+        }
+    }
+
+    // MARK: - 下载
+
+    /// 下载远端文件到本地：按设置取目录或每次询问目录；进度/后台复用上传那套传输对话框，完成后在访达定位。
+    /// 单并发：与上传共用 uploadTask（同一时刻只跑一个传输）。目录暂不支持，仅文件。
+    func downloadFiles(_ files: [RemoteFile], host: Host) {
+        let downloadable = files.filter { !$0.isDir }
+        guard !downloadable.isEmpty, let ssh = host.ssh, !ssh.host.isEmpty else { return }
+        if uploadActive { uploadBusyNotice(); return }
+        let dir: URL
+        if AppSettings.shared.downloadAskEachTime {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "下载到此处"
+            panel.message = "选择下载保存到的文件夹"
+            panel.directoryURL = AppSettings.shared.resolvedDownloadDir
+            guard panel.runModal() == .OK, let u = panel.url else { return }
+            dir = u
+        } else {
+            dir = AppSettings.shared.resolvedDownloadDir
+        }
+        let task = UploadTask(download: downloadable, toLocalDir: dir, fs: RemoteFS(ssh)) {
+            NSWorkspace.shared.activateFileViewerSelecting([dir])   // 完成后在访达里定位下载目录
+        }
+        uploadTask = task
+        showUploadDialog = true
+        task.start()
     }
 
     func selectTab(_ id: Int) {
@@ -1207,6 +1260,14 @@ struct ChmodContext: Identifiable {
     let host: Host
     let target: any FileOpsTarget
     let mode: Int   // 当前权限（八进制值，如 0o755）
+}
+
+struct CreateContext: Identifiable {
+    let id = UUID()
+    let dir: String          // 在此目录下新建
+    let isDir: Bool          // true=文件夹，false=文件
+    let host: Host
+    let target: any FileOpsTarget
 }
 
 struct RefreshConflictContext: Identifiable {

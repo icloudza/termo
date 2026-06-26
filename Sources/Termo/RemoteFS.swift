@@ -219,6 +219,68 @@ final class RemoteFS {
         _ = await run("P=$(printf %s '\(b64)'|base64 -d); rm -f \"$P.part\"", timeout: 15)
     }
 
+    // MARK: - 新建 / 下载
+
+    /// 新建目录（已存在则失败）。SFTP 优先，回退 shell。
+    func mkdir(_ path: String) async -> Result<Void, RemoteFSError> {
+        if isSftpUsable {
+            do { try await session().mkdir(path); return .success(()) }
+            catch let e as SFTPError where e.isTransport { markSftpDown() }
+            catch let e as SFTPError {
+                return .failure(RemoteFSError(message: e.isPermission ? "没有创建权限" : e.message))
+            }
+            catch { return .failure(RemoteFSError(message: "新建文件夹失败")) }
+        }
+        let b64 = Data(path.utf8).base64EncodedString()
+        let r = await run("P=$(printf %s '\(b64)'|base64 -d); mkdir -- \"$P\"")
+        return r.code == 0 ? .success(()) : .failure(Self.shellErr(r, "新建文件夹失败"))
+    }
+
+    /// 新建空文件（noclobber 防覆盖已有）。
+    func createFile(_ path: String) async -> Result<Void, RemoteFSError> {
+        let b64 = Data(path.utf8).base64EncodedString()
+        let r = await run("P=$(printf %s '\(b64)'|base64 -d); set -C; : > \"$P\"")
+        return r.code == 0 ? .success(()) : .failure(RemoteFSError(message: "新建文件失败（可能已存在或无权限）"))
+    }
+
+    /// 下载远端文件到本地：SFTP 流式分块读 → 写本地，避免整文件进内存；经 control 上报进度、响应取消。
+    /// 须经独立 RemoteFS 实例调用（自带 SFTP 通道，不阻塞文件浏览所用的会话）。
+    func download(_ remotePath: String, to localURL: URL, control: UploadControl) async -> UploadOutcome {
+        guard isSftpUsable else { return .failed("需要 SFTP 连接") }
+        do {
+            let handle = try await session().open(remotePath, pflags: SFTPFlag.READ)
+            FileManager.default.createFile(atPath: localURL.path, contents: nil)
+            guard let fh = try? FileHandle(forWritingTo: localURL) else {
+                await session().closeHandle(handle); return .failed("无法写入本地文件")
+            }
+            var offset: UInt64 = 0
+            while true {
+                if control.signal == .cancel {
+                    try? fh.close(); await session().closeHandle(handle); return .cancelled
+                }
+                guard let chunk = try await session().read(handle, offset: offset, length: 32768),
+                      !chunk.isEmpty else { break }
+                fh.write(chunk)
+                offset += UInt64(chunk.count)
+                control.setSent(Int64(offset))
+            }
+            try? fh.close()
+            await session().closeHandle(handle)
+            return .completed
+        } catch let e as SFTPError where e.isTransport {
+            markSftpDown(); return .failed("连接中断")
+        } catch let e as SFTPError {
+            return .failed(e.isPermission ? "没有读取权限" : e.message)
+        } catch {
+            return .failed("下载失败")
+        }
+    }
+
+    private static func shellErr(_ r: OpResult, _ fallback: String) -> RemoteFSError {
+        let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return RemoteFSError(message: err.isEmpty ? fallback : err)
+    }
+
     /// 上传单个本地文件到 "$remotePath.part"。SFTP 走原生偏移写（续传天然干净）；否则回退单管道 cat。
     func upload(localURL: URL, toRemote remotePath: String,
                 startOffset: Int64, control: UploadControl) async -> UploadOutcome {

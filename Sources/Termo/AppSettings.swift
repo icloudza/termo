@@ -47,6 +47,15 @@ final class AppSettings: ObservableObject {
         didSet { d.set(termScrollback, forKey: "termScrollback") }
     }
 
+    /// 默认下载目录（空=系统下载文件夹）。
+    @Published var downloadDir: String {
+        didSet { d.set(downloadDir, forKey: "downloadDir") }
+    }
+    /// 每次下载都询问保存位置。
+    @Published var downloadAskEachTime: Bool {
+        didSet { d.set(downloadAskEachTime, forKey: "downloadAskEachTime") }
+    }
+
     private init() {
         startupBehavior = StartupBehavior(rawValue: d.string(forKey: "startupBehavior") ?? "") ?? .welcome
         defaultShell = DefaultShell(rawValue: d.string(forKey: "defaultShell") ?? "") ?? .auto
@@ -57,6 +66,17 @@ final class AppSettings: ObservableObject {
         termCursorStyle = d.string(forKey: "termCursorStyle") ?? "block"
         termCursorBlink = d.object(forKey: "termCursorBlink") as? Bool ?? true
         termScrollback = d.object(forKey: "termScrollback") as? Int ?? 10000
+        downloadDir = d.string(forKey: "downloadDir") ?? ""
+        downloadAskEachTime = d.object(forKey: "downloadAskEachTime") as? Bool ?? false
+    }
+
+    /// 实际下载目录：设置为空则用系统下载文件夹。
+    var resolvedDownloadDir: URL {
+        if !downloadDir.isEmpty {
+            return URL(fileURLWithPath: (downloadDir as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
     }
 
     /// 解析出实际的 shell 可执行路径。

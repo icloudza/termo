@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -143,7 +144,33 @@ struct SettingsView: View {
             settingRow("关闭确认", description: "关闭有活跃进程的终端时提示确认") {
                 ThemedToggle(isOn: $settings.closeConfirm)
             }
+
+            settingRow("下载时询问位置", description: "每次下载都弹出选择保存位置") {
+                ThemedToggle(isOn: $settings.downloadAskEachTime)
+            }
+
+            if !settings.downloadAskEachTime {
+                settingRow("默认下载目录", description: "下载的文件保存到此处") {
+                    HStack(spacing: 8) {
+                        Text(settings.resolvedDownloadDir.path)
+                            .font(.system(size: 11, design: .monospaced)).foregroundStyle(Pal.subtext)
+                            .lineLimit(1).truncationMode(.middle)
+                            .frame(maxWidth: 220, alignment: .trailing)
+                        SecondaryButton(title: "选择…", action: chooseDownloadDir)
+                    }
+                }
+            }
         }
+    }
+
+    private func chooseDownloadDir() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "选择"
+        panel.directoryURL = settings.resolvedDownloadDir
+        if panel.runModal() == .OK, let url = panel.url { settings.downloadDir = url.path }
     }
 
     // MARK: - 终端
