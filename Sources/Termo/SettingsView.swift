@@ -158,6 +158,7 @@ struct SettingsView: View {
                             .font(.system(size: 11, design: .monospaced)).foregroundStyle(Pal.subtext)
                             .lineLimit(1).truncationMode(.middle)
                             .frame(maxWidth: 220, alignment: .trailing)
+                            .tooltip(settings.resolvedDownloadDir.path)
                         SecondaryButton(title: "选择…", action: chooseDownloadDir)
                     }
                 }
@@ -165,6 +166,10 @@ struct SettingsView: View {
 
             settingRow("资源告警", description: "主机 CPU、内存或磁盘持续高占用时发送系统通知") {
                 ThemedToggle(isOn: $settings.resourceAlerts)
+            }
+
+            settingRow("隐藏监控提示", description: "不再显示监控面板顶部的数据采集说明") {
+                ThemedToggle(isOn: $settings.monitorNoticeHidden)
             }
         }
     }

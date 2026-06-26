@@ -55,20 +55,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(NSMenuItem(title: "退出 Termo",
                                    action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
-        // 编辑菜单（复制/粘贴/撤销等快捷键依赖这些菜单项才能注册）
+        // 编辑菜单：复制/粘贴/撤销等标准操作依赖这些菜单项把快捷键注册到响应链才生效（输入框/编辑器/sheet 内同理）。
+        // 父项必须有标题，否则菜单栏显示为空；每项显式设 keyEquivalentModifierMask = ⌘（与代码库其它菜单一致），
+        // 避免默认修饰键在自定义主菜单下未被识别导致 ⌘X/⌘C/⌘V/⌘A 失效。
         let editItem = NSMenuItem()
+        editItem.title = "编辑"
         main.addItem(editItem)
         let edit = NSMenu(title: "编辑")
         editItem.submenu = edit
-        edit.addItem(NSMenuItem(title: "撤销", action: Selector(("undo:")), keyEquivalent: "z"))
-        let redo = NSMenuItem(title: "重做", action: Selector(("redo:")), keyEquivalent: "z")
-        redo.keyEquivalentModifierMask = [.command, .shift]
-        edit.addItem(redo)
+        func addEdit(_ title: String, _ action: Selector, _ key: String,
+                     _ mask: NSEvent.ModifierFlags = .command) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.keyEquivalentModifierMask = mask
+            edit.addItem(item)
+        }
+        addEdit("撤销", Selector(("undo:")), "z")
+        addEdit("重做", Selector(("redo:")), "z", [.command, .shift])
         edit.addItem(.separator())
-        edit.addItem(NSMenuItem(title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        edit.addItem(NSMenuItem(title: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        edit.addItem(NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        edit.addItem(NSMenuItem(title: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        addEdit("剪切", #selector(NSText.cut(_:)), "x")
+        addEdit("复制", #selector(NSText.copy(_:)), "c")
+        addEdit("粘贴", #selector(NSText.paste(_:)), "v")
+        addEdit("全选", #selector(NSText.selectAll(_:)), "a")
 
         NSApp.mainMenu = main
     }

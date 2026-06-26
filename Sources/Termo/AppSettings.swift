@@ -61,10 +61,12 @@ final class AppSettings: ObservableObject {
         didSet { d.set(resourceAlerts, forKey: "resourceAlerts") }
     }
 
-    /// 监控安全说明是否已确认（点「我已知晓」后永久关闭该提示）。
-    @Published var monitorNoticeAck: Bool {
-        didSet { d.set(monitorNoticeAck, forKey: "monitorNoticeAck") }
+    /// 永久隐藏监控面板的采集说明（在「设置 - 通用」中开启，持久化）。
+    @Published var monitorNoticeHidden: Bool {
+        didSet { d.set(monitorNoticeHidden, forKey: "monitorNoticeHidden") }
     }
+    /// 本次启动已点「我已知晓」临时收起采集说明（不持久化，重启后恢复显示）。
+    @Published var monitorNoticeAckedThisSession = false
 
     private init() {
         startupBehavior = StartupBehavior(rawValue: d.string(forKey: "startupBehavior") ?? "") ?? .welcome
@@ -79,7 +81,7 @@ final class AppSettings: ObservableObject {
         downloadDir = d.string(forKey: "downloadDir") ?? ""
         downloadAskEachTime = d.object(forKey: "downloadAskEachTime") as? Bool ?? false
         resourceAlerts = d.object(forKey: "resourceAlerts") as? Bool ?? true
-        monitorNoticeAck = d.object(forKey: "monitorNoticeAck") as? Bool ?? false
+        monitorNoticeHidden = d.object(forKey: "monitorNoticeHidden") as? Bool ?? false
     }
 
     /// 实际下载目录：设置为空则用系统下载文件夹。

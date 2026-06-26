@@ -132,7 +132,6 @@ private struct MonitorPanel: View {
     @ObservedObject var monitor: HostMonitor
     @ObservedObject private var theme = ThemeManager.shared
     @ObservedObject private var settings = AppSettings.shared
-    @State private var heatRows = 1   // 热力图 Canvas 当前行数（由宽度算出，决定其高度）
 
     // Apple 系统强调色：蓝（磁盘/上行）、绿（CPU/下行）、紫（GPU/交换）。
     private static let blue = Color(hex: 0x007AFF)
@@ -144,14 +143,15 @@ private struct MonitorPanel: View {
             HStack(spacing: 7) {
                 Text("监控").font(.system(size: 12)).foregroundStyle(Pal.overlay)
                 Circle().fill(monitor.phase == .live ? Self.green : Pal.overlay).frame(width: 6, height: 6)
-                if !settings.monitorNoticeAck {
+                if !settings.monitorNoticeHidden && !settings.monitorNoticeAckedThisSession {
                     Text("提示：本监控仅进行数据采集与状态读取，不会在目标机器内执行或部署任何 shell 脚本。")
                         .font(.system(size: 8)).foregroundStyle(Pal.overlay).lineLimit(1)
-                    Button { settings.monitorNoticeAck = true } label: {
+                    Button { settings.monitorNoticeAckedThisSession = true } label: {
                         Text("我已知晓").font(.system(size: 8, weight: .medium)).foregroundStyle(Pal.mauve)
                     }
                     .buttonStyle(.plain)
                     .pointerCursor()
+                    .tooltip("本次启动内不再显示；如需永久关闭，请在「设置 - 通用」开启「隐藏监控提示」。")
                     Spacer(minLength: 0)
                 }
             }
@@ -206,29 +206,18 @@ private struct MonitorPanel: View {
         }
     }
 
-    /// 每核占用热力方块：用单个 Canvas 一次性绘制全部核（48~128 格），避免几十个独立视图/图层的重建开销。
-    /// 按可用宽度自动换行（每格 10pt、间距 3pt），行数由宽度算出后定高；热力图无动画，改 Canvas 不损失效果。
+    /// 每核占用热力方块：原生方块视图网格，按可用宽度自动换行（每格 10pt、间距 3pt）、自动定高。
+    /// 矢量图层、无位图绘制层开销；热力图随采样帧更新颜色，无持续动画。
     private func heatmap(_ cores: [Double]) -> some View {
-        let cell: CGFloat = 10, gap: CGFloat = 3, unit = cell + gap
-        return GeometryReader { geo in
-            let cols = max(1, Int((geo.size.width + gap) / unit))
-            Canvas { ctx, _ in
-                for (i, load) in cores.enumerated() {
-                    let rect = CGRect(x: CGFloat(i % cols) * unit, y: CGFloat(i / cols) * unit,
-                                      width: cell, height: cell)
-                    ctx.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(heatColor(load)))
-                }
+        let cell: CGFloat = 10, gap: CGFloat = 3
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: cell, maximum: cell), spacing: gap)],
+                         alignment: .leading, spacing: gap) {
+            ForEach(Array(cores.enumerated()), id: \.offset) { _, load in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(heatColor(load))
+                    .frame(width: cell, height: cell)
             }
-            .onAppear { setHeatRows(cores.count, cols) }
-            .onChange(of: geo.size.width) { _ in setHeatRows(cores.count, cols) }
-            .onChange(of: cores.count) { n in setHeatRows(n, cols) }
         }
-        .frame(height: CGFloat(heatRows) * unit - gap)
-    }
-
-    private func setHeatRows(_ count: Int, _ cols: Int) {
-        let r = max(1, (count + cols - 1) / cols)
-        if heatRows != r { heatRows = r }
     }
 
     /// 负载 → 冷暖色：HSB 色相从绿（0.33）过渡到红（0）。
@@ -485,9 +474,8 @@ private struct MonitorPanel: View {
 }
 
 /// 网络波动折线图：下行（绿）、上行（蓝）两条平滑曲线，传送带式匀速左滑。
-/// 用单个 Canvas 绘制（两条曲线 1 个图层）+ TimelineView 限制重绘帧率，取代「永续满帧 SwiftUI 动画」。
-/// 持续动画会拖着整块面板每帧重渲染（离屏栅格化 + 重画全部文字），帧率即等比开销。滚动每 1~2 秒才左移约一格、
-/// 速度极慢，20fps 与 30fps 肉眼无差但持续重绘再降三分之一。滚动相位 = 距上一帧采样的时间 / 采样间隔，时间驱动、平滑。
+/// 两条曲线各用原生 Shape（矢量图层）描边 + TimelineView 限制重绘帧率，取代 Canvas 的位图绘制层（更省内存）。
+/// 滚动每 1~2 秒才左移约一格、速度极慢，20fps 肉眼丝滑。滚动相位 = 距上一帧采样的时间 / 采样间隔，时间驱动、平滑。
 private struct NetSparkline: View {
     let samples: [NetSample]
     let tick: Int
@@ -498,6 +486,7 @@ private struct NetSparkline: View {
 
     private static let visible = 40
     private static let fps = 20.0
+    private static let stroke = StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
 
     var body: some View {
         // rx/tx/maxV 只随数据帧变化，TimelineView 重绘时复用（不每帧重算）。
@@ -506,11 +495,11 @@ private struct NetSparkline: View {
         let tx = win(samples.map(\.tx), maxV)
         TimelineView(.animation(minimumInterval: 1.0 / Self.fps)) { tl in
             let phase = phase(at: tl.date)
-            Canvas { ctx, size in
-                let step = size.width / CGFloat(Self.visible)
-                curve(ctx, rx, phase, step, size, down)
-                curve(ctx, tx, phase, step, size, up)
+            ZStack {
+                NetCurve(values: rx, phase: phase, visible: Self.visible).stroke(down.opacity(0.9), style: Self.stroke)
+                NetCurve(values: tx, phase: phase, visible: Self.visible).stroke(up.opacity(0.9), style: Self.stroke)
             }
+            .clipped()   // Shape 不像 Canvas 自动裁，需裁掉两侧的屏外点
         }
         .onChange(of: tick) { _ in lastTick = Date() }
     }
@@ -521,13 +510,27 @@ private struct NetSparkline: View {
         return CGFloat(min(1, max(0, now.timeIntervalSince(lastTick) / interval)))
     }
 
-    /// 在 Canvas 上画一条 Catmull-Rom 平滑曲线。第 i 点画在 x=(i-phase)*step，随 phase 0→1 整条左移一格；
-    /// 两侧各留一个屏幕外点（窗口 visible+2），接缝处 [0,width] 完全连续、左右缘不弹动。Canvas 自动裁掉出界部分。
-    private func curve(_ ctx: GraphicsContext, _ v: [Double], _ phase: CGFloat,
-                       _ step: CGFloat, _ size: CGSize, _ color: Color) {
-        guard v.count > 1 else { return }
-        let pts = v.enumerated().map { i, y in
-            CGPoint(x: (CGFloat(i) - phase) * step, y: size.height * (1 - CGFloat(min(1, max(0, y)))))
+    /// 取最近 visible+2 个样本（两侧各留一个屏幕外点）、归一化到 0..1；不足时前端用首值补齐，保证点数恒定、平移无缝。
+    private func win(_ raw: [Double], _ maxV: Double) -> [Double] {
+        let n = Self.visible + 2
+        let norm = raw.map { min(1, max(0, $0 / maxV)) }
+        if norm.count >= n { return Array(norm.suffix(n)) }
+        return Array(repeating: norm.first ?? 0, count: n - norm.count) + norm
+    }
+}
+
+/// 一条 Catmull-Rom 平滑折线（已归一化的点，count = visible+2）。
+/// 第 i 点画在 x=(i-phase)*step，随 phase 0→1 整条左移一格；两侧各留一个屏外点，接缝 [0,width] 连续、左右缘不弹动。
+private struct NetCurve: Shape {
+    let values: [Double]
+    let phase: CGFloat
+    let visible: Int
+
+    func path(in rect: CGRect) -> Path {
+        guard values.count > 1 else { return Path() }
+        let step = rect.width / CGFloat(visible)
+        let pts = values.enumerated().map { i, y in
+            CGPoint(x: (CGFloat(i) - phase) * step, y: rect.height * (1 - CGFloat(min(1, max(0, y)))))
         }
         var path = Path()
         path.move(to: pts[0])
@@ -540,15 +543,6 @@ private struct NetSparkline: View {
             let c2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
             path.addCurve(to: p2, control1: c1, control2: c2)
         }
-        ctx.stroke(path, with: .color(color.opacity(0.9)),
-                   style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-    }
-
-    /// 取最近 visible+2 个样本（两侧各留一个屏幕外点）、归一化到 0..1；不足时前端用首值补齐，保证点数恒定、平移无缝。
-    private func win(_ raw: [Double], _ maxV: Double) -> [Double] {
-        let n = Self.visible + 2
-        let norm = raw.map { min(1, max(0, $0 / maxV)) }
-        if norm.count >= n { return Array(norm.suffix(n)) }
-        return Array(repeating: norm.first ?? 0, count: n - norm.count) + norm
+        return path
     }
 }
