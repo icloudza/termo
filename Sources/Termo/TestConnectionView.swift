@@ -256,7 +256,7 @@ struct ConnectingDialog: View {
     }
 }
 
-// MARK: - 连接测试模拟器
+// MARK: - 连接测试器（驱动真实 ssh -v，解析输出还原各阶段进度）
 
 struct ConnectionStep: Identifiable {
     enum State { case pending, running, success, failure }

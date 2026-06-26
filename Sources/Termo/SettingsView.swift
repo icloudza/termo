@@ -217,7 +217,7 @@ struct SettingsView: View {
     private var aboutSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
             sectionHeader("关于")
-            AboutContent()   // 与独立「关于」窗口复用同一内容
+            AboutContent()   // 与独立「关于」窗口复用同一份内容
         }
     }
 

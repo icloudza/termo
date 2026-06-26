@@ -11,7 +11,7 @@ struct RemoteFSError: Error {
 /// 传输信号（单一原子状态）。
 enum UploadSignal { case run, cancel }
 
-/// 单文件传输控制盒（跨线程，锁保护）：携带信号 + 已发送字节（仅供 UI 进度）。
+/// 单文件传输控制盒（跨线程，锁保护）：承载控制信号与已发送字节（后者仅供 UI 进度显示）。
 final class UploadControl: @unchecked Sendable {
     private let lock = NSLock()
     private var _signal: UploadSignal = .run
@@ -22,8 +22,8 @@ final class UploadControl: @unchecked Sendable {
     var sent: Int64 { lock.lock(); defer { lock.unlock() }; return _sent }
 }
 
-/// 单文件传输结果。续传偏移**不在这里返回**——必须由上层在传输结束后重新 stat 远端 .part 得到
-/// （本地"已发送"含管道缓冲，会高估实际落地字节，当偏移会造成数据空洞，见审查 R1）。
+/// 单文件传输结果。续传偏移**不在这里返回**——须由上层在传输结束后重新 stat 远端 .part 取得
+/// （本地"已发送"含管道缓冲，会高估实际落地字节，直接当偏移会造成数据空洞，见审查 R1）。
 enum UploadOutcome: Equatable { case completed, cancelled, failed(String) }
 
 /// 上传前探测：远端 .part 半截大小、正式文件是否存在/大小。
@@ -44,13 +44,13 @@ struct RemoteFile: Identifiable, Hashable {
     var isDir: Bool { kind == .directory }
 }
 
-/// 基于系统 ssh 的远程文件系统操作（复用 SSHConnection 的全部连接配置 + askpass）。
-/// 每次操作一个短命 ssh 进程，靠 ControlMaster 复用主连接，认证只触发一次。
+/// 基于系统 ssh 的远程文件系统操作（复用 SSHConnection 的全部连接配置与 askpass）。
+/// 每次操作起一个短命 ssh 进程，靠 ControlMaster 复用主连接，认证只触发一次。
 final class RemoteFS {
     private let ssh: SSHConnection
     init(_ ssh: SSHConnection) { self.ssh = ssh }
 
-    // MARK: - SFTP 会话（懒建，串行；传输级失败时本会话粘性回退到 shell-exec）
+    // MARK: - SFTP 会话（懒建，串行；传输级失败后本会话粘性回退到 shell-exec）
     private var _sftp: SFTPSession?
     private let sftpLock = NSLock()
     private var sftpUsable = true

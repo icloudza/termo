@@ -8,9 +8,9 @@ final class ScrollMetrics: ObservableObject {
     var maxScroll: CGFloat { max(0, contentW - visibleW) }
     var scrollTo: ((CGFloat) -> Void)?
 
-    /// 仅在有实际变化时才赋值发布。`@Published` 即便赋相同值也会触发 objectWillChange，
-    /// 而 `updateNSView` 每次更新都回写这些值 → 会形成「回写→重渲染→又回写」的自激环（CPU 跑满）。
-    /// 用阈值比较（亚像素抖动忽略）+ 改了才发布，彻底打破该环。
+    /// 仅在值有实际变化时才赋值发布。`@Published` 即便赋相同值也会触发 objectWillChange，
+    /// 而 `updateNSView` 每次更新都回写这些值，会形成「回写→重渲染→又回写」的自激环（CPU 跑满）。
+    /// 用阈值比较忽略亚像素抖动，并仅在变化时发布，从而打破该环。
     func set(offsetX: CGFloat, contentW: CGFloat, visibleW: CGFloat) {
         if abs(self.offsetX - offsetX) > 0.5 { self.offsetX = offsetX }
         if abs(self.contentW - contentW) > 0.5 { self.contentW = contentW }
@@ -46,7 +46,7 @@ final class HScroll: NSScrollView {
     }
 }
 
-/// 忽略窗口安全区的 NSHostingView：标签内容不被标题栏 inset 推下去。
+/// 忽略窗口安全区的 NSHostingView：避免标签内容被标题栏 inset 推下去。
 final class SafeHostingView<Content: View>: NSHostingView<Content> {
     override var safeAreaInsets: NSEdgeInsets {
         .init(top: 0, left: 0, bottom: 0, right: 0)
@@ -121,7 +121,7 @@ struct HScrollRep<Content: View>: NSViewRepresentable {
                 co.lastActiveKey = activeKey
                 smoothScroll(sv, to: maxScrollX)
             }
-            // 切换标签（非新建时）：如果点的标签在边缘，平滑滚动露出它后面/前面的邻居
+            // 切换标签（非新建时）：若点中的标签贴在边缘，平滑滚动露出其后方/前方的邻居
             else if activeKey != co.lastActiveKey, docW > clipW {
                 co.lastActiveKey = activeKey
                 let tc = max(1, tabCount)
@@ -131,10 +131,10 @@ struct HScrollRep<Content: View>: NSViewRepresentable {
 
                 var targetX = curX
                 if tabRight > curX + clipW - tabW * 0.5 {
-                    // 点了右边缘的标签，滚到露出它后面一个
+                    // 点中右边缘的标签，滚动露出其后方相邻的一个
                     targetX = min(maxScrollX, tabRight - clipW + tabW)
                 } else if tabLeft < curX + tabW * 0.5 {
-                    // 点了左边缘的标签，滚到露出它前面一个
+                    // 点中左边缘的标签，滚动露出其前方相邻的一个
                     targetX = max(0, tabLeft - tabW)
                 }
                 if abs(targetX - curX) > 1 {

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 按文件类型返回 SF Symbol 图标 + 颜色（VS Code 资源管理器风格，覆盖绝大多数常见类型）。
+/// 按文件类型返回 SF Symbol 图标 + 颜色（资源管理器风格，覆盖绝大多数常见类型）。
 enum FileIcon {
     // Catppuccin 强调色（按文件类别上色）
     private static let blue = Color(hex: 0x89b4fa)

@@ -1,13 +1,13 @@
 import Foundation
 import Security
 
-/// 用 OpenSSH 内置的 SSH_ASKPASS 机制喂密码——无需第三方 sshpass。
-/// 写一个**不含密码**的助手脚本（密码经 TERMO_SSH_PASSWORD 环境变量传入），
-/// 配合 SSH_ASKPASS_REQUIRE=force（OpenSSH 8.4+）让 ssh 无论有没有 TTY 都调用它读密码。
+/// 用 OpenSSH 内置的 SSH_ASKPASS 机制喂密码，无需第三方 sshpass。
+/// 助手脚本本身不含密码（密码经 TERMO_SSH_PASSWORD 环境变量传入），
+/// 配合 SSH_ASKPASS_REQUIRE=force（OpenSSH 8.4+）让 ssh 无论有无 TTY 都调用它读密码。
 enum SSHAskpass {
     static let passwordEnvKey = "TERMO_SSH_PASSWORD"
 
-    /// 确保助手脚本存在且可执行，返回其绝对路径。脚本本身不含任何密钥。
+    /// 确保助手脚本存在且可执行，返回其绝对路径。脚本本身不含任何密码。
     private static func ensureHelper() -> String? {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

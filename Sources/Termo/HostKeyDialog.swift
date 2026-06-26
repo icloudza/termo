@@ -13,7 +13,7 @@ struct HostKeyDialog: View {
             Color.black.opacity(0.45).ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 0) {
-                // 标题
+                // 标题栏
                 HStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 18)).foregroundStyle(Pal.yellow)

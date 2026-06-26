@@ -152,7 +152,7 @@ struct AddHostView: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.showsHiddenFiles = true   // ~/.ssh 下的密钥是隐藏目录
+        panel.showsHiddenFiles = true   // ~/.ssh 为隐藏目录，需显示隐藏文件才能选到密钥
         panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh")
         panel.prompt = "选择"
         if panel.runModal() == .OK, let url = panel.url {

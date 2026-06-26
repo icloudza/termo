@@ -28,7 +28,7 @@ final class AppSettings: ObservableObject {
     }
 
     // ---------- 终端 ----------
-    /// 终端字体名（空 = 自动选用预置等宽字体）。
+    /// 终端字体名（空 = 自动回退到预置等宽字体）。
     @Published var termFont: String {
         didSet { d.set(termFont, forKey: "termFont") }
     }

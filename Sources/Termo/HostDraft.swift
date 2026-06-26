@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 真实 OpenSSH 算法 / 编码选项。空字符串表示「默认（自动协商）」。
+/// OpenSSH 算法与编码选项。空字符串表示「默认（自动协商）」。
 enum SSHOptions {
     static let encodings: [(value: String, label: String)] = [
         ("", "默认（UTF-8）"),
@@ -86,7 +86,7 @@ final class HostDraft: ObservableObject {
     @Published var authMethod: AuthMethod = .password
     @Published var user = "root"
     @Published var password = ""
-    @Published var keyPath = ""        // 私钥文件路径（验证方式为「密钥」时使用）
+    @Published var keyPath = ""        // 私钥文件路径（认证方式为「密钥」时使用）
     @Published var notes = ""
 
     // 连接设置

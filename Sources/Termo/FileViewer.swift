@@ -28,7 +28,7 @@ final class EditorState: ObservableObject {
     @Published var isDirty = false
     /// 「基准（上次保存/加载的内容）」的版本号。每次基准变化 +1；编辑器的变更竖条协调器据此从 TextView
     /// 实时快照新基准并对账。改动竖条本身完全由编辑器侧的 ChangeBarCoordinator 按字符偏移锚定计算，
-    /// 不再走这里的滞后行号管线（彻底消除快速编辑时的错位）。
+    /// 不走滞后的行号管线（彻底消除快速编辑时的错位）。
     @Published private(set) var savedVersion = 0
     @Published var saving = false
     @Published var saveError: String? = nil
@@ -172,7 +172,7 @@ final class EditorState: ObservableObject {
 // MARK: - 路由视图
 
 /// 头部（标题/面包屑）左缩进：让内容左缘越过编辑器行号栏，与代码正文对齐。
-/// 行号栏宽度随行数位数变化（约 38–52px），取 46 覆盖常见 2–4 位行号。
+/// 行号栏宽度随行数位数变化（约 38–52px），此缩进覆盖常见 2–4 位行号。
 private let editorHeaderInset: CGFloat = 14
 
 struct FileViewerView: View {
@@ -328,7 +328,7 @@ struct FileViewerView: View {
     }
 
     static let editorFont: NSFont = {
-        let size: CGFloat = 12   // 与 Xcode 默认一致
+        let size: CGFloat = 12
         // 用 SF Mono：NSFont(name:) 取不到家族名时回退 monospacedSystemFont —— 它在现代 macOS 上本身就是 SF Mono。
         for name in ["SF Mono", "SFMono-Regular"] {
             if let f = NSFont(name: name, size: size) { return f }
@@ -386,7 +386,7 @@ private struct EditorRoot: View {
     }
 }
 
-// MARK: - 面包屑路径条（Xcode jump bar 风，可点击跳转左侧资源管理器）
+// MARK: - 面包屑路径条（可点击跳转左侧资源管理器）
 
 private struct EditorBreadcrumb: View {
     let file: RemoteFile
@@ -596,7 +596,7 @@ private struct TooLargeNoticeView: View {
 }
 
 /// 乐观锁冲突弹窗（自定义样式，对齐 [[HostKeyDialog]] 的卡片风，替代系统 .alert）。
-/// 紧凑卡片 + 底部一排精致 pill 按钮，克制用色：覆盖=淡红、重载=灰底、取消=纯文字。
+/// 紧凑卡片 + 底部一排 pill 按钮，克制用色：覆盖=淡红、重载=灰底、取消=纯文字。
 struct SaveConflictDialog: View {
     let onOverwrite: () -> Void
     let onReload: () -> Void

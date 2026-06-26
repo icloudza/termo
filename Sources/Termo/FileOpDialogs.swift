@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 重命名弹窗（自定义样式，对齐 [[ConfirmDialog]]）。
+/// 重命名弹窗（自定义样式，与 ConfirmDialog 一致）。
 struct RenameDialog: View {
     let originalName: String
     let onConfirm: (String) -> Void
@@ -82,7 +82,7 @@ struct ChmodDialog: View {
                     ThemedTextField(placeholder: "755", text: $octalText)
                         .frame(width: 72)
                         .onChange(of: octalText) { t in
-                            // 只取末 3 位八进制数字解析回 mode（不反写 octalText，避免回环）
+                            // 仅取末 3 位八进制数字解析回 mode；不反写 octalText，避免回环更新
                             let digits = String(t.filter { "01234567".contains($0) }.suffix(3))
                             if let v = Int(digits, radix: 8) { mode = v & 0o777 }
                         }
@@ -107,7 +107,7 @@ struct ChmodDialog: View {
     private var grid: some View {
         VStack(spacing: 9) {
             HStack(spacing: 0) {
-                Color.clear.frame(width: 60, height: 14)   // 占位：必须同时定高，否则纵向贪婪撑满弹窗
+                Color.clear.frame(width: 60, height: 14)   // 占位：必须同时定高，否则纵向贪婪扩展撑满弹窗
                 ForEach(perms, id: \.label) { p in
                     Text(p.label).font(.system(size: 11)).foregroundStyle(Pal.overlay)
                         .frame(width: 50)

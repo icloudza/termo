@@ -34,7 +34,7 @@ struct SFTPError: Error {
     var isPermission: Bool { code == FX.PERMISSION_DENIED }
 }
 
-/// SFTP 文件属性（只取本 App 需要的字段）。
+/// SFTP 文件属性（只取本端用到的字段）。
 struct SFTPAttrs {
     var size: UInt64? = nil
     var permissions: UInt32? = nil

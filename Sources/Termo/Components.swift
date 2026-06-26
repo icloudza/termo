@@ -112,7 +112,7 @@ struct ThemedSecureField: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            // 两个字段都常驻（仅 opacity 切换），切换显示/隐藏时不重建、焦点不丢
+            // 两个字段都常驻、仅切 opacity；切换显示/隐藏时不重建视图，焦点不丢失
             ZStack {
                 SecureField(placeholder, text: $text)
                     .focused($focusedField, equals: .secure)
@@ -130,7 +130,7 @@ struct ThemedSecureField: View {
             Button {
                 let wasFocused = isFocused
                 reveal.toggle()
-                // 把焦点移到当前可见的那个字段（两者都在视图树里，重设可靠）
+                // 把焦点移到当前可见的字段；两者都在视图树中，重设焦点可靠
                 if wasFocused {
                     DispatchQueue.main.async { focusedField = reveal ? .plain : .secure }
                 }
@@ -155,7 +155,7 @@ struct ThemedSecureField: View {
     }
 }
 
-/// 主题自适应下拉菜单（基于 popover 的全自定义实现）。
+/// 主题自适应下拉菜单（基于 popover 全自定义实现）。
 struct ThemedDropdown<T: Hashable>: View {
     let options: [(value: T, label: String)]
     @Binding var selection: T
@@ -329,14 +329,14 @@ struct ThemedCheckbox: View {
     }
 }
 
-/// 居中确认对话框（带半透明遮罩），用作 NSAlert 的自定义替代。
+/// 居中确认对话框（带半透明遮罩），替代系统模态弹窗。
 struct ConfirmDialog: View {
     let title: String
     let message: String
     var confirmTitle: String = "确认"
     var cancelTitle: String = "取消"
     var destructive: Bool = false
-    var showCancel: Bool = true   // 信息提示型弹窗设 false，仅一个按钮
+    var showCancel: Bool = true   // 纯提示型弹窗设 false，仅保留确认按钮
     let onConfirm: () -> Void
     let onCancel: () -> Void
     @ObservedObject private var theme = ThemeManager.shared
