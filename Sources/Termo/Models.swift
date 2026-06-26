@@ -234,6 +234,56 @@ extension HostSpecs {
     }
 }
 
+/// 单个挂载点的磁盘用量（1K 块）。
+struct DiskUsage: Identifiable {
+    var id: String { mount }
+    let mount: String
+    let usedKB: Int64
+    let totalKB: Int64
+    var percent: Double { totalKB > 0 ? Double(usedKB) / Double(totalKB) * 100 : 0 }
+}
+
+/// 单块 GPU 的实时状态（来自 nvidia-smi；显存以 MiB 计）。
+struct GPUInfo: Identifiable {
+    var id: Int { index }
+    let index: Int
+    let name: String
+    let utilPercent: Double
+    let memUsedMB: Int64
+    let memTotalMB: Int64
+    let tempC: Int
+    var memPercent: Double { memTotalMB > 0 ? Double(memUsedMB) / Double(memTotalMB) * 100 : 0 }
+}
+
+/// 一帧网速采样（字节/秒），用于网络波动折线图。
+struct NetSample {
+    let rx: Double
+    let tx: Double
+}
+
+/// 主机实时监控的一帧采样（由 HostMonitor 流式解析 /proc 与 nvidia-smi 得到，不持久化）。
+/// 速率与占用类字段需相邻两帧差值，首帧为 nil；内存以 kB（1K 块）计。
+struct HostMetrics {
+    var cpuPercent: Double? = nil      // 整机 CPU 占用，0–100
+    var perCore: [Double] = []          // 每核 CPU 占用，0–100，按核序号排列
+    var load1: Double = 0
+    var load5: Double = 0
+    var load15: Double = 0
+    var memUsedKB: Int64 = 0
+    var memTotalKB: Int64 = 0
+    var swapUsedKB: Int64 = 0
+    var swapTotalKB: Int64 = 0
+    var disks: [DiskUsage] = []
+    var gpus: [GPUInfo] = []
+    var netRxBytesPerSec: Double? = nil
+    var netTxBytesPerSec: Double? = nil
+    var uptimeSecs: Double = 0
+
+    var memPercent: Double { memTotalKB > 0 ? Double(memUsedKB) / Double(memTotalKB) * 100 : 0 }
+    var hasSwap: Bool { swapTotalKB > 0 }
+    var swapPercent: Double { swapTotalKB > 0 ? Double(swapUsedKB) / Double(swapTotalKB) * 100 : 0 }
+}
+
 struct Host: Identifiable, Codable {
     // latencyMs 是运行时探测结果，不写入 JSON
     enum CodingKeys: String, CodingKey {
@@ -257,6 +307,10 @@ struct Host: Identifiable, Codable {
 
     /// 是否为 RDP（远程桌面）主机。
     var isRDP: Bool { rdp != nil }
+
+    /// 内置模拟演示主机的 id：监控面板用合成数据驱动，不连真服务器、不持久化、不参与状态扫描。
+    static let mockHostId = "__mock_demo__"
+    var isMock: Bool { id == Host.mockHostId }
 
     /// 仅主机名/IP（不含登录用户）。
     var ipOrHost: String {

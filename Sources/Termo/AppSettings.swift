@@ -56,6 +56,16 @@ final class AppSettings: ObservableObject {
         didSet { d.set(downloadAskEachTime, forKey: "downloadAskEachTime") }
     }
 
+    /// 资源告警：监控到 CPU/内存/磁盘持续高占用时发系统通知。
+    @Published var resourceAlerts: Bool {
+        didSet { d.set(resourceAlerts, forKey: "resourceAlerts") }
+    }
+
+    /// 监控安全说明是否已确认（点「我已知晓」后永久关闭该提示）。
+    @Published var monitorNoticeAck: Bool {
+        didSet { d.set(monitorNoticeAck, forKey: "monitorNoticeAck") }
+    }
+
     private init() {
         startupBehavior = StartupBehavior(rawValue: d.string(forKey: "startupBehavior") ?? "") ?? .welcome
         defaultShell = DefaultShell(rawValue: d.string(forKey: "defaultShell") ?? "") ?? .auto
@@ -68,6 +78,8 @@ final class AppSettings: ObservableObject {
         termScrollback = d.object(forKey: "termScrollback") as? Int ?? 10000
         downloadDir = d.string(forKey: "downloadDir") ?? ""
         downloadAskEachTime = d.object(forKey: "downloadAskEachTime") as? Bool ?? false
+        resourceAlerts = d.object(forKey: "resourceAlerts") as? Bool ?? true
+        monitorNoticeAck = d.object(forKey: "monitorNoticeAck") as? Bool ?? false
     }
 
     /// 实际下载目录：设置为空则用系统下载文件夹。

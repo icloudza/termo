@@ -5,6 +5,8 @@ struct Workspace: View {
     let model: AppModel
     @ObservedObject var tabs: TabsModel
     @ObservedObject private var theme = ThemeManager.shared
+    // 非活动编辑器的冻结尺寸：仅首次布局时定一次。缩放时只有活动编辑器随实时尺寸重排，隐藏编辑器尺寸不变、不触发 TextKit 重排。
+    @State private var frozenEditorSize: CGSize = .zero
 
     var body: some View {
         ZStack {
@@ -27,17 +29,28 @@ struct Workspace: View {
             //   缩略图缩放期已跳过，开销小；且编辑器不像终端要 reflow 整缓冲。
             // - **其它 tab（终端/文件/概览/RDP）只渲染活动的**。终端视图是模型持有的裸 NSView，detach/attach 不重建、
             //   PTY 后台不断；其它要么无状态、要么模型持有。这把"标签越多越卡"的大头（终端 reflow×N）压到 O(1)。
-            ZStack {
-                ForEach(tabs.tabs.filter { $0.kind == .editor }, id: \.id) { tab in
-                    tabView(tab)
-                        .opacity(tab.id == tabs.activeTabId ? 1 : 0)
-                        .allowsHitTesting(tab.id == tabs.activeTabId)
-                        .zIndex(tab.id == tabs.activeTabId ? 1 : 0)
-                        .accessibilityHidden(tab.id != tabs.activeTabId)
+            // GeometryReader 取实时尺寸：活动编辑器随之填满并重排（仅 1 个，开销等同只开一个标签）；
+            // 隐藏编辑器钉死在 frozenEditorSize，缩放/拖侧栏时容器尺寸不变 → 不重排。切到它时才取实时尺寸重排一次。
+            GeometryReader { geo in
+                ZStack {
+                    ForEach(tabs.tabs.filter { $0.kind == .editor }, id: \.id) { tab in
+                        let isActive = tab.id == tabs.activeTabId
+                        tabView(tab)
+                            .frame(width: isActive ? geo.size.width : max(1, frozenEditorSize.width),
+                                   height: isActive ? geo.size.height : max(1, frozenEditorSize.height))
+                            .opacity(isActive ? 1 : 0)
+                            .allowsHitTesting(isActive)
+                            .zIndex(isActive ? 1 : 0)
+                            .accessibilityHidden(!isActive)
+                    }
+                    if let active = tabs.tabs.first(where: { $0.id == tabs.activeTabId }), active.kind != .editor {
+                        tabView(active)
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .zIndex(2)
+                    }
                 }
-                if let active = tabs.tabs.first(where: { $0.id == tabs.activeTabId }), active.kind != .editor {
-                    tabView(active).zIndex(2)
-                }
+                .onAppear { if frozenEditorSize == .zero { frozenEditorSize = geo.size } }
+                .onChange(of: geo.size) { s in if frozenEditorSize == .zero { frozenEditorSize = s } }
             }
             .onChange(of: tabs.activeTabId) { _ in model.focusActiveTab() }
             .onAppear { model.focusActiveTab() }
@@ -53,6 +66,11 @@ struct Workspace: View {
                                  isActive: tab.id == tabs.activeTabId,
                                  model: model, tabId: tab.id,
                                  canUpload: model.host(tab.hostId)?.ssh != nil)
+                    .overlay {
+                        if let conn = model.terminalConn(for: tab.id) {
+                            TerminalReconnectOverlay(conn: conn) { model.manualReconnectTerminal(tab.id) }
+                        }
+                    }
                     .padding(10)
             case .overview:
                 if let host = model.host(tab.hostId) {
@@ -116,6 +134,7 @@ struct WelcomeView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
         }
     }
 }

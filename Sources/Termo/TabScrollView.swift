@@ -170,6 +170,56 @@ struct HScrollRep<Content: View>: NSViewRepresentable {
     }
 }
 
+/// 横向滚动容器：复用标签栏的 HScroll（鼠标滚轮纵向 delta 转横向、可触controlled板横扫），
+/// 用于内容超宽时可滚动（如编辑器路径面包屑）。pathKey 变化时自动滚到末尾，露出最末一级（文件名）。
+/// 与 TabStrip 不同：无标签态/新建态联动，也不带可视滚动条，仅提供滚动本身。
+struct HWheelScroll<Content: View>: NSViewRepresentable {
+    var pathKey: String
+    @ViewBuilder var content: Content
+
+    func makeNSView(context: Context) -> HScroll {
+        let sv = HScroll()
+        sv.hasHorizontalScroller = false
+        sv.hasVerticalScroller = false
+        sv.drawsBackground = false
+        sv.backgroundColor = .clear
+        sv.contentView.drawsBackground = false
+        sv.verticalScrollElasticity = .none
+        sv.horizontalScrollElasticity = .allowed
+        sv.automaticallyAdjustsContentInsets = false
+        sv.contentInsets = .init(top: 0, left: 0, bottom: 0, right: 0)
+
+        let hosting = SafeHostingView(rootView: content)
+        hosting.translatesAutoresizingMaskIntoConstraints = true
+        sv.documentView = hosting
+        context.coordinator.hosting = hosting
+        return sv
+    }
+
+    func updateNSView(_ sv: HScroll, context: Context) {
+        context.coordinator.hosting?.rootView = content
+        sv.needsLayout = true
+        let co = context.coordinator
+        let changed = co.lastPath != pathKey
+        DispatchQueue.main.async {
+            sv.layoutSubtreeIfNeeded()
+            guard changed, let doc = sv.documentView else { return }
+            let clipW = sv.contentView.bounds.width
+            guard clipW > 0 else { return }   // 尚未完成布局，留待下次更新再滚（lastPath 暂不更新）
+            co.lastPath = pathKey
+            let maxX = max(0, doc.frame.width - clipW)
+            sv.contentView.scroll(to: NSPoint(x: maxX, y: 0))
+            sv.reflectScrolledClipView(sv.contentView)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    final class Coordinator {
+        var hosting: SafeHostingView<Content>?
+        var lastPath = ""
+    }
+}
+
 struct TabStrip<Content: View>: View {
     var newKey: Int
     var activeKey: Int

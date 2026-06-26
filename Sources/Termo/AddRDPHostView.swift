@@ -112,6 +112,7 @@ struct AddRDPHostView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
         }
         .padding(.horizontal, 20).padding(.vertical, 16)
     }
@@ -216,5 +217,6 @@ struct AddRDPHostView: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 }

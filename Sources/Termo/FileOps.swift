@@ -4,7 +4,8 @@ import SwiftUI
 /// 由侧栏文件树（FileTreeState）与 SFTP 浏览器（BrowserState）共同实现，使同一套菜单两处复用。
 @MainActor
 protocol FileOpsTarget: AnyObject {
-    func performDelete(_ file: RemoteFile) async -> Result<Void, RemoteFSError>
+    /// handle 非空时可中途取消（目录递归删除较慢时用）。
+    func performDelete(_ file: RemoteFile, handle: CommandHandle?) async -> Result<Void, RemoteFSError>
     func performRename(_ file: RemoteFile, newName: String) async -> Result<String, RemoteFSError>
     func performChmod(_ file: RemoteFile, mode: String) async -> Result<Void, RemoteFSError>
     func currentPerms(_ file: RemoteFile) async -> Int?
@@ -33,6 +34,11 @@ extension View {
             } else {
                 Button { model.downloadFiles([file], host: host) } label: {
                     Label("下载", systemImage: "square.and.arrow.down")
+                }
+                if ArchiveKind.detect(file.name) != nil {
+                    Button { model.requestExtract(file, host: host) } label: {
+                        Label("解压", systemImage: "doc.zipper")
+                    }
                 }
                 Divider()
             }

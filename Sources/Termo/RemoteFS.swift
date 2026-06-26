@@ -22,6 +22,25 @@ final class UploadControl: @unchecked Sendable {
     var sent: Int64 { lock.lock(); defer { lock.unlock() }; return _sent }
 }
 
+/// 命令取消句柄：持有运行中的 ssh 子进程，cancel() 终止它——远端命令随通道关闭收到 SIGHUP 而结束。
+/// 用于让「正在删除」等可能较慢的命令支持用户中途取消。线程安全。
+final class CommandHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var proc: Process?
+    private var cancelled = false
+
+    /// 绑定已启动的子进程；若在绑定前已被取消，立即终止它。
+    func bind(_ p: Process) {
+        lock.lock(); let c = cancelled; if !c { proc = p }; lock.unlock()
+        if c, p.isRunning { p.terminate() }
+    }
+    func cancel() {
+        lock.lock(); cancelled = true; let p = proc; lock.unlock()
+        if let p, p.isRunning { p.terminate() }
+    }
+    var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+}
+
 /// 单文件传输结果。续传偏移**不在这里返回**——须由上层在传输结束后重新 stat 远端 .part 取得
 /// （本地"已发送"含管道缓冲，会高估实际落地字节，直接当偏移会造成数据空洞，见审查 R1）。
 enum UploadOutcome: Equatable { case completed, cancelled, failed(String) }
@@ -66,6 +85,14 @@ final class RemoteFS {
         sftpLock.lock(); let s = _sftp; sftpUsable = false; _sftp = nil; sftpLock.unlock()
         Task { await s?.shutdown() }
     }
+
+    /// 网络切换后重置本实例的 SFTP 会话：关掉旧会话、解除粘性 shell 回退，使下次操作自动重建 SFTP。
+    /// stale ControlMaster 的清理按主机统一在上层做一次（见 AppModel.reconnectFileViewsAfterNetworkChange），
+    /// 不在此每实例重复 closeMaster，避免同一主机被多次 ssh -O exit。
+    func resetForReconnect() {
+        sftpLock.lock(); let s = _sftp; _sftp = nil; sftpUsable = true; sftpLock.unlock()
+        Task { await s?.shutdown() }
+    }
     /// 由 SFTP 权限位判文件类型（缺权限 → .other，审查 R3）。
     private func kindFromMode(_ perm: UInt32?) -> RemoteFile.Kind {
         guard let m = perm else { return .other }
@@ -81,7 +108,8 @@ final class RemoteFS {
 
     /// 执行一条远端命令（经登录 shell）。流式抽干管道，避免大输出时缓冲区填满导致死锁。
     /// `stdin` 非空时写入子进程标准输入（用于写文件等大数据下行）。
-    func run(_ remoteCommand: String, stdin: Data? = nil, timeout: Double = 20) async -> OpResult {
+    func run(_ remoteCommand: String, stdin: Data? = nil, timeout: Double = 20,
+             handle: CommandHandle? = nil) async -> OpResult {
         ensureControlDir()
         return await withCheckedContinuation { (cont: CheckedContinuation<OpResult, Never>) in
             let proc = Process()
@@ -122,6 +150,7 @@ final class RemoteFS {
                 cont.resume(returning: OpResult(data: Data(), stderr: Data(), code: -1))
                 return
             }
+            handle?.bind(proc)   // 绑定取消句柄：用户取消时终止此子进程
             // 在独立线程写入 stdin（大数据需分块，避免与 ssh 输出形成管道死锁）
             if let inPipe, let stdin {
                 DispatchQueue.global().async {
@@ -605,8 +634,9 @@ final class RemoteFS {
     // MARK: - 文件管理（删除 / 重命名 / 权限）
 
     /// 删除文件或目录。目录递归删除 SFTP v3 无原生支持 → 恒走 shell `rm -rf`（审查 R19）。
-    func delete(_ path: String, isDir: Bool) async -> Result<Void, RemoteFSError> {
-        if isDir { return await deleteViaShell(path, isDir: true) }
+    /// 目录删除恒走 shell `rm -rf`（可能较慢），可经 handle 中途取消；文件删除走 SFTP（瞬时，handle 不适用）。
+    func delete(_ path: String, isDir: Bool, handle: CommandHandle? = nil) async -> Result<Void, RemoteFSError> {
+        if isDir { return await deleteViaShell(path, isDir: true, handle: handle) }
         if isSftpUsable {
             do { try await session().remove(path); return .success(()) }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
@@ -616,13 +646,14 @@ final class RemoteFS {
             }
             catch { return .failure(RemoteFSError(message: "删除失败")) }
         }
-        return await deleteViaShell(path, isDir: false)
+        return await deleteViaShell(path, isDir: false, handle: handle)
     }
-    private func deleteViaShell(_ path: String, isDir: Bool) async -> Result<Void, RemoteFSError> {
+    private func deleteViaShell(_ path: String, isDir: Bool,
+                               handle: CommandHandle? = nil) async -> Result<Void, RemoteFSError> {
         let b64 = Data(path.utf8).base64EncodedString()
         let rm = isDir ? "rm -rf" : "rm -f"
         let cmd = "P=$(printf %s '\(b64)'|base64 -d); \(rm) -- \"$P\""
-        let r = await run(cmd)
+        let r = await run(cmd, handle: handle)
         if r.code != 0 {
             let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let msg = err.localizedCaseInsensitiveContains("permission") ? "没有删除权限"

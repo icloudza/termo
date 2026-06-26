@@ -178,8 +178,25 @@ extension View {
     /// 脱敏:开启时用高斯模糊遮住敏感内容,而非替换文字,视觉更自然。
     /// 用于截图/共享屏幕时隐藏列表/概览里的 IP、主机名。
     @ViewBuilder
-    func privacyBlur(_ on: Bool, radius: CGFloat = 5) -> some View {
+    func privacyBlur(_ on: Bool, radius: CGFloat = 3.5) -> some View {
         if on { blur(radius: radius) } else { self }
+    }
+
+    /// 悬停显示手型光标，用于按钮、可点击行等交互控件。`active=false`（如禁用态按钮）则不改光标。
+    /// 镜像 SidebarDivider 已验证可靠的做法：用 onContinuousHover 逐帧 `set`，压住 AppKit
+    /// 的 tracking area 在鼠标移动时把光标重置回箭头——只用 onHover+push/pop 会被重置或失衡卡住。
+    @ViewBuilder
+    func pointerCursor(_ active: Bool = true) -> some View {
+        if active {
+            onContinuousHover { phase in
+                switch phase {
+                case .active: NSCursor.pointingHand.set()
+                case .ended:  NSCursor.arrow.set()
+                }
+            }
+        } else {
+            self
+        }
     }
 }
 

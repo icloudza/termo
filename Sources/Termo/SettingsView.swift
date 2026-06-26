@@ -68,6 +68,7 @@ struct SettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 
     // MARK: - 右侧内容
@@ -88,6 +89,7 @@ struct SettingsView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -159,6 +161,10 @@ struct SettingsView: View {
                         SecondaryButton(title: "选择…", action: chooseDownloadDir)
                     }
                 }
+            }
+
+            settingRow("资源告警", description: "主机 CPU、内存或磁盘持续高占用时发送系统通知") {
+                ThemedToggle(isOn: $settings.resourceAlerts)
             }
         }
     }

@@ -78,6 +78,13 @@ final class BrowserState: ObservableObject, FileOpsTarget {
         loadTask = Task { await load(p, pushBack: false) }
     }
 
+    /// 网络恢复后重连：重置底层 SFTP 连接并重载当前目录；未浏览过则跳过。
+    func reconnect() {
+        guard !path.isEmpty else { return }
+        fs.resetForReconnect()
+        reload()
+    }
+
     private func navigate(to newPath: String) {
         loadTask?.cancel()
         let from = path
@@ -107,8 +114,8 @@ final class BrowserState: ObservableObject, FileOpsTarget {
 
     // MARK: - FileOpsTarget（与侧栏文件树共用同一套右击操作）
 
-    func performDelete(_ file: RemoteFile) async -> Result<Void, RemoteFSError> {
-        let r = await fs.delete(file.path, isDir: file.isDir)
+    func performDelete(_ file: RemoteFile, handle: CommandHandle?) async -> Result<Void, RemoteFSError> {
+        let r = await fs.delete(file.path, isDir: file.isDir, handle: handle)
         if case .success = r { reload() }
         return r
     }
@@ -192,6 +199,7 @@ struct FileBrowser: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 .help("下载选中的文件")
             }
 
@@ -201,6 +209,7 @@ struct FileBrowser: View {
                     .frame(width: 26, height: 26).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor(!state.path.isEmpty)
             .help("上传文件到当前目录")
             .disabled(state.path.isEmpty)
 
@@ -210,6 +219,7 @@ struct FileBrowser: View {
                     .frame(width: 26, height: 26).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
             .help(state.showHidden ? "隐藏点文件" : "显示点文件")
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
@@ -224,6 +234,7 @@ struct FileBrowser: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor(enabled)
         .disabled(!enabled)
     }
 
@@ -250,7 +261,7 @@ struct FileBrowser: View {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 24)).foregroundStyle(Pal.yellow)
                     Text(msg).font(.system(size: 12)).foregroundStyle(Pal.subtext)
                         .multilineTextAlignment(.center).textSelection(.enabled)
-                    Button("重试") { state.reload() }.buttonStyle(.plain).foregroundStyle(Pal.mauve)
+                    Button("重试") { state.reload() }.buttonStyle(.plain).pointerCursor().foregroundStyle(Pal.mauve)
                 }
                 .padding(.horizontal, 40)
             }
@@ -333,33 +344,51 @@ private struct FileRow: View {
         .padding(.horizontal, 16).padding(.vertical, 6)
         .background(selected ? Pal.mauve.opacity(0.16) : (hover ? Pal.fill(0.05) : Color.clear))
         .contentShape(Rectangle())
-        .onHover { hover = $0 }
-        // 用 AppKit mouseDown 接管：按下即响应（无双击消歧延迟）、clickCount 分单/双击、modifierFlags 可靠读 ⌘/⇧。
-        .overlay(RowClicks(onSelect: onClick, onOpen: onOpen))
+        // 用 AppKit 接管：mouseDown 按下即响应（clickCount 分单/双击、modifierFlags 读 ⌘/⇧）；
+        // hover 也由 AppKit 的 mouseEntered/Exited 驱动——上层 NSView 会拦截 SwiftUI 的 .onHover，故不在此用。
+        .overlay(RowClicks(onSelect: onClick, onOpen: onOpen, onHover: { hover = $0 }))
     }
 }
 
 /// 行点击捕获：左键单击→选择（带 ⌘/⇧），双击→打开；右键交还给下层 SwiftUI 的 contextMenu。
+/// 同时承担 hover 上报：此 NSView 盖在行上会拦截 SwiftUI 的 .onHover，故 hover 由它的 mouseEntered/Exited 驱动。
 private struct RowClicks: NSViewRepresentable {
     let onSelect: (_ cmd: Bool, _ shift: Bool) -> Void
     let onOpen: () -> Void
+    let onHover: (Bool) -> Void
 
     func makeNSView(context: Context) -> NSView {
-        ClickView(onSelect: onSelect, onOpen: onOpen)
+        ClickView(onSelect: onSelect, onOpen: onOpen, onHover: onHover)
     }
     func updateNSView(_ v: NSView, context: Context) {
         guard let cv = v as? ClickView else { return }
-        cv.onSelect = onSelect; cv.onOpen = onOpen
+        cv.onSelect = onSelect; cv.onOpen = onOpen; cv.onHover = onHover
     }
 
     final class ClickView: NSView {
         var onSelect: (Bool, Bool) -> Void
         var onOpen: () -> Void
-        init(onSelect: @escaping (Bool, Bool) -> Void, onOpen: @escaping () -> Void) {
-            self.onSelect = onSelect; self.onOpen = onOpen
+        var onHover: (Bool) -> Void
+        init(onSelect: @escaping (Bool, Bool) -> Void, onOpen: @escaping () -> Void,
+             onHover: @escaping (Bool) -> Void) {
+            self.onSelect = onSelect; self.onOpen = onOpen; self.onHover = onHover
             super.init(frame: .zero)
         }
         required init?(coder: NSCoder) { fatalError() }
+
+        // 光标与 hover 都用 AppKit 原生方式：跟随可见区的 tracking area，cursorUpdate 显示手型、
+        // mouseEntered/Exited 上报悬浮态，在 ScrollView 内也稳定。
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(
+                rect: .zero,
+                options: [.activeInKeyWindow, .inVisibleRect, .cursorUpdate, .mouseEnteredAndExited],
+                owner: self, userInfo: nil))
+        }
+        override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
+        override func mouseEntered(with event: NSEvent) { onHover(true) }
+        override func mouseExited(with event: NSEvent) { onHover(false) }
 
         override func mouseDown(with event: NSEvent) {
             if event.clickCount >= 2 {

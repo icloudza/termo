@@ -26,6 +26,7 @@ struct SegmentedControl<T: Hashable>: View {
                         }
                     }
                     .contentShape(Rectangle())
+                    .pointerCursor()
                     .onTapGesture {
                         withAnimation(.easeOut(duration: 0.18)) { selection = opt.value }
                     }
@@ -142,6 +143,7 @@ struct ThemedSecureField: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
             .help(reveal ? "隐藏密码" : "显示密码")
         }
         .padding(.horizontal, 11)
@@ -188,6 +190,7 @@ struct ThemedDropdown<T: Hashable>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .animation(.easeOut(duration: 0.12), value: open)
         .popover(isPresented: $open, arrowEdge: .bottom) {
             VStack(spacing: 1) {
@@ -236,6 +239,7 @@ private struct DropdownOption: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { hover = $0 }
     }
 }
@@ -276,6 +280,7 @@ struct ThemedStepper: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 }
 
@@ -301,6 +306,7 @@ struct ThemedToggle: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 }
 
@@ -326,6 +332,7 @@ struct ThemedCheckbox: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 }
 
@@ -337,6 +344,7 @@ struct ConfirmDialog: View {
     var cancelTitle: String = "取消"
     var destructive: Bool = false
     var showCancel: Bool = true   // 纯提示型弹窗设 false，仅保留确认按钮
+    var busy: Bool = false         // 确认操作进行中：确认键旁显示转圈并禁用，取消键仍可点（中途取消）
     let onConfirm: () -> Void
     let onCancel: () -> Void
     @ObservedObject private var theme = ThemeManager.shared
@@ -359,15 +367,19 @@ struct ConfirmDialog: View {
                 HStack(spacing: 10) {
                     Spacer()
                     if showCancel { SecondaryButton(title: cancelTitle, action: onCancel) }
+                    if busy { ProgressView().controlSize(.small) }   // 进行中：确认键旁转圈
                     Button(action: onConfirm) {
                         Text(confirmTitle)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 16).padding(.vertical, 7)
-                            .background((destructive ? Pal.red : Pal.mauve), in: RoundedRectangle(cornerRadius: 7))
+                            .background((destructive ? Pal.red : Pal.mauve).opacity(busy ? 0.6 : 1),
+                                        in: RoundedRectangle(cornerRadius: 7))
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .disabled(busy)
+                    .pointerCursor(!busy)
                 }
             }
             .padding(20)
@@ -397,6 +409,7 @@ struct PrimaryButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+        .pointerCursor(enabled)
     }
 }
 
@@ -416,5 +429,6 @@ struct SecondaryButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 }

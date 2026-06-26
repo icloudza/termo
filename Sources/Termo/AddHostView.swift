@@ -67,6 +67,7 @@ struct AddHostView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
@@ -99,6 +100,7 @@ struct AddHostView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
             }
             Spacer()
         }
@@ -127,6 +129,7 @@ struct AddHostView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor(draft.canSave)
             .disabled(!draft.canSave)
             .opacity(draft.canSave ? 1 : 0.5)
 
@@ -352,5 +355,6 @@ struct AddHostView: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 }

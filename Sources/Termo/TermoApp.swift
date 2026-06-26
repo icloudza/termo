@@ -154,6 +154,9 @@ struct ContentView: View {
                 }
             }
             .animation(.easeOut(duration: 0.15), value: model.pendingCloseTabId)
+            // 无弹窗时整层不吃点击：避免 .transition 关闭后残留的透明命中层挡住下方内容
+            //（SwiftUI overlay+transition+ignoresSafeArea 的已知缺陷，下同）。
+            .allowsHitTesting(model.pendingCloseTabId != nil)
         }
         .overlay {
             ZStack {
@@ -166,6 +169,7 @@ struct ContentView: View {
                 }
             }
             .animation(.easeOut(duration: 0.25), value: model.connectingHost?.id)
+            .allowsHitTesting(model.connectingHost != nil)
         }
         // 指纹验证弹窗叠在连接弹窗之上（未知主机首次连接时需用户核对）
         .overlay {
@@ -175,6 +179,7 @@ struct ContentView: View {
                 }
             }
             .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
+            .allowsHitTesting(model.pendingHostKey != nil)
         }
         .overlay { fileOpOverlays }
         .sheet(isPresented: $model.showSettings) {
@@ -204,8 +209,9 @@ struct ContentView: View {
                     title: "删除「\(ctx.file.name)」？",
                     message: ctx.file.isDir ? "该目录及其全部内容将被永久删除，不可恢复。" : "该文件将被永久删除，不可恢复。",
                     confirmTitle: "删除", destructive: true,
+                    busy: model.fileDeleteBusy,
                     onConfirm: { model.confirmFileDelete() },
-                    onCancel: { model.pendingFileDelete = nil }
+                    onCancel: { model.cancelFileDelete() }
                 ).transition(.opacity)
             }
             if let ctx = model.pendingFileRefresh {
@@ -252,15 +258,34 @@ struct ContentView: View {
                              onClose: { model.uploadTask = nil; model.showUploadDialog = false })
                     .transition(.opacity)
             }
+            if let task = model.extractTask, model.showExtractDialog {
+                ExtractDialog(task: task,
+                              onHide: { model.showExtractDialog = false },
+                              onClose: { model.extractTask = nil; model.showExtractDialog = false })
+                    .transition(.opacity)
+            }
         }
         .animation(.easeOut(duration: 0.18), value: model.uploadTask?.id)
         .animation(.easeOut(duration: 0.18), value: model.showUploadDialog)
+        .animation(.easeOut(duration: 0.18), value: model.extractTask?.id)
+        .animation(.easeOut(duration: 0.18), value: model.showExtractDialog)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileDelete?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileRename?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileChmod?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileCreate?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileRefresh?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileInfo?.id)
+        // 无任何文件弹窗时整层不吃点击，杜绝 .transition 关闭后残留命中层卡住界面。
+        .allowsHitTesting(anyFileOverlayActive)
+    }
+
+    /// 文件操作叠层里是否有弹窗正在展示（含展开的上传/下载对话框）。
+    private var anyFileOverlayActive: Bool {
+        model.pendingFileDelete != nil || model.pendingFileRefresh != nil ||
+        model.pendingFileRename != nil || model.pendingFileChmod != nil ||
+        model.pendingFileCreate != nil || model.pendingFileInfo != nil ||
+        (model.uploadTask != nil && model.showUploadDialog) ||
+        (model.extractTask != nil && model.showExtractDialog)
     }
 }
 

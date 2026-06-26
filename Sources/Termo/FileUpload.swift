@@ -407,6 +407,7 @@ struct UploadDialog: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
             .help("后台运行（在左下角继续显示进度）")
         }
     }
@@ -498,6 +499,7 @@ struct UploadDialog: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
     }
 
     private func fmtSpeed(_ bps: Double) -> String { bps < 1 ? "—" : humanSize(Int64(bps)) + "/s" }
@@ -604,6 +606,7 @@ struct UploadMiniIndicator: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { hover = $0 }
         .help(helpText)
         // 后台运行时若需用户确认（同名文件），自动展开弹窗，避免静默卡住。

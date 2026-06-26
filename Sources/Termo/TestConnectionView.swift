@@ -23,6 +23,7 @@ struct TestConnectionView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
             }
             .padding(.horizontal, 20).padding(.vertical, 16)
 

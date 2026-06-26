@@ -51,6 +51,10 @@ final class AppModel: ObservableObject {
     @Published var pendingFileInfo: FileInfoContext? = nil
     @Published var uploadTask: UploadTask? = nil   // 当前上传任务（nil=无）
     @Published var showUploadDialog = false        // 上传弹窗是否展开；隐藏后任务仍在后台跑，齿轮旁显示迷你进度
+    @Published var extractTask: ExtractTask? = nil // 当前解压任务（nil=无）
+    @Published var showExtractDialog = false       // 解压弹窗是否展开；隐藏后任务仍在后台跑，齿轮旁显示迷你状态
+    @Published var fileDeleteBusy = false          // 删除进行中：弹窗保留 + 删除键旁转圈，可中途取消
+    private var deleteHandle: CommandHandle?        // 取消正在进行的删除（终止远端 rm）
 
     @Published var hosts: [Host] = []
     /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
@@ -181,6 +185,100 @@ final class AppModel: ObservableObject {
             .map { $0 }
     }
 
+    // ---------- 实时监控 ----------
+    // 每台「打开中的主机」一份监控，后台持续采样直到该主机全部标签关闭；离开即停、零服务器落地。
+    private var hostMonitors: [String: HostMonitor] = [:]
+    // 告警去抖：累计连续越界帧数与上次告警时间，键为 "hostId|metric"。
+    private var alertStreak: [String: Int] = [:]
+    private var alertLast: [String: Date] = [:]
+
+    private static let alertThreshold = 90.0          // 越界阈值（百分比）
+    private static let alertSustainFrames = 15         // 连续越界帧数，约 30 秒（2 秒/帧）
+    private static let alertCooldown: TimeInterval = 300
+
+    private var monitorStartWork: [String: DispatchWorkItem] = [:]   // 防抖：稳定停留后再启动采集
+    private static let monitorDebounce: TimeInterval = 0.4           // 频繁切换主机时，未停留够此时长不启动
+
+    /// 取得（或惰性创建）某主机的监控对象；不在此启动采集——采集只在其概览为当前激活视图时跑（见 overviewAppeared）。
+    func hostMonitor(for host: Host) -> HostMonitor {
+        if let m = hostMonitors[host.id] { return m }
+        let m = HostMonitor(ssh: host.ssh ?? SSHConnection(), simulated: host.isMock)
+        let hid = host.id
+        m.onSample = { [weak self] metrics in self?.evaluateAlerts(hostId: hid, metrics) }
+        hostMonitors[host.id] = m
+        return m
+    }
+
+    /// 概览成为当前激活视图：防抖后再启动采集。在该时长内切走则启动被取消——飞速切换主机时不会把一堆监控点着，
+    /// 任一时刻只有真正停留的那台在跑。
+    func overviewAppeared(_ host: Host) {
+        monitorStartWork[host.id]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.monitorStartWork.removeValue(forKey: host.id)
+            self?.hostMonitor(for: host).start()   // start 幂等（已在跑则跳过）
+        }
+        monitorStartWork[host.id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.monitorDebounce, execute: work)
+    }
+
+    /// 概览不再是当前激活视图：取消待启动并立即冻结该主机监控（停流、保留上次数据快照）。不在后台继续跑。
+    func overviewDisappeared(_ hostId: String) {
+        monitorStartWork[hostId]?.cancel()
+        monitorStartWork.removeValue(forKey: hostId)
+        hostMonitors[hostId]?.stop()
+    }
+
+    /// 主机已无任何标签时彻底释放其监控对象与告警状态。
+    private func stopMonitorIfUnused(_ hostId: String) {
+        guard !tabs.contains(where: { $0.hostId == hostId }) else { return }
+        monitorStartWork[hostId]?.cancel()
+        monitorStartWork.removeValue(forKey: hostId)
+        hostMonitors[hostId]?.stop()
+        hostMonitors.removeValue(forKey: hostId)
+        alertStreak = alertStreak.filter { !$0.key.hasPrefix(hostId + "|") }
+        alertLast = alertLast.filter { !$0.key.hasPrefix(hostId + "|") }
+    }
+
+    /// 逐指标判定阈值告警：持续越界且过冷却期才发一条系统通知。按 id 取最新 host，改名后告警用新名。
+    private func evaluateAlerts(hostId: String, _ m: HostMetrics) {
+        guard AppSettings.shared.resourceAlerts, let host = hosts.first(where: { $0.id == hostId }) else { return }
+        checkAlert(host: host, metric: "cpu", label: "CPU 使用率", value: m.cpuPercent)
+        checkAlert(host: host, metric: "mem", label: "内存占用", value: m.memTotalKB > 0 ? m.memPercent : nil)
+        checkAlert(host: host, metric: "disk", label: "磁盘占用", value: m.disks.map(\.percent).max())   // 最满的分区
+    }
+
+    private func checkAlert(host: Host, metric: String, label: String, value: Double?) {
+        let key = host.id + "|" + metric
+        guard let v = value, v >= Self.alertThreshold else { alertStreak[key] = 0; return }
+        let n = (alertStreak[key] ?? 0) + 1
+        alertStreak[key] = n
+        guard n >= Self.alertSustainFrames else { return }
+        alertStreak[key] = 0   // 重新累计，避免冷却期内反复触发
+        let last = alertLast[key] ?? .distantPast
+        guard Date().timeIntervalSince(last) >= Self.alertCooldown else { return }
+        alertLast[key] = Date()
+        Notifier.notify(title: "\(host.name) 资源告警",
+                        body: "\(label) \(Int(v))%，已持续约 \(Self.alertSustainFrames * 2) 秒")
+    }
+
+    /// 构造内置的模拟演示主机：高配 + 双显卡，监控面板用合成数据驱动以预览效果。不连真服务器、不落盘。
+    private static func makeMockHost() -> Host {
+        var ssh = SSHConnection()
+        ssh.host = "mock.demo"; ssh.user = "root"; ssh.port = 22
+        var specs = HostSpecs()
+        specs.os = "Ubuntu 22.04.5 LTS"
+        specs.cores = "64"
+        specs.memory = "128 GB"
+        specs.disk = "9.2 TB / 12.8 TB"   // 与监控面板三块盘的合计大致一致
+        specs.vram = "48 GB"
+        specs.gpu = "NVIDIA RTX 4090 ×2"
+        specs.probedAt = Date()
+        return Host(id: Host.mockHostId, name: "Mock 演示主机", addr: "mock.demo", group: "mock",
+                    status: .online, os: "ubuntu", ssh: ssh,
+                    notes: "模拟数据，用于预览监控面板效果（不连真服务器）。",
+                    specs: specs, latencyMs: 8)
+    }
+
     // ---------- 系统信息探测 ----------
     /// 远端一次性探测脚本：输出多行 key=value。MEM/DISK/VRAM 输出原始字节（客户端再按
     /// 1000 进制统一格式化，避免 free -h/df -h 的 Gi/Mi 单位浮动）；DISK 为「已用 总量」两个字节数；
@@ -204,7 +302,7 @@ final class AppModel: ObservableObject {
     /// 打开主机概览时调用：后台 SSH 跑一次探测脚本，取真实系统信息并缓存。
     /// 已有未过期的缓存(probedAt 在 specsTTL 内)则跳过——系统信息变化慢，无需每次打开都重探。
     func probeHostIfNeeded(_ host: Host) {
-        guard let ssh = host.ssh, !ssh.host.isEmpty, !probingHosts.contains(host.id) else { return }
+        guard let ssh = host.ssh, !ssh.host.isEmpty, !probingHosts.contains(host.id), !host.isMock else { return }
         if let probedAt = host.specs?.probedAt, Date().timeIntervalSince(probedAt) < Self.specsTTL { return }
         probingHosts.insert(host.id)
         let id = host.id
@@ -286,7 +384,7 @@ final class AppModel: ObservableObject {
 
     /// 对所有主机做一次轻量 TCP 可达性检测（启动/刷新/定时调用）。
     func refreshAllStatuses() {
-        for host in hosts { checkReachability(host) }
+        for host in hosts where !host.isMock { checkReachability(host) }   // 模拟主机不做真实连通探测
     }
 
     /// 定时扫描在线状态/延迟；仅在 App 处于活动状态时运行（失焦即暂停，省 CPU）。
@@ -438,6 +536,7 @@ final class AppModel: ObservableObject {
     init() {
         // 从磁盘加载主机与会话历史
         hosts = HostStore.loadHosts()
+        hosts.append(Self.makeMockHost())   // 注入模拟演示主机（内存中、不落盘），用于预览监控面板
         sessions = HostStore.loadSessions()
         HostKeyVerifier.resetSession()   // 清空「仅本次信任」的会话临时 known_hosts
         // 启动即对所有主机做一次轻量在线检测
@@ -453,6 +552,17 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.applyThemeToTerminals()
                 self?.applyTerminalSettings()
+            }
+        }
+
+        // 网络切换（WiFi 互换、有线无线切换、断网恢复）时立刻重连，不干等 SSH keepalive 超时：
+        // 监控即时重连；恢复在线后再重连断开的终端、并重置文件连接使下次操作自动恢复 SFTP。
+        NetworkMonitor.shared.onChange = { [weak self] online in
+            guard let self else { return }
+            for (_, m) in self.hostMonitors { m.handleNetworkChange() }
+            if online {
+                self.reconnectDroppedTerminals()
+                self.reconnectFileViewsAfterNetworkChange()
             }
         }
 
@@ -507,6 +617,8 @@ final class AppModel: ObservableObject {
     private var tabCwd: [Int: String] = [:]
     private var termDelegates: [Int: TerminalSessionDelegate] = [:]
     func handleTerminalCwd(tabId: Int, path: String) {
+        // 收到 OSC 7 说明登录后提示符已就绪，是最可靠的「已连上」信号：断线态据此即时恢复。
+        if let c = terminalConns[tabId], c.phase == .dropped { c.phase = .live; c.attempt = 0 }
         guard tabCwd[tabId] != path else { return }   // 去重：同一目录不重复定位（OSC 7 每次提示符都会发）
         tabCwd[tabId] = path
         fileTreeStates[tabId]?.reveal(path)
@@ -601,51 +713,127 @@ final class AppModel: ObservableObject {
         applyTheme(to: tv)
         applyTerminalConfig(to: tv)
 
-        var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
-        let lang = ProcessInfo.processInfo.environment["LANG"] ?? ""
-        if !lang.uppercased().contains("UTF-8") {
-            env.append("LANG=en_US.UTF-8")
-        }
-
-        if let ssh {
-            // 真实 SSH 连接——密码用 OpenSSH 内置 SSH_ASKPASS 喂入（无需 sshpass）
-            let args = ssh.sshArguments()
-            if ssh.needsAskpass, let askpass = SSHAskpass.envVars(password: ssh.password) {
-                for (k, v) in askpass { env.append("\(k)=\(v)") }
-            }
-            tv.startProcess(executable: "/usr/bin/ssh", args: args, environment: env)
-            // 连接后注入 OSC 7 钩子 + 初始命令 / 默认路径（尽力而为）
-            scheduleInitialCommands(tv, ssh: ssh)
-        } else {
-            let shell = AppSettings.shared.resolvedShell
-            tv.startProcess(executable: shell, args: ["-l"], environment: env)
-        }
-
-        // 会话代理：cwd 跟踪（仅 SSH 主机）+ 进程退出（exit/掉线）自动关闭标签
+        // 会话代理：cwd 跟踪（仅 SSH 主机）+ 进程退出（exit / 掉线）回调，先于启动设好以免漏掉即时退出
         let d = TerminalSessionDelegate()
         if let hostId {
             d.onCwd = { [weak self] path in
                 Task { @MainActor in self?.handleTerminalCwd(tabId: tabId, path: path) }
             }
         }
-        d.onTerminated = { [weak self] in
-            Task { @MainActor in self?.handleTerminalExit(tabId: tabId, hostId: hostId) }
+        d.onTerminated = { [weak self] code in
+            Task { @MainActor in self?.handleTerminalExit(tabId: tabId, hostId: hostId, exitCode: code) }
         }
         tv.processDelegate = d
         termDelegates[tabId] = d
+
+        if let ssh {
+            startTerminalProcess(tv: tv, ssh: ssh)
+            terminalConns[tabId] = TerminalConn()   // 仅 SSH 终端支持断线重连
+        } else {
+            var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
+            let lang = ProcessInfo.processInfo.environment["LANG"] ?? ""
+            if !lang.uppercased().contains("UTF-8") { env.append("LANG=en_US.UTF-8") }
+            tv.startProcess(executable: AppSettings.shared.resolvedShell, args: ["-l"], environment: env)
+        }
         return tv
     }
 
-    /// SSH 终端进程退出（exit / 掉线）：关闭该标签（其文件树状态随之释放）。
-    /// 若该主机已无其它会话标签，则断开复用的 ControlMaster 主连接。
-    func handleTerminalExit(tabId: Int, hostId: String?) {
+    /// 在给定终端视图上（重新）发起 SSH 连接：构建参数与 askpass 环境、启动 ssh、注入 OSC 7 钩子与初始命令。
+    /// 重连复用同一终端视图，滚动历史得以保留。先 terminate 一次：SwiftTerm 的 startProcess 不会清理上一个
+    /// 进程的 DispatchIO/childMonitor，重入会泄漏文件描述符；terminate 做有序拆除（且不回调 processTerminated），
+    /// 终端缓冲区不受影响。首次连接时进程未启动，terminate 为无害空操作。
+    private func startTerminalProcess(tv: LocalProcessTerminalView, ssh: SSHConnection) {
+        tv.process.terminate()
+        var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
+        let lang = ProcessInfo.processInfo.environment["LANG"] ?? ""
+        if !lang.uppercased().contains("UTF-8") { env.append("LANG=en_US.UTF-8") }
+        // 密码用 OpenSSH 内置 SSH_ASKPASS 喂入（无需 sshpass）
+        if ssh.needsAskpass, let askpass = SSHAskpass.envVars(password: ssh.password) {
+            for (k, v) in askpass { env.append("\(k)=\(v)") }
+        }
+        tv.startProcess(executable: "/usr/bin/ssh", args: ssh.sshArguments(), environment: env)
+        scheduleInitialCommands(tv, ssh: ssh)
+    }
+
+    // ---------- 终端断线重连 ----------
+    // 仅 SSH 终端：ssh 退出码 255（连接断开）保留标签并自动重连；用户主动 exit 或本地终端按原逻辑关闭。
+    private var terminalConns: [Int: TerminalConn] = [:]
+    private var terminalReconnectWork: [Int: DispatchWorkItem] = [:]   // 每标签至多一个挂起的重连，防风暴
+
+    /// 视图层取某终端标签的连接态（断线覆盖层观察它）。
+    func terminalConn(for tabId: Int) -> TerminalConn? { terminalConns[tabId] }
+
+    func handleTerminalExit(tabId: Int, hostId: String?, exitCode: Int32?) {
         guard tabs.contains(where: { $0.id == tabId }) else { return }
-        performCloseTab(tabId)   // 内部已清理该标签的 fileTreeState / tabCwd
+        // 仅在「SSH 终端 + 连接断开（255）」时保留标签重连。退出码非 255（含用户 exit、被信号杀）一律关闭，
+        // 不以离线状态判定，否则离线时主动 exit 会被误当掉线。本地终端无 TerminalConn，落到关闭分支。
+        if let hostId, let conn = terminalConns[tabId], exitCode == 255,
+           hosts.contains(where: { $0.id == hostId }) {
+            conn.dropGen += 1
+            conn.phase = .dropped
+            scheduleTerminalReconnect(tabId: tabId, hostId: hostId)
+            return
+        }
+        performCloseTab(tabId)
         if let hostId, let host = hosts.first(where: { $0.id == hostId }) {
             let stillUsed = tabs.contains { ($0.kind == .terminal || $0.kind == .files) && $0.hostId == hostId }
             // 上传进行中不关主连接（closeMaster 会掐断复用同一 master 的上传；审查 R20）
             if !stillUsed, !uploadActive { RemoteFS(host.ssh ?? SSHConnection()).closeMaster() }
         }
+    }
+
+    /// 退避重连：离线时不试（等网络恢复回调触发），在线时按失败次数递增延迟（封顶 15 秒）后重连。
+    /// 先撤销该标签已挂起的重连，确保同一时刻只排一个，避免反复掉线时叠加多次并发重连。
+    private func scheduleTerminalReconnect(tabId: Int, hostId: String) {
+        guard NetworkMonitor.shared.isOnline, let conn = terminalConns[tabId] else { return }
+        terminalReconnectWork[tabId]?.cancel()
+        let delay = min(15.0, 2.0 * Double(conn.attempt + 1))
+        let work = DispatchWorkItem { [weak self] in
+            self?.terminalReconnectWork[tabId] = nil
+            self?.reconnectTerminal(tabId: tabId, hostId: hostId)
+        }
+        terminalReconnectWork[tabId] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// 在原终端视图上重发 SSH 连接。连上判定：OSC 7 的 onCwd 最快置 live；无 OSC 7 的主机由看门狗兜底
+    /// ——尝试期间未再掉线（dropGen 未变）即视为已连。
+    private func reconnectTerminal(tabId: Int, hostId: String) {
+        terminalReconnectWork[tabId]?.cancel()   // 立即重连（手动/网络恢复）撤销可能挂起的退避重连
+        terminalReconnectWork[tabId] = nil
+        guard let conn = terminalConns[tabId], conn.phase == .dropped,
+              tabs.contains(where: { $0.id == tabId }),
+              let tv = terminals[tabId],
+              let host = hosts.first(where: { $0.id == hostId }), let ssh = host.ssh,
+              NetworkMonitor.shared.isOnline else { return }
+        conn.attempt += 1
+        let gen = conn.dropGen
+        startTerminalProcess(tv: tv, ssh: ssh)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self, let c = self.terminalConns[tabId],
+                  c.phase == .dropped, c.dropGen == gen else { return }
+            c.phase = .live
+            c.attempt = 0
+        }
+    }
+
+    /// 网络恢复时立即重连所有断开的终端（清零退避）。先快照，避免重连过程中字典被改动。
+    private func reconnectDroppedTerminals() {
+        let dropped = terminalConns.filter { $0.value.phase == .dropped }
+        for (tabId, conn) in dropped {
+            conn.attempt = 0
+            if let hostId = tabs.first(where: { $0.id == tabId })?.hostId {
+                reconnectTerminal(tabId: tabId, hostId: hostId)
+            }
+        }
+    }
+
+    /// 断线覆盖层「立即重连」按钮。
+    func manualReconnectTerminal(_ tabId: Int) {
+        guard let conn = terminalConns[tabId], conn.phase == .dropped,
+              let hostId = tabs.first(where: { $0.id == tabId })?.hostId else { return }
+        conn.attempt = 0
+        reconnectTerminal(tabId: tabId, hostId: hostId)
     }
 
     // ---------- 启动行为 ----------
@@ -801,6 +989,21 @@ final class AppModel: ObservableObject {
         return s
     }
 
+    /// 网络恢复后重置所有文件视图的底层连接，使下次操作自动重建 SFTP（而非一直降级为 shell）。
+    /// 先按主机各清一次 stale ControlMaster（去重，避免多视图重复 ssh -O exit），再重置各视图 SFTP 会话并重载。
+    private func reconnectFileViewsAfterNetworkChange() {
+        var done = Set<String>()
+        for tab in tabs {
+            guard let hid = tab.hostId, !done.contains(hid),
+                  let ssh = hosts.first(where: { $0.id == hid })?.ssh else { continue }
+            done.insert(hid)
+            RemoteFS(ssh).closeMaster()
+        }
+        for (_, b) in browserStates { b.reconnect() }
+        for (_, t) in fileTreeStates { t.reconnect() }
+        for (_, t) in hostExplorerTrees { t.reconnect() }
+    }
+
     /// 面包屑点击：切到「文件」侧栏并在资源管理器里展开/选中该路径（目录或文件）。
     func jumpToExplorer(path: String, host: Host) {
         section = .files
@@ -945,16 +1148,16 @@ final class AppModel: ObservableObject {
         guard !files.isEmpty, !uploadActive else { return }
         let task = UploadTask(files: files, destDir: destDir,
                               fs: RemoteFS(host.ssh ?? SSHConnection())) { [weak self] in
-            self?.refreshTreesAfterUpload(host: host, dir: destDir)
+            self?.refreshTrees(host: host, dir: destDir)
         }
         uploadTask = task
         showUploadDialog = true
         task.start()
     }
 
-    /// 上传落地后：只**局部**刷新该主机各缓存文件树/浏览器里「上传目标目录」这一层——
+    /// 文件变更后（上传落地 / 解压完成）：只**局部**刷新该主机各缓存文件树/浏览器里「指定目录」这一层——
     /// 重列该目录、保留其余展开，不全量重载；树中未加载该目录的直接跳过（node 查找命中失败即返回，无网络开销）。
-    private func refreshTreesAfterUpload(host: Host, dir: String) {
+    private func refreshTrees(host: Host, dir: String) {
         Task { @MainActor in
             if let t = hostExplorerTrees[host.id] { _ = await t.refreshDir(dir) }   // 编辑器侧栏共用的主机级树
             for (tabId, t) in fileTreeStates where tabHostId(tabId) == host.id {     // 各会话 tab 的文件树
@@ -980,14 +1183,35 @@ final class AppModel: ObservableObject {
         pendingFileDelete = FileOpContext(file: file, host: host, target: target)
     }
 
+    /// 确认删除：弹窗保留并进入「删除中」（删除键旁转圈），过程可经 cancelFileDelete 中途取消。
+    /// 删除可能较慢（大目录 rm -rf），故不立刻关弹窗——成功后才关，失败弹错误，取消后刷新真实状态。
     func confirmFileDelete() {
-        guard let ctx = pendingFileDelete else { return }
-        pendingFileDelete = nil
+        guard let ctx = pendingFileDelete, !fileDeleteBusy else { return }
+        fileDeleteBusy = true
+        let handle = CommandHandle()
+        deleteHandle = handle
+        let host = ctx.host
+        let parent = (ctx.file.path as NSString).deletingLastPathComponent
+        let dir = parent.isEmpty ? "/" : parent
         Task { @MainActor in
-            if case .failure(let e) = await ctx.target.performDelete(ctx.file) {
+            let r = await ctx.target.performDelete(ctx.file, handle: handle)
+            deleteHandle = nil
+            fileDeleteBusy = false
+            if handle.isCancelled {
+                refreshTrees(host: host, dir: dir)   // 取消可能已部分删除，刷新反映真实状态
+                return
+            }
+            pendingFileDelete = nil
+            if case .failure(let e) = r {
                 pendingFileInfo = FileInfoContext(title: "删除失败", message: e.message)
             }
         }
+    }
+
+    /// 取消删除：删除进行中则终止远端命令（收尾与刷新交给删除任务的完成回调），随后关闭弹窗。
+    func cancelFileDelete() {
+        if fileDeleteBusy { deleteHandle?.cancel() }
+        pendingFileDelete = nil
     }
 
     func fileMenuRequestRename(_ file: RemoteFile, host: Host, target: any FileOpsTarget) {
@@ -1102,6 +1326,27 @@ final class AppModel: ObservableObject {
         task.start()
     }
 
+    // MARK: - 解压
+
+    /// 请求解压压缩包：弹出解压弹窗（选目标后开始），完成后局部刷新归档所在目录、发系统通知。
+    /// 与上传/下载相互独立，但同一时刻只允许一个解压任务（避免迷你状态与目标目录冲突）。
+    func requestExtract(_ file: RemoteFile, host: Host) {
+        guard !file.isDir, let kind = ArchiveKind.detect(file.name),
+              let ssh = host.ssh, !ssh.host.isEmpty else { return }
+        if let t = extractTask, t.phase == .running {
+            pendingFileInfo = FileInfoContext(title: "已有解压进行中",
+                                              message: "请等当前解压结束后再开始新的解压。")
+            return
+        }
+        let parent = (file.path as NSString).deletingLastPathComponent
+        let dir = parent.isEmpty ? "/" : parent
+        extractTask = ExtractTask(archive: file, kind: kind, parentDir: dir,
+                                  fs: RemoteFS(ssh)) { [weak self] in
+            self?.refreshTrees(host: host, dir: dir)
+        }
+        showExtractDialog = true
+    }
+
     func selectTab(_ id: Int) {
         activeTabId = id
         // 切到编辑器标签时，让资源管理器高亮跟到它打开的文件
@@ -1168,6 +1413,7 @@ final class AppModel: ObservableObject {
 
     private func performCloseTab(_ id: Int) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let closedHostId = tabs[idx].hostId
         tabs.remove(at: idx)
         // 先清空代理回调，避免 terminate 触发的 processTerminated 再次回调（重入）
         if let d = termDelegates[id] { d.onTerminated = nil; d.onCwd = nil }
@@ -1181,6 +1427,9 @@ final class AppModel: ObservableObject {
         browserStates[id]?.cancel()
         browserStates.removeValue(forKey: id)
         fileTreeStates.removeValue(forKey: id)
+        terminalConns.removeValue(forKey: id)   // 关标签即弃用其连接态
+        terminalReconnectWork[id]?.cancel()      // 撤销该标签挂起的重连，避免关闭后仍唤醒
+        terminalReconnectWork.removeValue(forKey: id)
         editorStates[id]?.cancel()
         editorStates.removeValue(forKey: id)
         editorHosts.removeValue(forKey: id)   // 释放托管的编辑器实例
@@ -1190,6 +1439,7 @@ final class AppModel: ObservableObject {
         if activeTabId == id {
             activeTabId = tabs.isEmpty ? nil : tabs[min(idx, tabs.count - 1)].id
         }
+        if let hid = closedHostId { stopMonitorIfUnused(hid) }   // 主机最后一个标签关闭即停监控
     }
 
     /// 该终端是否有正在运行的活跃进程，需要确认后再关闭。

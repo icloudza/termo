@@ -57,19 +57,10 @@ struct AboutContent: View {
                 Link(text, destination: u)
                     .font(.system(size: 12))
                     .foregroundStyle(Color(hex: 0x89b4fa))
-                    .pointingHandCursor()
+                    .pointerCursor()
             } else {
                 Text(text).font(.system(size: 12)).foregroundStyle(Pal.subtext)
             }
-        }
-    }
-}
-
-private extension View {
-    /// 鼠标悬停显示手型光标。
-    func pointingHandCursor() -> some View {
-        onHover { inside in
-            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
     }
 }

@@ -112,14 +112,56 @@ struct TerminalSurface: NSViewRepresentable {
     }
 }
 
+/// 单个 SSH 终端标签的连接态：用于断线时保留标签并展示重连覆盖层。本地终端不创建。
+@MainActor
+final class TerminalConn: ObservableObject {
+    enum Phase { case live, dropped }
+    @Published var phase: Phase = .live
+    var attempt = 0    // 连续重连失败的退避代数，连上后清零
+    var dropGen = 0    // 掉线代数，供看门狗判断某次重连尝试期间是否又掉线
+}
+
+/// 终端断线覆盖层：连接断开时盖在终端之上，显示重连状态与「立即重连」入口；连接正常时不渲染。
+struct TerminalReconnectOverlay: View {
+    @ObservedObject var conn: TerminalConn
+    let onReconnect: () -> Void
+
+    var body: some View {
+        if conn.phase == .dropped {
+            ZStack {
+                Pal.base.opacity(0.55)
+                VStack(spacing: 12) {
+                    Image(systemName: "wifi.exclamationmark").font(.system(size: 28)).foregroundStyle(Pal.yellow)
+                    Text("连接已断开").font(.system(size: 14, weight: .semibold)).foregroundStyle(Pal.text)
+                    HStack(spacing: 7) {
+                        ProgressView().controlSize(.small)
+                        Text("正在重连…").font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                    }
+                    Button(action: onReconnect) {
+                        Text("立即重连").font(.system(size: 12, weight: .medium)).foregroundStyle(Pal.mauve)
+                            .padding(.horizontal, 14).padding(.vertical, 7)
+                            .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).pointerCursor()
+                }
+                .padding(24)
+                .background(Pal.solidMantle, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Pal.fill(0.08), lineWidth: 1))
+            }
+            .transition(.opacity)
+        }
+    }
+}
+
 /// 监听终端的 OSC 7「当前目录变更」，把远端 cwd 回传给 AppModel（用于侧栏文件树定位）。
 final class TerminalSessionDelegate: NSObject, LocalProcessTerminalViewDelegate {
     var onCwd: ((String) -> Void)?
-    var onTerminated: (() -> Void)?
+    var onTerminated: ((Int32?) -> Void)?
 
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
-    func processTerminated(source: TerminalView, exitCode: Int32?) { onTerminated?() }
+    func processTerminated(source: TerminalView, exitCode: Int32?) { onTerminated?(exitCode) }
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         guard let p = Self.parsePath(directory) else { return }

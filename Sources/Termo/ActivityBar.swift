@@ -25,6 +25,9 @@ struct ActivityBar: View {
             if let task = model.uploadTask, !model.showUploadDialog {
                 UploadMiniIndicator(task: task) { model.showUploadDialog = true }
             }
+            if let task = model.extractTask, !model.showExtractDialog {
+                ExtractMiniIndicator(task: task) { model.showExtractDialog = true }
+            }
             settingsButton
         }
         .padding(.top, isFullScreen ? 12 : 52)
@@ -82,6 +85,7 @@ private struct ActivityBarButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { hover = $0 }
     }
 }

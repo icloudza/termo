@@ -27,6 +27,7 @@ struct TabBar: View {
                     .offset(y: -5)
             }
             .buttonStyle(.plain)
+            .pointerCursor()
         }
         .padding(.horizontal, 8)
         .padding(.top, 10)
@@ -98,6 +99,7 @@ struct TabChip: View {
         .contentShape(Rectangle())
         .onTapGesture { model.selectTab(tab.id) }
         .onHover { hover = $0 }
+        .pointerCursor()
         .accessibilityIdentifier(String(tab.id))
     }
 }
@@ -122,6 +124,7 @@ private struct EditorTabClose: View {
                                     in: RoundedRectangle(cornerRadius: 4))
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 .opacity(active || hover || state.isDirty ? 1 : 0)
             }
         }

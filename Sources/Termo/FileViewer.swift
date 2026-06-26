@@ -198,14 +198,18 @@ struct FileViewerView: View {
         .onAppear { state.loadIfNeeded() }
         // 乐观锁冲突：保存时发现文件已被外部修改 → 自定义弹窗让用户选覆盖/重载/取消（避免静默丢数据）
         .overlay {
-            if state.saveConflict {
-                SaveConflictDialog(
-                    onOverwrite: { state.saveConflict = false; state.save(force: true) },
-                    onReload: { state.saveConflict = false; state.reload() },
-                    onCancel: { state.saveConflict = false }
-                )
-                .transition(.opacity)
+            ZStack {
+                if state.saveConflict {
+                    SaveConflictDialog(
+                        onOverwrite: { state.saveConflict = false; state.save(force: true) },
+                        onReload: { state.saveConflict = false; state.reload() },
+                        onCancel: { state.saveConflict = false }
+                    )
+                    .transition(.opacity)
+                }
             }
+            // 无弹窗时整层不吃点击：避免 .transition 关闭后残留命中层挡住编辑器（同 TermoApp 的处理）。
+            .allowsHitTesting(state.saveConflict)
         }
         .animation(.easeOut(duration: 0.16), value: state.saveConflict)
     }
@@ -253,6 +257,7 @@ struct FileViewerView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 .help(settings.editorMinimap ? "隐藏缩略图" : "显示缩略图")
             }
 
@@ -271,6 +276,7 @@ struct FileViewerView: View {
                                 in: RoundedRectangle(cornerRadius: 7))
                 }
                 .buttonStyle(.plain)
+                .pointerCursor(state.canSave)
                 .disabled(!state.canSave)
                 .keyboardShortcut("s", modifiers: .command)
             }
@@ -286,7 +292,7 @@ struct FileViewerView: View {
                 .background(Pal.fill(0.05), in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain).help(help)
+        .buttonStyle(.plain).pointerCursor().help(help)
     }
 
     // MARK: 内容
@@ -302,7 +308,7 @@ struct FileViewerView: View {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 24)).foregroundStyle(Pal.yellow)
                     Text(msg).font(.system(size: 12)).foregroundStyle(Pal.subtext)
                         .multilineTextAlignment(.center).textSelection(.enabled)
-                    Button("重试") { state.reload() }.buttonStyle(.plain).foregroundStyle(Pal.mauve)
+                    Button("重试") { state.reload() }.buttonStyle(.plain).pointerCursor().foregroundStyle(Pal.mauve)
                 }
                 .padding(.horizontal, 40)
             }
@@ -412,27 +418,22 @@ private struct EditorBreadcrumb: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    // 主机/工作区：单独的小胶囊标签，与目录区分
-                    HostPill(name: host.name) { model.jumpToExplorer(path: "/", host: host) }
-                    ForEach(crumbs) { crumb in
-                        HStack(spacing: 4) {
-                            Text("/").font(.system(size: 10.5)).foregroundStyle(Pal.overlay.opacity(0.4))
-                            CrumbText(name: crumb.name, isLast: crumb.isLast, file: file) {
-                                model.jumpToExplorer(path: crumb.path, host: host)
-                            }
+        // 复用标签栏的横向滚动（鼠标滚轮可滚、可横扫）：路径过深超宽时可滚动查看，路径变化时自动滚到末尾露出文件名。
+        HWheelScroll(pathKey: file.path) {
+            HStack(spacing: 5) {
+                // 主机/工作区：单独的小胶囊标签，与目录区分
+                HostPill(name: host.name) { model.jumpToExplorer(path: "/", host: host) }
+                ForEach(crumbs) { crumb in
+                    HStack(spacing: 4) {
+                        Text("/").font(.system(size: 10.5)).foregroundStyle(Pal.overlay.opacity(0.4))
+                        CrumbText(name: crumb.name, isLast: crumb.isLast, file: file) {
+                            model.jumpToExplorer(path: crumb.path, host: host)
                         }
-                        .id(crumb.id)
                     }
                 }
-                .padding(.leading, editorHeaderInset).padding(.trailing, 12)
-                .frame(maxHeight: .infinity)
             }
-            .onAppear {
-                if let last = crumbs.last { proxy.scrollTo(last.id, anchor: .trailing) }
-            }
+            .padding(.leading, editorHeaderInset).padding(.trailing, 12)
+            .frame(maxHeight: .infinity)
         }
         .frame(height: 22)
     }
@@ -456,6 +457,7 @@ private struct HostPill: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { hover = $0 }
         .help("跳到根目录")
     }
@@ -486,6 +488,7 @@ private struct CrumbText: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { hover = $0 }
         .help(isLast ? "在文件树中定位" : "跳转到此目录")
     }
@@ -523,7 +526,7 @@ private struct ImagePreviewView: View {
                     .foregroundStyle(Pal.subtext).frame(width: 52)
                 zoomButton("plus.magnifyingglass") { scale = min(8, scale + 0.25) }
                 Divider().frame(height: 14).overlay(Pal.fill(0.1))
-                Button("实际大小") { scale = 1.0 }.buttonStyle(.plain)
+                Button("实际大小") { scale = 1.0 }.buttonStyle(.plain).pointerCursor()
                     .font(.system(size: 12)).foregroundStyle(Pal.mauve)
             }
             .padding(.vertical, 8)
@@ -536,7 +539,7 @@ private struct ImagePreviewView: View {
         Button(action: act) {
             Image(systemName: symbol).font(.system(size: 14)).foregroundStyle(Pal.subtext)
                 .frame(width: 28, height: 24).contentShape(Rectangle())
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plain).pointerCursor()
     }
 }
 
@@ -576,7 +579,7 @@ private struct BinaryNoticeView: View {
                     .foregroundStyle(Pal.mauve)
                     .padding(.horizontal, 14).padding(.vertical, 7)
                     .background(Pal.mauve.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-            }.buttonStyle(.plain)
+            }.buttonStyle(.plain).pointerCursor()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -658,6 +661,7 @@ struct SaveConflictDialog: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { hovered = $0 ? id : (hovered == id ? nil : hovered) }
     }
 }

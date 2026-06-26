@@ -133,6 +133,13 @@ final class FileTreeState: ObservableObject, FileOpsTarget {
         startIfNeeded()
     }
 
+    /// 网络恢复后重连：重置底层 SFTP 连接并重载文件树；未加载过则跳过。
+    func reconnect() {
+        guard started else { return }
+        fs.resetForReconnect()
+        reload()
+    }
+
     // MARK: - 文件管理（右键菜单用）
 
     enum RefreshOutcome { case ok, gone, failed(String) }
@@ -197,8 +204,8 @@ final class FileTreeState: ObservableObject, FileOpsTarget {
     }
 
     /// 删除：远端删除成功后从树移除并选中上级。
-    func performDelete(_ file: RemoteFile) async -> Result<Void, RemoteFSError> {
-        let r = await fs.delete(file.path, isDir: file.isDir)
+    func performDelete(_ file: RemoteFile, handle: CommandHandle?) async -> Result<Void, RemoteFSError> {
+        let r = await fs.delete(file.path, isDir: file.isDir, handle: handle)
         if case .success = r { removeAndSelectParent(file.path) }
         return r
     }
@@ -293,7 +300,7 @@ struct SidebarFileTree: View {
                     VStack(spacing: 8) {
                         Text(msg).font(.system(size: 11)).foregroundStyle(Pal.subtext)
                             .multilineTextAlignment(.center).lineLimit(4)
-                        Button("重试") { state.reload() }.buttonStyle(.plain).foregroundStyle(Pal.mauve)
+                        Button("重试") { state.reload() }.buttonStyle(.plain).pointerCursor().foregroundStyle(Pal.mauve)
                     }
                     .padding(.horizontal, 16)
                 }
@@ -384,6 +391,7 @@ private struct FlatRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { hover = $0 }
         .fileOpsMenu(file: node.file, host: host, model: model, target: tree,
                      onRefresh: { model.fileMenuRefresh(node.file, host: host, tree: tree) })

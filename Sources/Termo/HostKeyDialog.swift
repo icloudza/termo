@@ -59,6 +59,7 @@ struct HostKeyDialog: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 .padding(.bottom, 22)
 
                 HStack(spacing: 10) {
@@ -71,6 +72,7 @@ struct HostKeyDialog: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .pointerCursor()
 
                     Button { pending.respond(.save) } label: {
                         Text("信任并保存").font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
@@ -79,6 +81,7 @@ struct HostKeyDialog: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .pointerCursor()
                 }
             }
             .padding(22)
@@ -102,6 +105,7 @@ struct HostKeyDialog: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor(!value.isEmpty)
         .disabled(value.isEmpty)
         .opacity(value.isEmpty ? 0.4 : 1)
     }

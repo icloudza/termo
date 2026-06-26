@@ -37,6 +37,7 @@ struct Sidebar: View {
                         Image(systemName: "plus").font(.system(size: 14)).foregroundStyle(Pal.mauve)
                     }
                     .buttonStyle(.plain)
+                    .pointerCursor()
                 }
             }
             .padding(.horizontal, 14)
@@ -100,6 +101,7 @@ struct Sidebar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
             .help(model.privacyMode ? "显示真实信息" : "脱敏显示(隐藏 IP / 主机名)")
         }
         .padding(.horizontal, 9)
@@ -147,6 +149,7 @@ struct Sidebar: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 Spacer()
             }
             .frame(maxWidth: .infinity)
@@ -189,6 +192,7 @@ struct Sidebar: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
             }
             Spacer()
         }
@@ -227,6 +231,7 @@ struct Sidebar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .padding(8)
     }
 }
@@ -267,6 +272,7 @@ struct HostRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { hover = $0 }
         .contextMenu {
             Button("打开终端") { model.openHostTerminal(host) }
@@ -312,6 +318,7 @@ struct RDPHostRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { hover = $0 }
         .contextMenu {
             Button("远程桌面") { model.openHostRDP(host) }
