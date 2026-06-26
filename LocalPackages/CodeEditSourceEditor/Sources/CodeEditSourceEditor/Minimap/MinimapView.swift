@@ -262,8 +262,16 @@ public class MinimapView: FlippedNSView {
 
     override public func layout() {
         super.layout()
+        // [termo] 窗口实时缩放期间跳过缩略图的高度/视口重算（它走独立布局管理器、每帧很贵）。
+        // 缩放结束后 AppKit 会再调一次 layout（inLiveResize=false）刷新，viewDidEndLiveResize 也兜底。
+        if inLiveResize { return }
         updateContentViewHeight()
         updateDocumentVisibleViewPosition()
+    }
+
+    override public func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        needsLayout = true   // [termo] 缩放结束补一次完整布局
     }
 
     override public func hitTest(_ point: NSPoint) -> NSView? {

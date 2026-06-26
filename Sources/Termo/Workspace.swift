@@ -18,16 +18,23 @@ struct Workspace: View {
         if model.tabs.isEmpty {
             WelcomeView(model: model)
         } else {
-            // tab 全量保活：所有打开的 tab 视图常驻 ZStack，仅用 opacity/hitTesting 切换可见性、不重建。
-            // → 切 tab 瞬间无卡顿；终端、编辑器（含撤销历史/光标/滚动）随之常驻不销毁。
-            // 焦点不再靠"重建触发 makeNSView 抢焦点"，改由 onChange→focusActiveTab 显式赋予当前 tab。
+            // 渲染策略（混合）：
+            // - **编辑器 tab 常驻**（opacity 切显隐、不 detach）。原因：编辑器是 NSHostingView→SourceEditor
+            //   两层嵌套,一旦从窗口 detach 再 attach，SwiftUI 会重建内部控制器 → 丢撤销栈 + 重排版 churn。
+            //   只切显隐就不会 detach，控制器/撤销/光标/滚动全程存活。代价：缩放时各编辑器重布局，但不换行=轻、
+            //   缩略图缩放期已跳过，开销小；且编辑器不像终端要 reflow 整缓冲。
+            // - **其它 tab（终端/文件/概览/RDP）只渲染活动的**。终端视图是模型持有的裸 NSView，detach/attach 不重建、
+            //   PTY 后台不断；其它要么无状态、要么模型持有。这把"标签越多越卡"的大头（终端 reflow×N）压到 O(1)。
             ZStack {
-                ForEach(model.tabs, id: \.id) { tab in
+                ForEach(model.tabs.filter { $0.kind == .editor }, id: \.id) { tab in
                     tabView(tab)
                         .opacity(tab.id == model.activeTabId ? 1 : 0)
                         .allowsHitTesting(tab.id == model.activeTabId)
                         .zIndex(tab.id == model.activeTabId ? 1 : 0)
                         .accessibilityHidden(tab.id != model.activeTabId)
+                }
+                if let active = model.tabs.first(where: { $0.id == model.activeTabId }), active.kind != .editor {
+                    tabView(active).zIndex(2)
                 }
             }
             .onChange(of: model.activeTabId) { _ in model.focusActiveTab() }

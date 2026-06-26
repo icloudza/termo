@@ -54,6 +54,9 @@ struct RemoteCodeEditor: View {
                 )
             ),
             state: $editorState,
+            // plainText（.txt/.log 等无语法）不挂 TreeSitter —— 省掉它的 setUp/解析/内存，
+            // 也消除编辑纯文本时反复 "setting up with language: plainText" 的开销。代码文件传 nil 用默认高亮。
+            highlightProviders: language.id == .plainText ? [] : nil,
             coordinators: [changeBars, undoBreaker]   // 改动竖条 + 撤销空闲打断
         )
         // 切换缩略图显隐时重建编辑器：隐藏时 EditorFixer 把 MinimapView removeFromSuperview 了，
