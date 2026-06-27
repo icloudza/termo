@@ -10,6 +10,9 @@ struct PortForwardView: View {
     // 非 nil 时进入表单：值为待编辑的规则；新建时为一条该主机的空规则。
     @State private var formRule: ForwardRule? = nil
     @State private var isNew = false
+    // 删除确认：非 nil 时弹确认；dontAskAgain 勾选后写入 model.skipForwardDeleteConfirm（仅本次运行）。
+    @State private var pendingDelete: ForwardRule? = nil
+    @State private var dontAskAgain = false
 
     private var manager: ForwardManager { model.forwardManager(for: host) }
     private var rules: [ForwardRule] { model.forwardRules(for: host.id) }
@@ -36,6 +39,69 @@ struct PortForwardView: View {
         .frame(width: 560, height: 520)
         .background(Pal.solidBase)
         .preferredColorScheme(theme.isDark ? .dark : .light)
+        .overlay {
+            if let rule = pendingDelete {
+                deleteConfirm(rule).transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: pendingDelete?.id)
+    }
+
+    /// 请求删除：本次运行已选「不再询问」则直接删，否则弹确认。
+    private func requestDelete(_ rule: ForwardRule) {
+        if model.skipForwardDeleteConfirm {
+            model.deleteForwardRule(rule)
+        } else {
+            dontAskAgain = false
+            pendingDelete = rule
+        }
+    }
+
+    /// 删除确认弹窗（含「不再询问」复用设置里的自定义 checkbox；勾选只在本次运行生效）。
+    @ViewBuilder
+    private func deleteConfirm(_ rule: ForwardRule) -> some View {
+        let name = rule.name.isEmpty ? (rule.kind.title + "转发") : rule.name
+        ZStack {
+            Color.black.opacity(0.35).ignoresSafeArea()
+                .onTapGesture { pendingDelete = nil }
+            VStack(alignment: .leading, spacing: 14) {
+                Text("删除转发规则「\(name)」？")
+                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
+                Text("将停止其运行中的隧道并移除该规则，不可恢复。")
+                    .font(.system(size: 13)).foregroundStyle(Pal.subtext)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    ThemedCheckbox(isOn: dontAskAgain) { dontAskAgain.toggle() }
+                    Text("本次不再询问")
+                        .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                        .onTapGesture { dontAskAgain.toggle() }
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    SecondaryButton(title: "取消") { pendingDelete = nil }
+                    Button {
+                        if dontAskAgain { model.skipForwardDeleteConfirm = true }
+                        model.deleteForwardRule(rule)
+                        pendingDelete = nil
+                    } label: {
+                        Text("删除").font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
+                            .padding(.horizontal, 16).padding(.vertical, 7)
+                            .background(Pal.red, in: RoundedRectangle(cornerRadius: 7))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                }
+            }
+            .padding(20)
+            .frame(width: 360)
+            .background(Pal.solidMantle, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Pal.fill(0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 20, y: 8)
+        }
     }
 
     // MARK: - 顶部
@@ -95,7 +161,7 @@ struct PortForwardView: View {
                             manager: manager,
                             onToggle: { model.toggleForward(rule) },
                             onEdit: { startEdit(rule) },
-                            onDelete: { model.deleteForwardRule(rule) }
+                            onDelete: { requestDelete(rule) }
                         )
                     }
                 }

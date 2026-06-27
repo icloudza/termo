@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         _ = AppModel.shared   // 提前建好单例，使托盘/退出流程在窗口之外也能访问后台任务
         Notifier.requestAuthIfNeeded()   // 申请系统通知权限（上传/下载完成提醒）
         tray = TrayController(onShow: { [weak self] in self?.showMainWindow() },
-                              onQuit: { [weak self] in self?.requestQuit() })
+                              onQuit: { [weak self] in self?.forceQuit() })
         NSApp.activate(ignoringOtherApps: true)
         // 窗口此刻已创建；记录主窗口并接管其关闭行为（隐藏到托盘）。延迟一拍确保 WindowGroup 已出窗口。
         DispatchQueue.main.async { [weak self] in self?.attachMainWindow() }
@@ -71,26 +71,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard sender == mainWindow else { return true }
         if AppSettings.shared.closeToTray {
-            sender.orderOut(nil)
-            NSApp.setActivationPolicy(.accessory)
-            tray?.rebuild()   // 切 .accessory 后状态栏图标会被系统丢弃，重建恢复
+            hideToTray()
         } else {
             requestQuit()   // 走退出流程（含后台任务确认）；取消时窗口因返回 false 得以保留
         }
         return false
     }
 
-    /// 退出入口（菜单/托盘/关窗共用）。本方法为自定义（非 NSApplicationDelegate 协议方法，故不自动 @MainActor），
-    /// 访问 @MainActor 的 AppModel 需显式跳到主线程；从 AppKit 主线程回调进来，跳转是即时的，不影响交互。
-    /// - 已配置「隐藏到菜单栏」且无后台任务：显式退出直接走，不再追问。
-    /// - 否则一律弹自定义确认（含「隐藏到菜单栏」选项；有任务时优先展示任务警告与列表）。
+    /// 隐藏到菜单栏：隐藏所有可见内容窗口、切附件模式、点亮托盘图标。后台任务继续运行。
+    /// 标 @MainActor：内部调用 @MainActor 的 tray.rebuild()；调用方（windowShouldClose / @MainActor Task）均在主线程。
+    @MainActor private func hideToTray() {
+        for w in NSApp.windows where w.isVisible && !(w is NSPanel) && w.contentView != nil {
+            w.orderOut(nil)
+        }
+        NSApp.setActivationPolicy(.accessory)
+        tray?.rebuild()   // 切 .accessory 后重新点亮托盘图标的可见性（不重建，避免闪烁/丢位置）
+    }
+
+    /// 关窗 / 菜单退出（⌘Q）入口。本方法为自定义（非协议方法，故不自动 @MainActor），访问 @MainActor 的
+    /// AppModel 需显式跳主线程；从 AppKit 主线程回调进来，跳转即时，不影响交互。
+    /// - 开启「关闭隐藏到菜单栏」：有后台任务 → 直接隐藏保活（不再弹确认）；无任务 → 直接退出。
+    /// - 未开启：弹自定义确认（含「隐藏到菜单栏」选项；有任务时优先展示任务警告与列表）。
+    /// 真正彻底退出走托盘菜单的「退出 Termo」（forceQuit），不受本设置影响。
     @objc func requestQuit() {
         Task { @MainActor in
-            if AppSettings.shared.closeToTray, !AppModel.shared.hasRunningBackground {
-                NSApp.terminate(nil)
+            if AppSettings.shared.closeToTray {
+                if AppModel.shared.hasRunningBackground {
+                    self.hideToTray()        // 有后台任务：隐藏保活，不打断、不弹窗
+                } else {
+                    NSApp.terminate(nil)     // 无任务：直接退出
+                }
             } else {
                 self.showMainWindow()
                 AppModel.shared.pendingQuitConfirm = true
+            }
+        }
+    }
+
+    /// 托盘「退出 Termo」：显式彻底退出，忽略「关闭隐藏到菜单栏」设置。
+    /// 有后台任务则弹确认（列出任务、可在弹窗里取消勾选后退出），无任务直接退出。
+    @objc func forceQuit() {
+        Task { @MainActor in
+            if AppModel.shared.hasRunningBackground {
+                self.showMainWindow()
+                AppModel.shared.pendingQuitConfirm = true
+            } else {
+                NSApp.terminate(nil)
             }
         }
     }
@@ -310,7 +336,7 @@ struct ContentView: View {
                                 w.orderOut(nil)
                             }
                             NSApp.setActivationPolicy(.accessory)
-                            TrayController.shared?.rebuild()   // 切 .accessory 后状态栏图标会被系统丢弃，重建恢复
+                            TrayController.shared?.rebuild()   // 切 .accessory 后重新点亮托盘图标（不重建，避免闪烁/丢位置）
                         },
                         onConfirm: {
                             model.pendingQuitConfirm = false

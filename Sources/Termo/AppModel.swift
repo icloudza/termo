@@ -11,6 +11,12 @@ struct PendingHostKey: Identifiable {
     let respond: (HostKeyDecision) -> Void
 }
 
+// 在线探测的并发队列与上限（最多 6 个并发 TCP 探测，控制线程/CPU，主机多时不会线程爆炸）。
+// 置于文件作用域而非 @MainActor 的 AppModel 内：DispatchQueue/Semaphore 本身线程安全且非 actor 隔离，
+// 可在后台 Sendable 闭包里直接使用，不触发「主actor隔离静态属性不可在 Sendable 闭包引用」告警。
+private let reachQueue = DispatchQueue(label: "termo.reach", attributes: .concurrent)
+private let reachLimit = DispatchSemaphore(value: 6)
+
 
 
 @MainActor
@@ -376,6 +382,10 @@ final class AppModel: ObservableObject {
     /// 打开某主机的端口转发管理面板。
     func openForwardPanel(_ host: Host) { forwardPanelHost = host }
 
+    /// 删除转发规则是否跳过确认：仅本次运行有效（内存态，不持久化）；勾选「不再询问」后本次运行内不再弹窗，
+    /// 下次重开 App 仍会提示。故意不放进设置——它是一次性的临时偏好。
+    var skipForwardDeleteConfirm = false
+
     /// 启停一条规则：启动时记一条「端口转发」会话。
     func toggleForward(_ rule: ForwardRule) {
         guard let host = hosts.first(where: { $0.id == rule.hostId }) else { return }
@@ -542,9 +552,8 @@ final class AppModel: ObservableObject {
     }
 
     // ---------- 在线状态检测 ----------
-    // 探测并发上限：最多 6 个并发 TCP 探测，控制线程/CPU 占用（大量主机时不会线程爆炸）。
-    private static let reachQueue = DispatchQueue(label: "termo.reach", attributes: .concurrent)
-    private static let reachLimit = DispatchSemaphore(value: 6)
+    // 探测并发队列/上限定义在文件级（reachQueue / reachLimit），见文件顶部：
+    // 二者本身线程安全，置于文件作用域即非 actor 隔离，可在后台 Sendable 闭包里安全使用，且不触发并发告警。
     private var statusTimer: Timer?
 
     /// 对所有主机做一次轻量 TCP 可达性检测（启动/刷新/定时调用）。
@@ -579,9 +588,9 @@ final class AppModel: ObservableObject {
         } else {
             return
         }
-        Self.reachQueue.async { [weak self] in
-            Self.reachLimit.wait()
-            defer { Self.reachLimit.signal() }
+        reachQueue.async { [weak self] in
+            reachLimit.wait()
+            defer { reachLimit.signal() }
             // RDP 端口无 SSH banner，只做纯 TCP 连通性；SSH 仍走带 1-RTT 测量的探测。
             let (ok, ms) = isRDP ? Self.tcpLatency(host: h, port: p) : Self.sshLatency(host: h, port: p)
             Task { @MainActor in self?.setStatus(id, ok ? .online : .offline, latencyMs: ms) }
@@ -933,7 +942,7 @@ final class AppModel: ObservableObject {
 
         // 会话代理：cwd 跟踪（仅 SSH 主机）+ 进程退出（exit / 掉线）回调，先于启动设好以免漏掉即时退出
         let d = TerminalSessionDelegate()
-        if let hostId {
+        if hostId != nil {   // 仅 SSH 主机跟踪 cwd（用 tabId 定位，无需绑定 hostId 本身）
             d.onCwd = { [weak self] path in
                 Task { @MainActor in self?.handleTerminalCwd(tabId: tabId, path: path) }
             }

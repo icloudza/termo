@@ -231,13 +231,13 @@ final class RemoteFS {
         let s = session()
         let part = remotePath + ".part"
         if let perm = (try await sftpStatOrNil(remotePath))?.permissions {
-            try? await s.setPermissions(part, perm)        // 继承原权限（best-effort）
+            _ = try? await s.setPermissions(part, perm)    // 继承原权限（best-effort）
         }
         if await s.supportsPosixRename {
             try await s.posixRename(from: part, to: remotePath)    // 原子覆盖（审查 R7）
         } else {
             do { try await s.rename(from: part, to: remotePath) }
-            catch { try? await s.remove(remotePath); try await s.rename(from: part, to: remotePath) }
+            catch { _ = try? await s.remove(remotePath); try await s.rename(from: part, to: remotePath) }
         }
     }
     private func finalizeUploadViaShell(remotePath: String) async -> Result<Void, RemoteFSError> {
@@ -298,7 +298,7 @@ final class RemoteFS {
                 guard let h = try? FileHandle(forWritingTo: localURL) else {
                     await session().closeHandle(handle); return .failed("无法写入本地文件")
                 }
-                try? h.seekToEnd()
+                _ = try? h.seekToEnd()
                 fh = h
             } else {
                 FileManager.default.createFile(atPath: localURL.path, contents: nil)
@@ -621,12 +621,12 @@ final class RemoteFS {
             }
             await s.closeHandle(h)
         } catch { await s.closeHandle(h); throw error }
-        if let perm = existing?.permissions { try? await s.setPermissions(tmp, perm) }
+        if let perm = existing?.permissions { _ = try? await s.setPermissions(tmp, perm) }
         if await s.supportsPosixRename {
             try await s.posixRename(from: tmp, to: path)
         } else {
             do { try await s.rename(from: tmp, to: path) }
-            catch { try? await s.remove(path); try await s.rename(from: tmp, to: path) }
+            catch { _ = try? await s.remove(path); try await s.rename(from: tmp, to: path) }
         }
         return (try? await s.stat(path))?.versionToken ?? ""
     }
