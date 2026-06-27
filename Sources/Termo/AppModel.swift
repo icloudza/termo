@@ -53,6 +53,12 @@ final class AppModel: ObservableObject {
     @Published var transfers: [UploadTask] = []
     // 当前展开传输弹窗的任务 id（nil=无弹窗）；任务本身在后台继续跑，统一在左下角后台中控管理。
     @Published var focusedTransferId: UUID? = nil
+    // 「下载不弹窗」时的飞入动画事件（一次性，动画结束即清空，不常驻、不占用 CPU/内存）。
+    @Published var flyTransfer: FlyEvent? = nil
+    // 左下角后台任务按钮的全局中心点（由按钮自身上报）；飞入动画的终点。
+    var backgroundButtonCenter: CGPoint = .zero
+    // 选中文件行的全局矩形（仅选中行上报，按远端路径索引）；飞入动画起点取此处，未命中则回退鼠标位置。
+    var fileRowGlobalFrames: [String: CGRect] = [:]
     @Published var extractTask: ExtractTask? = nil // 当前解压任务（nil=无）
     @Published var showExtractDialog = false       // 解压弹窗是否展开；隐藏后任务仍在后台跑，齿轮旁显示迷你状态
     @Published var fileDeleteBusy = false          // 删除进行中：弹窗保留 + 删除键旁转圈，可中途取消
@@ -1340,8 +1346,37 @@ final class AppModel: ObservableObject {
             self.releaseTransferPath(key)
         }
         transfers.append(task)
-        focusedTransferId = task.id   // 自动展开新任务弹窗（保持单任务时的体验）
+        // 下载且设置为「不弹窗」时：不展开弹窗，改放飞入左下角的弧线动画；其余情况照常自动展开。
+        if task.direction == .download && !AppSettings.shared.showDownloadDialog {
+            triggerDownloadFly(for: task)
+        } else {
+            focusedTransferId = task.id   // 自动展开新任务弹窗（保持单任务时的体验）
+        }
         pumpTransferQueue()
+    }
+
+    /// 触发一次「下载飞入左下角后台任务」的弧线动画。
+    /// 起点优先取所选文件行的位置（首个文件），未命中则回退鼠标位置、再回退默认偏移；终点为后台按钮中心。
+    /// 全部坐标统一在 SwiftUI 全局空间，叠层渲染时再按叠层自身原点换算（见 ContentView），故各窗口尺寸都对得上。
+    /// 事件一次性，动画结束由视图清空，不常驻、不占 CPU/内存。
+    private func triggerDownloadFly(for task: UploadTask) {
+        guard backgroundButtonCenter != .zero else { return }
+        let from: CGPoint
+        if let p = task.items.first?.remotePath, let r = fileRowGlobalFrames[p] {
+            from = CGPoint(x: r.midX, y: r.midY)            // 所选文件行中心
+        } else if let m = Self.currentMouseGlobal() {
+            from = m                                        // 右键下载时鼠标即在该文件上
+        } else {
+            from = CGPoint(x: backgroundButtonCenter.x + 220, y: backgroundButtonCenter.y - 220)
+        }
+        flyTransfer = FlyEvent(id: UUID(), from: from)
+    }
+
+    /// 鼠标当前位置，转换到 SwiftUI 全局坐标（左上原点），用于动画起点。
+    private static func currentMouseGlobal() -> CGPoint? {
+        guard let win = NSApp.keyWindow ?? NSApp.mainWindow, let cv = win.contentView else { return nil }
+        let p = cv.convert(win.mouseLocationOutsideOfEventStream, from: nil)   // contentView 坐标，左下原点
+        return CGPoint(x: p.x, y: cv.bounds.height - p.y)                      // 翻转为左上原点
     }
 
     // 逐文件目标互斥（全在 MainActor 上，故 Set/字典无数据竞争）：

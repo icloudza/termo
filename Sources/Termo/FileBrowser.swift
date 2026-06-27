@@ -505,6 +505,17 @@ private struct FileRow: View {
         .padding(.horizontal, 16)
         .frame(maxHeight: .infinity)
         .background(selected ? Pal.mauve.opacity(0.16) : (hovered ? Pal.fill(0.05) : Color.clear))
+        // 仅选中行上报自身全局矩形（按远端路径索引），作为「下载飞入」动画的起点；非选中行无此开销。
+        .background {
+            if selected {
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { AppModel.shared.fileRowGlobalFrames[file.path] = geo.frame(in: .global) }
+                        .onChange(of: geo.frame(in: .global)) { AppModel.shared.fileRowGlobalFrames[file.path] = $0 }
+                        .onDisappear { AppModel.shared.fileRowGlobalFrames[file.path] = nil }
+                }
+            }
+        }
         // 纯展示：所有鼠标交互由上层统一的 FileListInteraction 处理。
     }
 }

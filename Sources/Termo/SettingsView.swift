@@ -170,6 +170,10 @@ struct SettingsView: View {
                 }
             }
 
+            settingRow("下载时显示弹窗", description: "关闭后下载不弹进度窗口，仅以弧线动画飞入左下角后台任务；进度仍可在后台任务中查看") {
+                ThemedToggle(isOn: $settings.showDownloadDialog)
+            }
+
             settingRow("并发传输数", description: "同时进行的上传/下载数量（共用一个池），超出自动排队") {
                 ThemedDropdown(
                     options: [(1, "1 个"), (2, "2 个"), (3, "3 个"), (4, "4 个"), (5, "5 个")],

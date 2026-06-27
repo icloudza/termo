@@ -8,6 +8,63 @@ private let transferBlue = Color(hex: 0x007AFF)
 private let popTransition: AnyTransition = .scale(scale: 0.82, anchor: .center).combined(with: .opacity)
 private let popSpring: Animation = .spring(response: 0.34, dampingFraction: 0.56)
 
+/// 「下载不弹窗」时的一次性飞入动画事件：起点为鼠标位置，终点为左下角后台按钮（其中心由按钮上报）。
+struct FlyEvent: Identifiable, Equatable {
+    let id: UUID
+    let from: CGPoint
+}
+
+/// 沿弧线把一个文件图标从 `from` 抛向 `to`（左下角后台按钮），到达时缩小淡出。
+/// 一次性：onAppear 启动单段动画，到时回调清空事件——无定时器/轮询，动画结束即销毁，几乎不占 CPU/内存。
+struct FlyToCornerView: View {
+    let from: CGPoint
+    let to: CGPoint
+    let onDone: () -> Void
+    @State private var progress: CGFloat = 0
+    private let duration = 0.62
+
+    var body: some View {
+        Image(systemName: "arrow.down.doc.fill")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 30, height: 30)
+            .background(Color(hex: 0x007AFF), in: RoundedRectangle(cornerRadius: 8))
+            .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+            .modifier(ArcFly(progress: progress, from: from, to: to))
+            .allowsHitTesting(false)
+            .onAppear {
+                withAnimation(.timingCurve(0.36, 0, 0.2, 1, duration: duration)) { progress = 1 }
+                DispatchQueue.main.asyncAfter(deadline: .now() + duration) { onDone() }
+            }
+    }
+}
+
+/// 用单一可动画参数 progress(0→1) 驱动二次贝塞尔上抛弧线；末段缩小并淡出。
+private struct ArcFly: ViewModifier, Animatable {
+    var progress: CGFloat
+    let from: CGPoint
+    let to: CGPoint
+    var animatableData: CGFloat { get { progress } set { progress = newValue } }
+
+    func body(content: Content) -> some View {
+        let p = point(progress)
+        return content
+            .scaleEffect(1 - 0.55 * progress)
+            .opacity(progress < 0.8 ? 1 : Double(max(0, (1 - progress) / 0.2)))
+            .position(p)
+    }
+
+    /// 控制点取两端中点并上抬，形成「上抛后落入」的弧线。
+    private func point(_ t: CGFloat) -> CGPoint {
+        let lift = max(90, abs(from.y - to.y) * 0.5)
+        let ctrl = CGPoint(x: (from.x + to.x) / 2, y: min(from.y, to.y) - lift)
+        let mt = 1 - t
+        let x = mt * mt * from.x + 2 * mt * t * ctrl.x + t * t * to.x
+        let y = mt * mt * from.y + 2 * mt * t * ctrl.y + t * t * to.y
+        return CGPoint(x: x, y: y)
+    }
+}
+
 /// 隐形守卫：上传在后台运行时若需用户确认（同名文件），自动展开上传弹窗，避免静默卡住。
 /// 观察 UploadTask 故保持存活；自身不渲染任何可见内容。
 struct UploadAskWatcher: View {
@@ -96,6 +153,11 @@ struct BackgroundCenterButton: View {
                         in: Circle()
                     )
                     .overlay { progressRing }
+                    .background(GeometryReader { geo in        // 上报按钮全局中心，作为下载飞入动画的终点
+                        Color.clear
+                            .onAppear { report(geo) }
+                            .onChange(of: geo.frame(in: .global)) { _ in report(geo) }
+                    })
                 if count > 0 {
                     Text("\(count)")
                         .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
@@ -114,6 +176,11 @@ struct BackgroundCenterButton: View {
         .popover(isPresented: $open, arrowEdge: .trailing) {
             BackgroundCenterPanel(model: model, dismiss: { open = false })
         }
+    }
+
+    private func report(_ geo: GeometryProxy) {
+        let f = geo.frame(in: .global)
+        model.backgroundButtonCenter = CGPoint(x: f.midX, y: f.midY)
     }
 
     /// 环绕按钮的圆形进度环：底圈为暗色轨道，进度段为传输蓝、圆头、从正上方顺时针推进。

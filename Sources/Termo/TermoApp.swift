@@ -278,6 +278,25 @@ struct ContentView: View {
         }
         .overlay { fileOpOverlays }
         .overlay {
+            // 下载不弹窗时的弧线飞入动画：满窗叠层、不吃点击；事件结束即移除（按 id 防被旧动画误清）。
+            // 起点/终点都在 SwiftUI 全局坐标；这里减去叠层自身的全局原点换算到本地坐标，
+            // 与窗口大小、位置、安全区无关，故各种尺寸下起止点都精确对齐。
+            GeometryReader { proxy in
+                if let fly = model.flyTransfer {
+                    let o = proxy.frame(in: .global).origin
+                    FlyToCornerView(
+                        from: CGPoint(x: fly.from.x - o.x, y: fly.from.y - o.y),
+                        to: CGPoint(x: model.backgroundButtonCenter.x - o.x,
+                                    y: model.backgroundButtonCenter.y - o.y)
+                    ) {
+                        if model.flyTransfer?.id == fly.id { model.flyTransfer = nil }
+                    }
+                    .id(fly.id)
+                }
+            }
+            .allowsHitTesting(false)
+        }
+        .overlay {
             ZStack {
                 if model.pendingQuitConfirm {
                     QuitConfirmDialog(

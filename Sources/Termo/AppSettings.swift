@@ -64,6 +64,10 @@ final class AppSettings: ObservableObject {
     @Published var pausedReleasesSlot: Bool {
         didSet { d.set(pausedReleasesSlot, forKey: "pausedReleasesSlot") }
     }
+    /// 下载时是否自动弹出进度弹窗（默认开）；关闭后下载不弹窗，仅以「飞入左下角后台任务」的弧线动画提示。
+    @Published var showDownloadDialog: Bool {
+        didSet { d.set(showDownloadDialog, forKey: "showDownloadDialog") }
+    }
 
     /// 资源告警：监控到 CPU/内存/磁盘持续高占用时发系统通知。
     @Published var resourceAlerts: Bool {
@@ -101,6 +105,7 @@ final class AppSettings: ObservableObject {
         downloadAskEachTime = d.object(forKey: "downloadAskEachTime") as? Bool ?? false
         maxConcurrentTransfers = d.object(forKey: "maxConcurrentTransfers") as? Int ?? 2
         pausedReleasesSlot = d.object(forKey: "pausedReleasesSlot") as? Bool ?? true
+        showDownloadDialog = d.object(forKey: "showDownloadDialog") as? Bool ?? true
         resourceAlerts = d.object(forKey: "resourceAlerts") as? Bool ?? true
         closeToTray = d.object(forKey: "closeToTray") as? Bool ?? false
         confirmHostDelete = d.object(forKey: "confirmHostDelete") as? Bool ?? true
