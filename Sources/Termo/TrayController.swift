@@ -48,14 +48,17 @@ final class TrayController: NSObject, NSMenuDelegate {
                                 action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
-        for line in tasks.prefix(12) {
+        // 托盘菜单只作概览，至多列 6 条；更多任务引导回应用内的后台中控查看，避免菜单过高。
+        let maxRows = 6
+        for line in tasks.prefix(maxRows) {
             let it = NSMenuItem(title: "  " + line, action: nil, keyEquivalent: "")
             it.isEnabled = false
             menu.addItem(it)
         }
-        if tasks.count > 12 {
-            let more = NSMenuItem(title: "  …等 \(tasks.count) 项", action: nil, keyEquivalent: "")
-            more.isEnabled = false
+        if tasks.count > maxRows {
+            let more = NSMenuItem(title: "  还有 \(tasks.count - maxRows) 项，打开应用查看",
+                                  action: #selector(showTapped), keyEquivalent: "")
+            more.target = self
             menu.addItem(more)
         }
 

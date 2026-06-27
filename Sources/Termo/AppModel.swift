@@ -1329,23 +1329,80 @@ final class AppModel: ObservableObject {
     /// 入队一个新传输：加入列表、自动展开其弹窗，并尝试按并发上限启动。
     private func enqueueTransfer(_ task: UploadTask) {
         task.onFinished = { [weak self] in self?.transferDidFinish() }
+        task.onPauseStateChanged = { [weak self] in self?.pumpTransferQueue() }
+        // 逐文件互斥锁：仅当两任务真要写同一目标文件时才串行，按字节冲突而非整任务冲突，杜绝空占名额。
+        task.acquirePathLock = { [weak self] key in
+            guard let self else { return }
+            await self.acquireTransferPath(key)
+        }
+        task.releasePathLock = { [weak self] key in
+            guard let self else { return }
+            self.releaseTransferPath(key)
+        }
         transfers.append(task)
         focusedTransferId = task.id   // 自动展开新任务弹窗（保持单任务时的体验）
         pumpTransferQueue()
     }
 
-    /// 按并发上限把排队中的任务依次启动，直至占满空位。
-    /// 跳过（而非阻塞）与运行中任务写同一目标路径的任务，避免 .part 临时文件互相覆盖；
-    /// 被跳过者保持排队，待冲突任务结束后由下次 pump 自动开跑（冲突只与运行中任务比较，故不会死锁）。
+    // 逐文件目标互斥（全在 MainActor 上，故 Set/字典无数据竞争）：
+    // 旧实现按「整任务文件集」在调度期去冲突，会让与某长任务有任一同名文件的排队任务整段被跳过、白占空名额。
+    // 改为运行期按单个目标文件加锁：所有排队任务照常并发开跑，只有真正同时写同一文件时才让后者短暂等待。
+    private var lockedTransferPaths: Set<String> = []
+    private var transferPathWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    /// 获取某目标文件的写锁；已被占用则挂起，待持有者释放后重新竞争（释放会唤醒全部等待者，由其各自重判）。
+    func acquireTransferPath(_ key: String) async {
+        while lockedTransferPaths.contains(key) {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                transferPathWaiters[key, default: []].append(c)
+            }
+        }
+        lockedTransferPaths.insert(key)
+    }
+    /// 释放写锁并唤醒所有等待该文件的任务（其中一个会抢到，其余重新挂起）。
+    func releaseTransferPath(_ key: String) {
+        lockedTransferPaths.remove(key)
+        let waiters = transferPathWaiters.removeValue(forKey: key) ?? []
+        for w in waiters { w.resume() }
+    }
+
+    /// 暂停一个传输：释放/保留名额由设置 pausedReleasesSlot 决定，名额变化经 onPauseStateChanged 触发 pump。
+    func pauseTransfer(_ task: UploadTask) { task.pause() }
+
+    /// 恢复一个传输：按当前名额占用判断能否立即续传，否则标记等待、由 pump 在名额释放时放行。
+    func resumeTransfer(_ task: UploadTask) {
+        guard task.phase == .paused else { return }
+        if !AppSettings.shared.pausedReleasesSlot {
+            // 预留名额模式：该任务名额一直占着，直接续传即可，不会超出上限。
+            task.requestResume(slotFree: true)
+        } else {
+            task.requestResume(slotFree: transferSlotsOccupied() < maxConcurrentTransfers)
+        }
+        pumpTransferQueue()
+    }
+
+    /// 当前占用的并发名额数：运行中恒计入；暂停态仅在「预留名额」模式下计入。
+    private func transferSlotsOccupied() -> Int {
+        let running = transfers.filter { $0.phase == .running }.count
+        if AppSettings.shared.pausedReleasesSlot { return running }
+        return running + transfers.filter { $0.phase == .paused }.count
+    }
+
+    /// 按并发上限推进队列：先放行「等待名额」的恢复请求，再启动排队中的新任务，直至占满空位。
+    /// 同名目标文件的串行交由运行期逐文件写锁处理（acquireTransferPath），故此处只看名额、不再整任务去冲突，
+    /// 不会因某长任务占着同名文件而让排队任务空等名额。
     private func pumpTransferQueue() {
         let cap = maxConcurrentTransfers
-        var running = transfers.filter { $0.phase == .running }.count
+        // 释放名额模式下，用户已点恢复但当时无空位的任务优先补位（它们已在传输中途，先于全新任务）。
+        if AppSettings.shared.pausedReleasesSlot {
+            for task in transfers where task.phase == .paused && task.awaitingSlot {
+                guard transferSlotsOccupied() < cap else { break }
+                task.admitResume()   // 同步置为 .running，故 transferSlotsOccupied() 立即反映
+            }
+        }
         for task in transfers where task.phase == .queued {
-            guard running < cap else { break }
-            // start() 同步把刚启动的任务置为 .running，故同一轮内后续任务的冲突检查能看到它
-            if transfers.contains(where: { $0.phase == .running && $0.conflicts(with: task) }) { continue }
-            task.start()
-            running += 1
+            guard transferSlotsOccupied() < cap else { break }
+            task.start()   // start() 同步把任务置为 .running，故同一轮内后续任务的名额判断能看到它
         }
     }
 
@@ -1593,10 +1650,41 @@ final class AppModel: ObservableObject {
             dir = AppSettings.shared.resolvedDownloadDir
         }
         // 完成后不再自动弹访达窗口（打断用户）；完成提醒由系统通知给出。
-        let task = UploadTask(download: downloadable, toLocalDir: dir, fs: RemoteFS(ssh)) { }
+        // 本地保存名去重：不覆盖已有文件、不与进行中下载撞名 → 不同主机/来源的同名文件可并发各自落地。
+        let localURLs = resolveDownloadURLs(downloadable, dir: dir)
+        let task = UploadTask(download: downloadable, toLocalURLs: localURLs, inDir: dir, fs: RemoteFS(ssh)) { }
         task.hostId = host.id
         task.hostName = host.name
         enqueueTransfer(task)
+    }
+
+    /// 为一批下载计算互不冲突、且不覆盖本地已有文件的保存路径：
+    /// 目标名若已存在于磁盘、或已被进行中/排队/暂停的下载占用，则在扩展名前追加 “ (n)” 后缀（同 Finder/浏览器习惯）。
+    /// 如此不同主机、不同来源的同名文件可各自落地并发下载，重复下载也不会覆盖旧文件。
+    private func resolveDownloadURLs(_ files: [RemoteFile], dir: URL) -> [URL] {
+        var taken = Set<String>()
+        for t in transfers where t.direction == .download {
+            switch t.phase { case .done, .cancelled: break
+            default: for it in t.items { taken.insert(it.url.path) } }
+        }
+        let fm = FileManager.default
+        var result: [URL] = []
+        for f in files {
+            var candidate = dir.appendingPathComponent(f.name)
+            if fm.fileExists(atPath: candidate.path) || taken.contains(candidate.path) {
+                let base = (f.name as NSString).deletingPathExtension
+                let ext = (f.name as NSString).pathExtension
+                var n = 1
+                repeat {
+                    let newName = ext.isEmpty ? "\(base) (\(n))" : "\(base) (\(n)).\(ext)"
+                    candidate = dir.appendingPathComponent(newName)
+                    n += 1
+                } while fm.fileExists(atPath: candidate.path) || taken.contains(candidate.path)
+            }
+            taken.insert(candidate.path)   // 同批内也去重
+            result.append(candidate)
+        }
+        return result
     }
 
     // MARK: - 解压

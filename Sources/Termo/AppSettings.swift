@@ -59,6 +59,11 @@ final class AppSettings: ObservableObject {
     @Published var maxConcurrentTransfers: Int {
         didSet { d.set(maxConcurrentTransfers, forKey: "maxConcurrentTransfers") }
     }
+    /// 暂停传输时是否释放并发名额：开启则暂停后空出的名额让排队任务补位（默认）；
+    /// 关闭则暂停的任务仍占着名额，排队任务等其恢复或取消后才开跑（保持原有执行顺序）。
+    @Published var pausedReleasesSlot: Bool {
+        didSet { d.set(pausedReleasesSlot, forKey: "pausedReleasesSlot") }
+    }
 
     /// 资源告警：监控到 CPU/内存/磁盘持续高占用时发系统通知。
     @Published var resourceAlerts: Bool {
@@ -95,6 +100,7 @@ final class AppSettings: ObservableObject {
         downloadDir = d.string(forKey: "downloadDir") ?? ""
         downloadAskEachTime = d.object(forKey: "downloadAskEachTime") as? Bool ?? false
         maxConcurrentTransfers = d.object(forKey: "maxConcurrentTransfers") as? Int ?? 2
+        pausedReleasesSlot = d.object(forKey: "pausedReleasesSlot") as? Bool ?? true
         resourceAlerts = d.object(forKey: "resourceAlerts") as? Bool ?? true
         closeToTray = d.object(forKey: "closeToTray") as? Bool ?? false
         confirmHostDelete = d.object(forKey: "confirmHostDelete") as? Bool ?? true

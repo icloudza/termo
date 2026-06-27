@@ -41,10 +41,11 @@ final class UploadItem: ObservableObject, Identifiable {
         self.remotePath = destDir.hasSuffix("/") ? destDir + name : destDir + "/" + name
     }
 
-    /// 下载项：remotePath=远端源，url=本地目标，localSize=远端大小（用作进度分母）。
-    init(download file: RemoteFile, toLocalDir dir: URL) {
-        self.url = dir.appendingPathComponent(file.name)
-        self.name = file.name
+    /// 下载项：remotePath=远端源，url=本地目标（已由上层去重，避免覆盖本地已有文件/与其它下载撞名），
+    /// name 取实际落地文件名（可能带 “ (n)” 后缀），localSize=远端大小（用作进度分母）。
+    init(download file: RemoteFile, toLocalURL url: URL) {
+        self.url = url
+        self.name = url.lastPathComponent
         self.localSize = file.size
         self.remotePath = file.path
     }
@@ -82,18 +83,22 @@ final class UploadTask: ObservableObject {
     @Published var phase: SessionPhase = .queued    // 初始排队；由协调器调用 start() 出队转 .running
     /// 任务进入终态（完成/取消）时回调一次，供上层推进传输队列。
     var onFinished: (() -> Void)? = nil
+    /// 暂停/请求恢复后回调，供协调器重新泵队列（补位排队任务、放行等待名额的恢复请求）。
+    var onPauseStateChanged: (() -> Void)? = nil
+    /// 用户已点「继续」但当前无空闲名额，处于「等待协调器放行」状态（phase 仍为 .paused）。
+    @Published private(set) var awaitingSlot = false
 
-    /// 本任务会写入的目标路径键集合，用于并发去冲突：
-    /// 上传以「主机+远端路径」为键（同机同远端文件才算撞，因 .part 临时名相同）；下载以本地路径为键。
-    var targetKeys: Set<String> {
+    /// 逐文件目标互斥锁（由协调器 AppModel 注入）：传输每个文件前后获取/释放，
+    /// 仅当两任务真要同时写同一目标文件时才串行，避免 .part 临时文件互相覆盖；其余文件照常并发。
+    var acquirePathLock: ((String) async -> Void)? = nil
+    var releasePathLock: ((String) -> Void)? = nil
+
+    /// 单个目标文件的锁键：上传以「主机+远端路径」（.part 临时名相同才会撞），下载以本地路径。
+    private func lockKey(_ item: UploadItem) -> String {
         switch direction {
-        case .upload:   return Set(items.map { "up:\(hostId ?? ""):\($0.remotePath)" })
-        case .download: return Set(items.map { "down:\($0.url.path)" })
+        case .upload:   return "up:\(hostId ?? ""):\(item.remotePath)"
+        case .download: return "down:\(item.url.path)"
         }
-    }
-    /// 两个任务是否会写到同一目标路径（撞 .part 临时文件）。
-    func conflicts(with other: UploadTask) -> Bool {
-        !targetKeys.isDisjoint(with: other.targetKeys)
     }
     @Published var index = 0
     @Published var overallSent: Int64 = 0
@@ -107,6 +112,20 @@ final class UploadTask: ObservableObject {
     private var lastSampledOverall: Int64 = 0
     private var pendingBaselineReset = true
     private var started = false
+    private var heldLockKey: String? = nil   // 当前持有的逐文件写锁（暂停期间保留，结束时释放）
+
+    /// 切换到目标文件 `key` 的写锁：先放掉旧锁（懒释放，上一文件已处理完），再获取新锁。
+    /// 同一文件重复进入（暂停后恢复）不会重复获取。
+    private func switchLock(to key: String) async {
+        if heldLockKey == key { return }
+        if let h = heldLockKey { releasePathLock?(h); heldLockKey = nil }
+        await acquirePathLock?(key)
+        heldLockKey = key
+    }
+    /// 释放当前持有的写锁（任务收尾或被取消时）。
+    private func releaseHeldLock() {
+        if let h = heldLockKey { releasePathLock?(h); heldLockKey = nil }
+    }
 
     init(files: [URL], destDir: String, fs: RemoteFS, onAllDone: @escaping () -> Void) {
         self.direction = .upload
@@ -118,13 +137,15 @@ final class UploadTask: ObservableObject {
         self.totalBytes = mapped.reduce(0) { $0 + $1.localSize }
     }
 
-    /// 下载任务：把远端文件拉到本地目录。
-    init(download files: [RemoteFile], toLocalDir dir: URL, fs: RemoteFS, onAllDone: @escaping () -> Void) {
+    /// 下载任务：把远端文件拉到本地。`localURLs` 与 `files` 一一对应，由上层去重产出
+    /// （不覆盖本地已有文件、不与其它进行中下载撞名，必要时加 “ (n)” 后缀），`dir` 仅用于展示保存位置。
+    init(download files: [RemoteFile], toLocalURLs localURLs: [URL], inDir dir: URL,
+         fs: RemoteFS, onAllDone: @escaping () -> Void) {
         self.direction = .download
         self.destDir = dir.path
         self.fs = fs
         self.onAllDone = onAllDone
-        let mapped = files.map { UploadItem(download: $0, toLocalDir: dir) }
+        let mapped = zip(files, localURLs).map { UploadItem(download: $0, toLocalURL: $1) }
         self.items = mapped
         self.totalBytes = mapped.reduce(0) { $0 + $1.localSize }
     }
@@ -159,12 +180,32 @@ final class UploadTask: ObservableObject {
     func pause() {
         guard phase == .running else { return }
         phase = .paused
+        awaitingSlot = false
         control.set(.pause)
+        onPauseStateChanged?()   // 可能空出名额，让协调器补位排队任务
     }
 
-    /// 恢复：从断点续传当前文件，主循环继续推进。
-    func resume() {
+    /// 用户请求恢复：由协调器调用，`slotFree` 表示当前是否有空闲名额。
+    /// 有空位则立即续传；无空位则标记 awaitingSlot，待协调器在名额释放时放行（admitResume）。
+    func requestResume(slotFree: Bool) {
         guard phase == .paused else { return }
+        if slotFree {
+            actuallyResume()
+        } else {
+            awaitingSlot = true
+            onPauseStateChanged?()   // 刷新 UI 为「等待中」
+        }
+    }
+
+    /// 协调器放行一个「等待名额」的恢复请求（已确认有空位）。
+    func admitResume() {
+        guard phase == .paused, awaitingSlot else { return }
+        actuallyResume()
+    }
+
+    /// 实际恢复：从断点续传当前文件，主循环继续推进。
+    private func actuallyResume() {
+        awaitingSlot = false
         phase = .running
         control.set(.run)
         pendingBaselineReset = true
@@ -221,6 +262,8 @@ final class UploadTask: ObservableObject {
             if item.state == .done || item.state == .skipped || item.state == .cancelled {
                 index += 1; continue
             }
+            await switchLock(to: lockKey(item))   // 同名文件互斥：取得本文件写锁（暂停恢复同文件不重复获取）
+            if control.signal == .cancel { break } // 等锁期间可能被取消
             item.state = .checking
             pendingBaselineReset = true
             let probe = await fs.probeUpload(remotePath: item.remotePath)
@@ -274,9 +317,9 @@ final class UploadTask: ObservableObject {
                 index += 1                          // 单文件失败不中断队列
             }
             if control.signal == .cancel { break }
-            await waitIfPaused()                     // 暂停则挂起，恢复后回到循环重传当前项
+            await waitIfPaused()                     // 暂停则挂起，恢复后回到循环重传当前项（保留文件写锁）
         }
-        finish()
+        finish()   // finish() 内统一释放写锁并回收 SFTP 会话
     }
 
     /// 下载主循环：逐个把远端文件流式拉到本地（带进度/取消）。无同名询问/续传（更简单）。
@@ -285,6 +328,8 @@ final class UploadTask: ObservableObject {
             if control.signal == .cancel { break }
             let item = items[index]
             if item.state == .done { index += 1; continue }
+            await switchLock(to: lockKey(item))   // 同名本地目标互斥：避免两任务同时写同一文件
+            if control.signal == .cancel { break }
             item.state = .uploading        // 复用「传输中」态
             control.set(.run)
             // 暂停恢复：本地已有半截则从其大小续传，远端从该偏移继续读
@@ -311,7 +356,7 @@ final class UploadTask: ObservableObject {
             if control.signal == .cancel { break }
             await waitIfPaused()
         }
-        finish()
+        finish()   // finish() 内统一释放写锁并回收 SFTP 会话
     }
 
     private func resolveOverwrite(item: UploadItem, finalSize: Int64) async -> OverwriteDecision {
@@ -346,7 +391,9 @@ final class UploadTask: ObservableObject {
             postCompletionNotification()
         }
         if landedAny { onAllDone() }
-        onFinished?()   // 终态：推进传输队列
+        releaseHeldLock()       // 释放当前持有的逐文件写锁
+        fs.closeSession()       // 终态立即回收 SFTP 子进程/读循环线程/缓冲（记录仍留列表也不再占内存）
+        onFinished?()           // 终态：推进传输队列
     }
 
     private func postCompletionNotification() {
@@ -404,7 +451,7 @@ final class UploadTask: ObservableObject {
         let paths = items.compactMap(partialRemotePath)
         guard !paths.isEmpty else { return }
         let fs = self.fs
-        Task { for p in paths { await fs.cleanupPart(remotePath: p) } }
+        Task { for p in paths { await fs.cleanupPart(remotePath: p) }; fs.closeSession() }   // 删完即关，勿留会话
     }
 
     private func partialRemotePath(_ it: UploadItem) -> String? {
@@ -543,10 +590,12 @@ struct UploadDialog: View {
             case .queued:
                 pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
             case .running:
-                pill("暂停", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.pause() }
+                pill("暂停", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { AppModel.shared.pauseTransfer(task) }
                 pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
             case .paused:
-                pill("继续", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.resume() }
+                pill(task.awaitingSlot ? "等待名额…" : "继续", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) {
+                    AppModel.shared.resumeTransfer(task)
+                }
                 pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
             case .done where task.hasFailures:
                 if task.direction == .upload {   // 续传仅上传支持（远端 .part）

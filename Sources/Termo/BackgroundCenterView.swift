@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// 传输任务的强调色（与监控面板上行色一致的 Apple 蓝）；Pal 无内置蓝，故文件内自备。
@@ -18,24 +19,83 @@ struct UploadAskWatcher: View {
     }
 }
 
+/// 左下角后台按钮进度环的独立数据源。
+///
+/// 设计动机：传输任务以 10Hz 采样刷新 overallSent，若把这些高频变更桥接进 AppModel，
+/// 会让观察 AppModel 的 ContentView 整树每秒重绘十数次（已在 forwardCancellables 注释中规避）。
+/// 故此处单独订阅各传输任务，且仅在「整数百分比」或「有无进度」切换时才 publish，
+/// 把刷新频率从 10Hz/任务 压到每个百分点一次，重绘范围也只限进度环本身。
+///
+/// 进度口径（精密把控）：按字节加权聚合所有「进行中 / 排队 / 暂停」的上传下载，
+/// fraction = Σ已传 / Σ总量。排队任务以 0% 计入分母——既未传，又是待办，理应拉低总进度，
+/// 如此入队大文件时进度环立即回落，真实反映剩余工作量。
+/// 端口转发为常驻无界、解压无逐字节进度，均不计入；无可度量传输时 fraction 为 nil（不画环）。
+@MainActor
+final class BackgroundProgressModel: ObservableObject {
+    @Published private(set) var fraction: Double?
+
+    private let app = AppModel.shared
+    private var appSub: AnyCancellable?
+    private var taskSubs: [UUID: AnyCancellable] = [:]
+    private var lastPercent: Int = -2   // -1 留给「无进度」态，初值取 -2 以触发首发
+
+    init() {
+        appSub = app.$transfers.sink { [weak self] tasks in self?.rewire(tasks) }
+        rewire(app.transfers)
+    }
+
+    /// 传输集合变化（入队/出队/清除）时重建对各任务的订阅。
+    private func rewire(_ tasks: [UploadTask]) {
+        let ids = Set(tasks.map(\.id))
+        taskSubs = taskSubs.filter { ids.contains($0.key) }
+        for t in tasks where taskSubs[t.id] == nil {
+            // objectWillChange 在变更「前」触发，下一轮 runloop 再读，确保拿到新值。
+            taskSubs[t.id] = t.objectWillChange.sink { [weak self] in
+                Task { @MainActor in self?.recompute() }
+            }
+        }
+        recompute()
+    }
+
+    private func recompute() {
+        var total: Int64 = 0, sent: Int64 = 0
+        for t in app.transfers where t.phase == .running || t.phase == .paused || t.phase == .queued {
+            total += t.totalBytes
+            sent += min(t.overallSent, t.totalBytes)
+        }
+        let f: Double? = total > 0 ? min(1, Double(sent) / Double(total)) : nil
+        let pct = f.map { Int($0 * 100) } ?? -1
+        guard pct != lastPercent else { return }
+        lastPercent = pct
+        fraction = f
+    }
+}
+
 /// 活动栏底部的「后台任务」入口按钮：常驻显示，有进行中的任务时带数字角标；点击弹出统一中控面板。
+/// 有可度量的传输时，沿按钮圆角边缘绘制一圈细进度环（overlay，不占布局，不改变按钮尺寸）。
 struct BackgroundCenterButton: View {
     @ObservedObject var model: AppModel
+    @StateObject private var progress = BackgroundProgressModel()
     @State private var open = false
     @State private var hover = false
+
+    private static let side: CGFloat = 38
+    private static let ringDiameter: CGFloat = 26   // 进度环直径，小于按钮 38 以贴合图标、不显笨重
+    private static let ringWidth: CGFloat = 1.8
 
     var body: some View {
         let count = model.activeBackgroundCount
         Button { open.toggle() } label: {
             ZStack(alignment: .topTrailing) {
-                Image(systemName: "square.stack.3d.up.fill")
-                    .font(.system(size: 15))
+                Image(systemName: "tray.full.fill")
+                    .font(.system(size: 13))
                     .foregroundStyle(open ? Pal.mauve : (hover ? Pal.subtext : Pal.overlay))
-                    .frame(width: 38, height: 38)
+                    .frame(width: Self.side, height: Self.side)
                     .background(
                         open ? Pal.mauve.opacity(0.16) : (hover ? Pal.fill(0.08) : Color.clear),
-                        in: RoundedRectangle(cornerRadius: 9)
+                        in: Circle()
                     )
+                    .overlay { progressRing }
                 if count > 0 {
                     Text("\(count)")
                         .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
@@ -53,6 +113,24 @@ struct BackgroundCenterButton: View {
         .help("后台任务")
         .popover(isPresented: $open, arrowEdge: .trailing) {
             BackgroundCenterPanel(model: model, dismiss: { open = false })
+        }
+    }
+
+    /// 环绕按钮的圆形进度环：底圈为暗色轨道，进度段为传输蓝、圆头、从正上方顺时针推进。
+    @ViewBuilder
+    private var progressRing: some View {
+        if let p = progress.fraction {
+            ZStack {
+                Circle().stroke(Pal.fill(0.10), lineWidth: Self.ringWidth)
+                Circle()
+                    .trim(from: 0, to: max(0.001, p))
+                    .stroke(transferBlue, style: StrokeStyle(lineWidth: Self.ringWidth, lineCap: .round))
+            }
+            .rotationEffect(.degrees(-90))   // Circle trim 起点在正右，旋转后从正上方起步，符合「时钟」直觉
+            .frame(width: Self.ringDiameter, height: Self.ringDiameter)   // 小于按钮，居中贴合图标
+            .animation(.linear(duration: 0.18), value: p)
+            .transition(.opacity)
+            .allowsHitTesting(false)
         }
     }
 }
@@ -383,10 +461,13 @@ private struct HubTransferRow: View {
             if !readOnly {
                 switch task.phase {
                 case .running:
-                    iconButton("pause.fill", color: Pal.mauve, help: "暂停") { task.pause() }
+                    iconButton("pause.fill", color: Pal.mauve, help: "暂停") { AppModel.shared.pauseTransfer(task) }
                     iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
                 case .paused:
-                    iconButton("play.fill", color: Pal.green, help: "继续") { task.resume() }
+                    let waiting = task.awaitingSlot
+                    iconButton(waiting ? "clock" : "play.fill",
+                               color: waiting ? Pal.subtext : Pal.green,
+                               help: waiting ? "等待名额…" : "继续") { AppModel.shared.resumeTransfer(task) }
                     iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
                 case .queued:
                     iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
@@ -410,7 +491,7 @@ private struct HubTransferRow: View {
         switch task.phase {
         case .queued:    return Pal.overlay
         case .running:   return transferBlue
-        case .paused:    return Pal.yellow
+        case .paused:    return task.awaitingSlot ? Pal.overlay : Pal.yellow
         case .done:      return task.hasFailures ? Pal.yellow : Pal.green
         case .cancelled: return Pal.overlay
         }
@@ -420,7 +501,7 @@ private struct HubTransferRow: View {
         switch task.phase {
         case .queued:    return "排队中"
         case .running:   return "\(verb)中"
-        case .paused:    return "已暂停"
+        case .paused:    return task.awaitingSlot ? "等待名额" : "已暂停"
         case .done:      return task.hasFailures ? "部分失败" : "完成"
         case .cancelled: return "已取消"
         }

@@ -177,6 +177,10 @@ struct SettingsView: View {
                 )
                 .frame(width: 120)
             }
+
+            settingRow("暂停时让出名额", description: "开启：暂停任务后空出的名额让排队任务先跑；关闭：暂停任务仍占名额，保持原执行顺序") {
+                ThemedToggle(isOn: $settings.pausedReleasesSlot)
+            }
         }
     }
 

@@ -69,6 +69,12 @@ final class RemoteFS {
     private let ssh: SSHConnection
     init(_ ssh: SSHConnection) { self.ssh = ssh }
 
+    /// 兜底回收：实例释放时关掉 SFTP 会话子进程与其读循环线程，避免临时实例（如取家目录）与
+    /// 标签关闭后的文件浏览/树/编辑器会话泄漏子进程、线程与管道缓冲。传输任务的会话另在终态主动关闭。
+    deinit {
+        if let s = _sftp { Task { await s.shutdown() } }
+    }
+
     // MARK: - SFTP 会话（懒建，串行；传输级失败后本会话粘性回退到 shell-exec）
     private var _sftp: SFTPSession?
     private let sftpLock = NSLock()
@@ -84,6 +90,13 @@ final class RemoteFS {
     private func markSftpDown() {
         sftpLock.lock(); let s = _sftp; sftpUsable = false; _sftp = nil; sftpLock.unlock()
         Task { await s?.shutdown() }
+    }
+
+    /// 主动关闭本实例的 SFTP 会话子进程（传输终态/记录清除后调用），及时回收子进程、读循环线程与缓冲。
+    /// 幂等；保留 sftpUsable 不变，后续操作（续传重试、清理残留 .part）会按需自动重建会话。
+    func closeSession() {
+        sftpLock.lock(); let s = _sftp; _sftp = nil; sftpLock.unlock()
+        if let s { Task { await s.shutdown() } }
     }
 
     /// 网络切换后重置本实例的 SFTP 会话：关掉旧会话、解除粘性 shell 回退，使下次操作自动重建 SFTP。
