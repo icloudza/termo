@@ -107,16 +107,20 @@ struct BackgroundCenterPanel: View {
 
     @ViewBuilder
     private var content: some View {
-        if model.backgroundActivities.isEmpty {
-            emptyState
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(groups) { group in
-                        groupSection(group.hostId, group.items)
-                    }
+        // 容器恒为 ScrollView：清除最后一条时行仍能完整播放退场动画，空态以 overlay 淡入。
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(groups) { group in
+                    groupSection(group.hostId, group.items)
+                        .transition(Self.popTransition)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 14)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .overlay {
+            if model.backgroundActivities.isEmpty {
+                emptyState.transition(.opacity)
             }
         }
     }
@@ -128,10 +132,15 @@ struct BackgroundCenterPanel: View {
             VStack(spacing: 7) {
                 ForEach(items) { activity in
                     row(activity)
+                        .transition(Self.popTransition)
                 }
             }
         }
     }
+
+    // 删除/清除记录时的「Q 弹」出入场：缩放 + 透明，配合弹簧动画。
+    static let popTransition: AnyTransition = .scale(scale: 0.82, anchor: .center).combined(with: .opacity)
+    static let popSpring: Animation = .spring(response: 0.34, dampingFraction: 0.56)
 
     @ViewBuilder
     private func hostHeader(_ hostId: String?, fallback: String) -> some View {
@@ -160,9 +169,13 @@ struct BackgroundCenterPanel: View {
                               dismiss()
                           })
         case .transfer(let task):
-            HubTransferRow(task: task, onOpen: { model.showUploadDialog = true; dismiss() })
+            HubTransferRow(task: task,
+                           onOpen: { model.showUploadDialog = true; dismiss() },
+                           onClear: { withAnimation(Self.popSpring) { model.clearUpload() } })
         case .extract(let task):
-            HubExtractRow(task: task, onOpen: { model.showExtractDialog = true; dismiss() })
+            HubExtractRow(task: task,
+                          onOpen: { model.showExtractDialog = true; dismiss() },
+                          onClear: { withAnimation(Self.popSpring) { model.clearExtract() } })
         }
     }
 
@@ -226,6 +239,7 @@ private struct HubForwardRow: View {
 private struct HubTransferRow: View {
     @ObservedObject var task: UploadTask
     let onOpen: () -> Void
+    let onClear: () -> Void
 
     private var fraction: Double {
         task.totalBytes > 0 ? min(1, Double(task.overallSent) / Double(task.totalBytes)) : 0
@@ -243,6 +257,8 @@ private struct HubTransferRow: View {
         ) {
             if task.phase == .running {
                 iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
+            } else {
+                iconButton("trash", color: Pal.red, help: "清除记录", action: onClear)
             }
             iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: "展开", action: onOpen)
         }
@@ -283,6 +299,12 @@ private struct HubTransferRow: View {
 private struct HubExtractRow: View {
     @ObservedObject var task: ExtractTask
     let onOpen: () -> Void
+    let onClear: () -> Void
+
+    // 终态（完成/失败）才可清除；进行中或待解压不可删。
+    private var isTerminal: Bool {
+        switch task.phase { case .done, .failed: return true; default: return false }
+    }
 
     var body: some View {
         rowShell(
@@ -292,6 +314,9 @@ private struct HubExtractRow: View {
             statusDot: statusColor, statusText: statusText,
             progress: nil
         ) {
+            if isTerminal {
+                iconButton("trash", color: Pal.red, help: "清除记录", action: onClear)
+            }
             iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: "展开", action: onOpen)
         }
     }

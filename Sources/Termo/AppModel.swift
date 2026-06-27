@@ -290,6 +290,11 @@ final class AppModel: ObservableObject {
         return out
     }
 
+    /// 清除已结束的传输记录（从后台中控移除）。仅在任务非进行中时调用。
+    func clearUpload() { uploadTask = nil; showUploadDialog = false }
+    /// 清除已结束的解压记录。
+    func clearExtract() { extractTask = nil; showExtractDialog = false }
+
     /// 进行中的后台活动数（用于中控按钮角标）。
     var activeBackgroundCount: Int {
         var n = 0
