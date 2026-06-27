@@ -55,10 +55,19 @@ final class AppSettings: ObservableObject {
     @Published var downloadAskEachTime: Bool {
         didSet { d.set(downloadAskEachTime, forKey: "downloadAskEachTime") }
     }
+    /// 同时进行的传输（上传/下载共用）数量上限，超出排队。
+    @Published var maxConcurrentTransfers: Int {
+        didSet { d.set(maxConcurrentTransfers, forKey: "maxConcurrentTransfers") }
+    }
 
     /// 资源告警：监控到 CPU/内存/磁盘持续高占用时发系统通知。
     @Published var resourceAlerts: Bool {
         didSet { d.set(resourceAlerts, forKey: "resourceAlerts") }
+    }
+
+    /// 关闭主窗口时隐藏到菜单栏（后台任务继续运行），而非退出。
+    @Published var closeToTray: Bool {
+        didSet { d.set(closeToTray, forKey: "closeToTray") }
     }
 
     /// 永久隐藏监控面板的采集说明（在「设置 - 通用」中开启，持久化）。
@@ -80,7 +89,9 @@ final class AppSettings: ObservableObject {
         termScrollback = d.object(forKey: "termScrollback") as? Int ?? 1000
         downloadDir = d.string(forKey: "downloadDir") ?? ""
         downloadAskEachTime = d.object(forKey: "downloadAskEachTime") as? Bool ?? false
+        maxConcurrentTransfers = d.object(forKey: "maxConcurrentTransfers") as? Int ?? 2
         resourceAlerts = d.object(forKey: "resourceAlerts") as? Bool ?? true
+        closeToTray = d.object(forKey: "closeToTray") as? Bool ?? false
         monitorNoticeHidden = d.object(forKey: "monitorNoticeHidden") as? Bool ?? false
     }
 

@@ -23,11 +23,11 @@ struct ActivityBar: View {
             }
             Spacer()
             BackgroundCenterButton(model: model)
-                // 上传在后台时若需同名确认，守卫自动展开弹窗，避免静默卡住（原迷你环的职责，已并入中控）。
-                // 以 background 挂载：零尺寸、不参与 VStack 间距，避免上传时多出一段空隙。
+                // 任一后台传输需同名确认时，守卫自动展开该任务弹窗，避免静默卡住（原迷你环的职责，已并入中控）。
+                // 以 background 挂载：零尺寸、不参与 VStack 间距，避免多出一段空隙。
                 .background {
-                    if let task = model.uploadTask, !model.showUploadDialog {
-                        UploadAskWatcher(task: task) { model.showUploadDialog = true }
+                    ForEach(model.transfers, id: \.id) { task in
+                        UploadAskWatcher(task: task) { model.focusedTransferId = task.id }
                     }
                 }
             settingsButton

@@ -49,12 +49,16 @@ final class AppModel: ObservableObject {
     @Published var pendingFileCreate: CreateContext? = nil   // 新建文件/文件夹的名称输入弹窗
     @Published var pendingFileRefresh: RefreshConflictContext? = nil
     @Published var pendingFileInfo: FileInfoContext? = nil
-    @Published var uploadTask: UploadTask? = nil   // 当前上传任务（nil=无）
-    @Published var showUploadDialog = false        // 上传弹窗是否展开；隐藏后任务仍在后台跑，齿轮旁显示迷你进度
+    // 上传/下载任务队列：可并发（上限 maxConcurrentTransfers），超出排队。含进行中/排队/已完成（完成后保留待用户清除）。
+    @Published var transfers: [UploadTask] = []
+    // 当前展开传输弹窗的任务 id（nil=无弹窗）；任务本身在后台继续跑，统一在左下角后台中控管理。
+    @Published var focusedTransferId: UUID? = nil
     @Published var extractTask: ExtractTask? = nil // 当前解压任务（nil=无）
     @Published var showExtractDialog = false       // 解压弹窗是否展开；隐藏后任务仍在后台跑，齿轮旁显示迷你状态
     @Published var fileDeleteBusy = false          // 删除进行中：弹窗保留 + 删除键旁转圈，可中途取消
     private var deleteHandle: CommandHandle?        // 取消正在进行的删除（终止远端 rm）
+    @Published var pendingBatchDelete: BatchDeleteContext? = nil   // 批量删除确认弹窗
+    @Published var batchDeleteBusy = false         // 批量删除进行中：弹窗保留 + 转圈
 
     @Published var hosts: [Host] = []
     /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
@@ -63,6 +67,8 @@ final class AppModel: ObservableObject {
     @Published var forwards: [ForwardRule] = []
     /// 非 nil 时展示该主机的端口转发管理面板。
     @Published var forwardPanelHost: Host? = nil
+    /// 为真时展示「仍有后台任务」的自定义退出确认弹窗。
+    @Published var pendingQuitConfirm = false
     /// 正在 SSH 探测系统信息的主机 id。
     @Published var probingHosts: Set<String> = []
 
@@ -276,31 +282,62 @@ final class AppModel: ObservableObject {
         for rule in forwards {
             if let m = forwardManagers[rule.hostId], m.status(rule.id).isRunning {
                 out.append(BackgroundActivity(id: "fwd-\(rule.id.uuidString)", hostId: rule.hostId,
-                                              fallbackHostName: "", payload: .forward(rule: rule, manager: m)))
+                                              fallbackHostName: "", isFinished: false,
+                                              payload: .forward(rule: rule, manager: m)))
             }
         }
-        if let t = uploadTask {
+        for t in transfers {
+            let finished = (t.phase == .done || t.phase == .cancelled)
             out.append(BackgroundActivity(id: "xfer-\(t.id.uuidString)", hostId: t.hostId,
-                                          fallbackHostName: t.hostName, payload: .transfer(t)))
+                                          fallbackHostName: t.hostName, isFinished: finished,
+                                          payload: .transfer(t)))
         }
         if let e = extractTask {
+            let finished: Bool = { switch e.phase { case .done, .failed: return true; default: return false } }()
             out.append(BackgroundActivity(id: "ext-\(e.id.uuidString)", hostId: e.hostId,
-                                          fallbackHostName: e.hostName, payload: .extract(e)))
+                                          fallbackHostName: e.hostName, isFinished: finished,
+                                          payload: .extract(e)))
         }
         return out
     }
 
-    /// 清除已结束的传输记录（从后台中控移除）。仅在任务非进行中时调用。
-    func clearUpload() { uploadTask = nil; showUploadDialog = false }
+    /// 清除已结束的传输记录（从后台中控移除）。未结束的（进行中/排队/暂停）会先取消。
+    func removeTransfer(_ id: UUID) {
+        if let t = transfers.first(where: { $0.id == id }),
+           t.phase == .running || t.phase == .queued || t.phase == .paused {
+            t.cancel()
+        }
+        transfers.removeAll { $0.id == id }
+        if focusedTransferId == id { focusedTransferId = nil }
+        pumpTransferQueue()
+    }
     /// 清除已结束的解压记录。
     func clearExtract() { extractTask = nil; showExtractDialog = false }
 
-    /// 进行中的后台活动数（用于中控按钮角标）。
+    /// 解压是否处于终态（完成/失败）。
+    private var isExtractFinished: Bool {
+        guard let e = extractTask else { return false }
+        switch e.phase { case .done, .failed: return true; default: return false }
+    }
+    /// 后台中控里是否有「已完成」的任务可清理（已完成/已取消的传输，或终态的解压）。
+    var hasFinishedBackground: Bool {
+        transfers.contains { $0.phase == .done || $0.phase == .cancelled } || isExtractFinished
+    }
+    /// 一键清理所有已结束的后台任务记录（不影响进行中/排队的传输与运行中的转发）。
+    func clearFinishedBackground() {
+        let removed = Set(transfers.filter { $0.phase == .done || $0.phase == .cancelled }.map { $0.id })
+        transfers.removeAll { removed.contains($0.id) }
+        if let id = focusedTransferId, removed.contains(id) { focusedTransferId = nil }
+        if isExtractFinished { extractTask = nil; showExtractDialog = false }
+        pumpTransferQueue()
+    }
+
+    /// 进行中的后台活动数（用于中控按钮角标）：运行中的转发 + 进行中/排队的传输 + 进行中的解压。
     var activeBackgroundCount: Int {
         var n = 0
         for rule in forwards where forwardManagers[rule.hostId]?.status(rule.id).isRunning == true { n += 1 }
-        if uploadTask != nil { n += 1 }
-        if extractTask != nil { n += 1 }
+        n += transfers.filter { $0.phase == .running || $0.phase == .queued || $0.phase == .paused }.count
+        if extractTask?.phase == .running { n += 1 }
         return n
     }
 
@@ -638,8 +675,12 @@ final class AppModel: ObservableObject {
     private var themeCancellable: AnyCancellable?
 
     private var settingsCancellable: AnyCancellable?
+    private var watchdogTimer: Timer?
 
-    init() {
+    /// 全局单例：托盘与退出流程（AppDelegate）需在窗口之外访问后台任务状态，故让其生命周期独立于窗口。
+    static let shared = AppModel()
+
+    private init() {
         // 从磁盘加载主机与会话历史
         hosts = HostStore.loadHosts()
         hosts.append(Self.makeMockHost())   // 注入模拟演示主机（内存中、不落盘），用于预览监控面板
@@ -659,6 +700,7 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.applyThemeToTerminals()
                 self?.applyTerminalSettings()
+                self?.pumpTransferQueue()   // 并发上限可能被调高，立即尝试开跑排队中的传输
             }
         }
 
@@ -667,7 +709,7 @@ final class AppModel: ObservableObject {
         NetworkMonitor.shared.onChange = { [weak self] online in
             guard let self else { return }
             for (_, m) in self.hostMonitors { m.handleNetworkChange() }
-            for (hid, fm) in self.forwardManagers { fm.handleNetworkChange(rules: self.forwardRules(for: hid)) }
+            for (_, fm) in self.forwardManagers { fm.handleNetworkChange() }
             if online {
                 self.reconnectDroppedTerminals()
                 self.reconnectFileViewsAfterNetworkChange()
@@ -688,6 +730,48 @@ final class AppModel: ObservableObject {
         nc.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in
             ForwardProcessRegistry.shared.terminateAll()
         }
+
+        // 看门狗：每 20s 巡检一次期望保持运行的转发隧道，掉线的补排重启（兜底意外漏掉的退出信号）。
+        // 低频且仅在有期望运行隧道时实际动作，开销可忽略；网络抖动的细致处理在 ForwardManager 内。
+        let wd = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.forwardWatchdogTick() }
+        }
+        wd.tolerance = 5
+        watchdogTimer = wd
+    }
+
+    private func forwardWatchdogTick() {
+        for (_, fm) in forwardManagers where fm.hasIntended { fm.watchdogTick() }
+    }
+
+    // ---------- 退出/后台任务清理 ----------
+
+    /// 当前进行中的后台任务可读清单（用于退出确认弹窗）：运行中的转发、进行中/排队的传输、进行中的解压。
+    var runningBackgroundSummaries: [String] {
+        var out: [String] = []
+        for rule in forwards where forwardManagers[rule.hostId]?.status(rule.id).isRunning == true {
+            let host = hosts.first(where: { $0.id == rule.hostId })?.name ?? "主机"
+            out.append("端口转发 · \(host) · \(rule.summary)")
+        }
+        for t in transfers where t.phase == .running || t.phase == .queued || t.phase == .paused {
+            let verb = t.direction == .upload ? "上传" : "下载"
+            out.append("\(verb) · \(t.hostName) · \(t.items.count) 项")
+        }
+        if let e = extractTask, e.phase == .running {
+            out.append("解压 · \(e.hostName) · \(e.archive.name)")
+        }
+        return out
+    }
+
+    /// 是否有进行中的后台任务。
+    var hasRunningBackground: Bool { !runningBackgroundSummaries.isEmpty }
+
+    /// 退出前停掉所有后台任务：转发隧道、传输、解压。
+    func stopAllBackground() {
+        for (_, fm) in forwardManagers { fm.stopAll() }
+        for t in transfers where t.phase == .running || t.phase == .queued || t.phase == .paused { t.cancel() }
+        transfers.removeAll()
+        extractTask = nil
     }
 
     var activeHostId: String? {
@@ -890,8 +974,8 @@ final class AppModel: ObservableObject {
         performCloseTab(tabId)
         if let hostId, let host = hosts.first(where: { $0.id == hostId }) {
             let stillUsed = tabs.contains { ($0.kind == .terminal || $0.kind == .files) && $0.hostId == hostId }
-            // 上传进行中不关主连接（closeMaster 会掐断复用同一 master 的上传；审查 R20）
-            if !stillUsed, !uploadActive { RemoteFS(host.ssh ?? SSHConnection()).closeMaster() }
+            // 传输进行中不关主连接（closeMaster 会掐断复用同一 master 的传输；审查 R20）
+            if !stillUsed, !hostHasRunningTransfer(hostId) { RemoteFS(host.ssh ?? SSHConnection()).closeMaster() }
         }
     }
 
@@ -1218,16 +1302,47 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// 某主机是否有上传进行中（用于守卫 closeMaster 不掐断上传连接，审查 R20）。
-    var uploadActive: Bool {
-        guard let t = uploadTask else { return false }
-        return t.phase == .running
+    // ---------- 传输队列 ----------
+    // 并发上限来自设置（上传/下载共用一个池，故二者可同时进行），其余排队；有任务终态时自动补位。
+    private var maxConcurrentTransfers: Int { max(1, AppSettings.shared.maxConcurrentTransfers) }
+
+    /// 某主机是否有传输进行中（用于守卫 closeMaster 不掐断复用同一 master 的传输，审查 R20）。
+    func hostHasRunningTransfer(_ hostId: String) -> Bool {
+        transfers.contains { $0.hostId == hostId && $0.phase == .running }
+    }
+
+    /// 入队一个新传输：加入列表、自动展开其弹窗，并尝试按并发上限启动。
+    private func enqueueTransfer(_ task: UploadTask) {
+        task.onFinished = { [weak self] in self?.transferDidFinish() }
+        transfers.append(task)
+        focusedTransferId = task.id   // 自动展开新任务弹窗（保持单任务时的体验）
+        pumpTransferQueue()
+    }
+
+    /// 按并发上限把排队中的任务依次启动，直至占满空位。
+    /// 跳过（而非阻塞）与运行中任务写同一目标路径的任务，避免 .part 临时文件互相覆盖；
+    /// 被跳过者保持排队，待冲突任务结束后由下次 pump 自动开跑（冲突只与运行中任务比较，故不会死锁）。
+    private func pumpTransferQueue() {
+        let cap = maxConcurrentTransfers
+        var running = transfers.filter { $0.phase == .running }.count
+        for task in transfers where task.phase == .queued {
+            guard running < cap else { break }
+            // start() 同步把刚启动的任务置为 .running，故同一轮内后续任务的冲突检查能看到它
+            if transfers.contains(where: { $0.phase == .running && $0.conflicts(with: task) }) { continue }
+            task.start()
+            running += 1
+        }
+    }
+
+    /// 某传输进入终态：补位下一个排队任务，并刷新角标/中控的进行中计数（终态变化不改 transfers 数组本身）。
+    private func transferDidFinish() {
+        pumpTransferQueue()
+        objectWillChange.send()
     }
 
     /// 上传文件到某文件夹：弹系统选择器（可多选文件），逐个上传，支持续传/压缩/同名询问。
     func beginUpload(into folder: RemoteFile, host: Host) {
         guard folder.isDir else { return }
-        if uploadActive { uploadBusyNotice(); return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -1248,7 +1363,6 @@ final class AppModel: ObservableObject {
             pendingFileInfo = FileInfoContext(title: "无法上传", message: "暂不支持拖拽文件夹，请拖入文件。")
             return
         }
-        if uploadActive { uploadBusyNotice(); return }
         Task { @MainActor in
             let cwd: String
             if let known = tabCwd[tabId] { cwd = known } else { cwd = await RemoteFS(ssh).home() }
@@ -1256,19 +1370,27 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// 启动上传任务（核心）：直接上传给定文件到目标目录；落地后局部刷新相关文件树缓存。
-    /// 单并发：已有上传进行中则拒绝（避免同目标 .part 撞名，审查 R16）。
+    /// 拖拽上传：把外部拖入的文件上传到指定远端目录（SFTP 浏览器拖放用）。只传文件，跳过文件夹。
+    func uploadFiles(_ urls: [URL], toDir dir: String, host: Host) {
+        guard let ssh = host.ssh, !ssh.host.isEmpty, !dir.isEmpty else { return }
+        let files = urls.filter { !((try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false) }
+        guard !files.isEmpty else {
+            pendingFileInfo = FileInfoContext(title: "无法上传", message: "暂不支持拖拽文件夹，请拖入文件。")
+            return
+        }
+        startUpload(files: files, destDir: dir, host: host)
+    }
+
+    /// 启动上传任务（核心）：入队后按并发上限自动开始；落地后局部刷新相关文件树缓存。
     private func startUpload(files: [URL], destDir: String, host: Host) {
-        guard !files.isEmpty, !uploadActive else { return }
+        guard !files.isEmpty else { return }
         let task = UploadTask(files: files, destDir: destDir,
                               fs: RemoteFS(host.ssh ?? SSHConnection())) { [weak self] in
             self?.refreshTrees(host: host, dir: destDir)
         }
         task.hostId = host.id
         task.hostName = host.name
-        uploadTask = task
-        showUploadDialog = true
-        task.start()
+        enqueueTransfer(task)
     }
 
     /// 文件变更后（上传落地 / 解压完成）：只**局部**刷新该主机各缓存文件树/浏览器里「指定目录」这一层——
@@ -1287,12 +1409,6 @@ final class AppModel: ObservableObject {
 
     private func tabHostId(_ tabId: Int) -> String? {
         tabs.first(where: { $0.id == tabId })?.hostId
-    }
-
-    private func uploadBusyNotice() {
-        let verb = uploadTask?.direction == .download ? "下载" : "上传"
-        pendingFileInfo = FileInfoContext(title: "已有\(verb)进行中",
-                                          message: "请等当前\(verb)结束后再开始新的传输。")
     }
 
     func fileMenuRequestDelete(_ file: RemoteFile, host: Host, target: any FileOpsTarget) {
@@ -1329,6 +1445,34 @@ final class AppModel: ObservableObject {
         if fileDeleteBusy { deleteHandle?.cancel() }
         pendingFileDelete = nil
     }
+
+    // MARK: - 批量删除
+
+    func requestBatchDelete(_ files: [RemoteFile], host: Host, target: any FileOpsTarget) {
+        guard !files.isEmpty else { return }
+        pendingBatchDelete = BatchDeleteContext(files: files, host: host, target: target)
+    }
+
+    /// 确认批量删除：逐个删除（弹窗保留 + 转圈），完成后关弹窗；任一失败弹错误提示。
+    func confirmBatchDelete() {
+        guard let ctx = pendingBatchDelete, !batchDeleteBusy else { return }
+        batchDeleteBusy = true
+        Task { @MainActor in
+            var failed: [String] = []
+            for f in ctx.files {
+                if case .failure = await ctx.target.performDelete(f, handle: nil) { failed.append(f.name) }
+            }
+            batchDeleteBusy = false
+            pendingBatchDelete = nil
+            if !failed.isEmpty {
+                let shown = failed.prefix(8).joined(separator: "、")
+                pendingFileInfo = FileInfoContext(title: "部分删除失败",
+                                                  message: "未能删除：\(shown)\(failed.count > 8 ? " 等" : "")")
+            }
+        }
+    }
+
+    func cancelBatchDelete() { if !batchDeleteBusy { pendingBatchDelete = nil } }
 
     func fileMenuRequestRename(_ file: RemoteFile, host: Host, target: any FileOpsTarget) {
         pendingFileRename = FileOpContext(file: file, host: host, target: target)
@@ -1415,11 +1559,10 @@ final class AppModel: ObservableObject {
     // MARK: - 下载
 
     /// 下载远端文件到本地：按设置取目录或每次询问目录；进度/后台复用上传那套传输对话框，完成后在访达定位。
-    /// 单并发：与上传共用 uploadTask（同一时刻只跑一个传输）。目录暂不支持，仅文件。
+    /// 与上传共用传输队列（可并发，超出排队）。目录暂不支持，仅文件。
     func downloadFiles(_ files: [RemoteFile], host: Host) {
         let downloadable = files.filter { !$0.isDir }
         guard !downloadable.isEmpty, let ssh = host.ssh, !ssh.host.isEmpty else { return }
-        if uploadActive { uploadBusyNotice(); return }
         let dir: URL
         if AppSettings.shared.downloadAskEachTime {
             let panel = NSOpenPanel()
@@ -1439,9 +1582,7 @@ final class AppModel: ObservableObject {
         }
         task.hostId = host.id
         task.hostName = host.name
-        uploadTask = task
-        showUploadDialog = true
-        task.start()
+        enqueueTransfer(task)
     }
 
     // MARK: - 解压
@@ -1682,6 +1823,13 @@ struct MultiCloseContext: Identifiable {
 struct FileOpContext: Identifiable {
     let id = UUID()
     let file: RemoteFile
+    let host: Host
+    let target: any FileOpsTarget
+}
+
+struct BatchDeleteContext: Identifiable {
+    let id = UUID()
+    let files: [RemoteFile]
     let host: Host
     let target: any FileOpsTarget
 }

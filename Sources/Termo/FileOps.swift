@@ -13,6 +13,50 @@ protocol FileOpsTarget: AnyObject {
     func performCreate(_ name: String, isDir: Bool, inDir dir: String) async -> Result<Void, RemoteFSError>
 }
 
+/// 单个文件右击菜单的菜单项（抽出以便浏览器在多选时与批量菜单切换复用）。
+@ViewBuilder
+func fileOpsMenuItems(file: RemoteFile, host: Host, model: AppModel,
+                      target: any FileOpsTarget, onRefresh: @escaping () -> Void) -> some View {
+    Group {
+        if file.isDir {
+            Button { model.beginUpload(into: file, host: host) } label: {
+                Label("上传文件…", systemImage: "square.and.arrow.up")
+            }
+            Button { model.fileMenuRequestCreate(isDir: false, inDir: file.path, host: host, target: target) } label: {
+                Label("新建文件", systemImage: "doc.badge.plus")
+            }
+            Button { model.fileMenuRequestCreate(isDir: true, inDir: file.path, host: host, target: target) } label: {
+                Label("新建文件夹", systemImage: "folder.badge.plus")
+            }
+            Divider()
+        } else {
+            Button { model.downloadFiles([file], host: host) } label: {
+                Label("下载", systemImage: "square.and.arrow.down")
+            }
+            if ArchiveKind.detect(file.name) != nil {
+                Button { model.requestExtract(file, host: host) } label: {
+                    Label("解压", systemImage: "doc.zipper")
+                }
+            }
+            Divider()
+        }
+        Button(action: onRefresh) { Label("刷新", systemImage: "arrow.clockwise") }
+        Divider()
+        Button { model.fileMenuRequestRename(file, host: host, target: target) } label: {
+            Label("重命名", systemImage: "pencil")
+        }
+        Button { model.fileMenuRequestChmod(file, host: host, target: target) } label: {
+            Label("权限", systemImage: "lock")
+        }
+        Divider()
+        Button(role: .destructive) {
+            model.fileMenuRequestDelete(file, host: host, target: target)
+        } label: {
+            Label("删除", systemImage: "trash")
+        }
+    }
+}
+
 extension View {
     /// 文件行通用右击菜单：上传（仅目录）/ 刷新 / 重命名 / 权限 / 删除。
     /// 重命名、权限、删除经 AppModel 走统一的确认弹窗与操作目标，两处文件视图共用同一套交互。
@@ -20,42 +64,7 @@ extension View {
     func fileOpsMenu(file: RemoteFile, host: Host, model: AppModel,
                      target: any FileOpsTarget, onRefresh: @escaping () -> Void) -> some View {
         contextMenu {
-            if file.isDir {
-                Button { model.beginUpload(into: file, host: host) } label: {
-                    Label("上传文件…", systemImage: "square.and.arrow.up")
-                }
-                Button { model.fileMenuRequestCreate(isDir: false, inDir: file.path, host: host, target: target) } label: {
-                    Label("新建文件", systemImage: "doc.badge.plus")
-                }
-                Button { model.fileMenuRequestCreate(isDir: true, inDir: file.path, host: host, target: target) } label: {
-                    Label("新建文件夹", systemImage: "folder.badge.plus")
-                }
-                Divider()
-            } else {
-                Button { model.downloadFiles([file], host: host) } label: {
-                    Label("下载", systemImage: "square.and.arrow.down")
-                }
-                if ArchiveKind.detect(file.name) != nil {
-                    Button { model.requestExtract(file, host: host) } label: {
-                        Label("解压", systemImage: "doc.zipper")
-                    }
-                }
-                Divider()
-            }
-            Button(action: onRefresh) { Label("刷新", systemImage: "arrow.clockwise") }
-            Divider()
-            Button { model.fileMenuRequestRename(file, host: host, target: target) } label: {
-                Label("重命名", systemImage: "pencil")
-            }
-            Button { model.fileMenuRequestChmod(file, host: host, target: target) } label: {
-                Label("权限", systemImage: "lock")
-            }
-            Divider()
-            Button(role: .destructive) {
-                model.fileMenuRequestDelete(file, host: host, target: target)
-            } label: {
-                Label("删除", systemImage: "trash")
-            }
+            fileOpsMenuItems(file: file, host: host, model: model, target: target, onRefresh: onRefresh)
         }
     }
 }

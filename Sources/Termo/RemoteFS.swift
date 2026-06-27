@@ -9,7 +9,7 @@ struct RemoteFSError: Error {
 // MARK: - 上传 v2 传输层类型
 
 /// 传输信号（单一原子状态）。
-enum UploadSignal { case run, cancel }
+enum UploadSignal { case run, cancel, pause }
 
 /// 单文件传输控制盒（跨线程，锁保护）：承载控制信号与已发送字节（后者仅供 UI 进度显示）。
 final class UploadControl: @unchecked Sendable {
@@ -43,7 +43,7 @@ final class CommandHandle: @unchecked Sendable {
 
 /// 单文件传输结果。续传偏移**不在这里返回**——须由上层在传输结束后重新 stat 远端 .part 取得
 /// （本地"已发送"含管道缓冲，会高估实际落地字节，直接当偏移会造成数据空洞，见审查 R1）。
-enum UploadOutcome: Equatable { case completed, cancelled, failed(String) }
+enum UploadOutcome: Equatable { case completed, cancelled, paused, failed(String) }
 
 /// 上传前探测：远端 .part 半截大小、正式文件是否存在/大小。
 struct UploadProbe { let partSize: Int64; let finalExists: Bool; let finalSize: Int64 }
@@ -274,19 +274,32 @@ final class RemoteFS {
 
     /// 下载远端文件到本地：SFTP 流式分块读 → 写本地，避免整文件进内存；经 control 上报进度、响应取消。
     /// 须经独立 RemoteFS 实例调用（自带 SFTP 通道，不阻塞文件浏览所用的会话）。
-    func download(_ remotePath: String, to localURL: URL, control: UploadControl) async -> UploadOutcome {
+    /// 下载到本地文件。startOffset>0 表示续传：从本地已有半截续写、远端从该偏移继续读（暂停恢复用）。
+    func download(_ remotePath: String, to localURL: URL, startOffset: Int64 = 0, control: UploadControl) async -> UploadOutcome {
         guard isSftpUsable else { return .failed("需要 SFTP 连接") }
         do {
             let handle = try await session().open(remotePath, pflags: SFTPFlag.READ)
-            FileManager.default.createFile(atPath: localURL.path, contents: nil)
-            guard let fh = try? FileHandle(forWritingTo: localURL) else {
-                await session().closeHandle(handle); return .failed("无法写入本地文件")
-            }
-            var offset: UInt64 = 0
-            while true {
-                if control.signal == .cancel {
-                    try? fh.close(); await session().closeHandle(handle); return .cancelled
+            let fh: FileHandle
+            if startOffset > 0, FileManager.default.fileExists(atPath: localURL.path) {
+                // 续传：追加到本地半截。打不开则报错（绝不退回截断重建，否则会丢掉已下载部分造成空洞）。
+                guard let h = try? FileHandle(forWritingTo: localURL) else {
+                    await session().closeHandle(handle); return .failed("无法写入本地文件")
                 }
+                try? h.seekToEnd()
+                fh = h
+            } else {
+                FileManager.default.createFile(atPath: localURL.path, contents: nil)
+                guard let h = try? FileHandle(forWritingTo: localURL) else {
+                    await session().closeHandle(handle); return .failed("无法写入本地文件")
+                }
+                fh = h
+            }
+            var offset: UInt64 = startOffset > 0 ? UInt64(startOffset) : 0
+            control.setSent(Int64(offset))
+            while true {
+                let sig = control.signal
+                if sig == .cancel { try? fh.close(); await session().closeHandle(handle); return .cancelled }
+                if sig == .pause { try? fh.close(); await session().closeHandle(handle); return .paused }  // 保留本地半截
                 guard let chunk = try await session().read(handle, offset: offset, length: 32768),
                       !chunk.isEmpty else { break }
                 fh.write(chunk)
@@ -341,7 +354,9 @@ final class RemoteFS {
             var sent = Int64(off)
             control.setSent(sent)
             while true {
-                if control.signal == .cancel { try? input.close(); await s.closeHandle(h); return .cancelled }
+                let sig = control.signal
+                if sig == .cancel { try? input.close(); await s.closeHandle(h); return .cancelled }
+                if sig == .pause { try? input.close(); await s.closeHandle(h); return .paused }  // 保留远端 .part
                 let chunk: Data
                 do {
                     guard let c = try input.read(upToCount: 32 * 1024), !c.isEmpty else { break }   // EOF
@@ -398,6 +413,7 @@ final class RemoteFS {
 
             let stopLock = NSLock()
             var cancelled = false
+            var paused = false
             var hitEOF = false
             var feederError: String? = nil
 
@@ -411,9 +427,10 @@ final class RemoteFS {
             group.notify(queue: .global()) {
                 sshProc.waitUntilExit()
                 stopLock.lock()
-                let c = cancelled; let eof = hitEOF; let ferr = feederError
+                let c = cancelled; let p = paused; let eof = hitEOF; let ferr = feederError
                 stopLock.unlock()
                 if c { cont.resume(returning: .cancelled); return }
+                if p { cont.resume(returning: .paused); return }   // 保留远端 .part 供续传
                 if let ferr { cont.resume(returning: .failed(ferr)); return }
                 if eof && sshProc.terminationStatus == 0 {
                     cont.resume(returning: .completed)
@@ -431,8 +448,9 @@ final class RemoteFS {
             // 取消看门狗：喂入循环结束后若卡在「等 ssh 退出」，取消也能立刻杀掉 ssh（否则取消无效）。
             DispatchQueue.global().async {
                 while sshProc.isRunning {
-                    if control.signal == .cancel {
-                        stopLock.lock(); cancelled = true; stopLock.unlock()
+                    let sig = control.signal
+                    if sig == .cancel || sig == .pause {
+                        stopLock.lock(); if sig == .cancel { cancelled = true } else { paused = true }; stopLock.unlock()
                         sshProc.terminate(); break
                     }
                     Thread.sleep(forTimeInterval: 0.15)
@@ -451,8 +469,9 @@ final class RemoteFS {
                 var sent = startOffset
                 control.setSent(sent)
                 while true {
-                    if control.signal == .cancel {
-                        stopLock.lock(); cancelled = true; stopLock.unlock(); break
+                    let sig = control.signal
+                    if sig == .cancel || sig == .pause {
+                        stopLock.lock(); if sig == .cancel { cancelled = true } else { paused = true }; stopLock.unlock(); break
                     }
                     let chunk: Data
                     do {
@@ -472,7 +491,8 @@ final class RemoteFS {
                 }
                 try? input.close()
                 try? feed.close()   // 关 ssh stdin → 远端 cat 收 EOF 落地 → ssh 退出
-                if control.signal == .cancel, sshProc.isRunning { sshProc.terminate() }
+                let sig = control.signal
+                if (sig == .cancel || sig == .pause), sshProc.isRunning { sshProc.terminate() }
             }
         }
     }

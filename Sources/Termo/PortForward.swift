@@ -125,17 +125,41 @@ final class ForwardManager: ObservableObject {
     private var graceWork: [UUID: DispatchWorkItem] = [:]
     private var stderrBuf: [UUID: String] = [:]
 
+    // 看门狗状态：intended = 用户期望保持运行的规则；startedRules 留存其配置以便自动重启；
+    // failCount 驱动退避；restartWork 记录已排程的重启（去重，避免叠加）。
+    private var intended: Set<UUID> = []
+    private var startedRules: [UUID: ForwardRule] = [:]
+    private var failCount: [UUID: Int] = [:]
+    private var restartWork: [UUID: DispatchWorkItem] = [:]
+
     // 宽限期：进程存活超过此时长仍未退出，视为转发已建立。配合 ExitOnForwardFailure，
     // 端口被占用 / 转发被拒等失败会让 ssh 提前退出，从而在宽限期内被判为失败。
     private static let graceSeconds: TimeInterval = 1.2
+    // 自动重启退避：base * 2^失败次数，封顶 cap。短暂网络抖动由 ssh 自带 ServerAliveInterval 容忍，
+    // 进程真正退出后才走重启；离线时不重启（等网络恢复回调统一拉起），避免抖动期反复重连。
+    private static let backoffBase: TimeInterval = 2
+    private static let backoffCap: TimeInterval = 30
 
     init(ssh: SSHConnection) { self.ssh = ssh }
 
     func status(_ id: UUID) -> RuleStatus { statuses[id] ?? .stopped }
 
+    /// 是否有用户期望保持运行的隧道（供看门狗判断是否需要 tick）。
+    var hasIntended: Bool { !intended.isEmpty }
+
+    /// 用户主动启动：标记为期望运行、清零退避，然后拉起。
     func start(_ rule: ForwardRule) {
+        intended.insert(rule.id)
+        startedRules[rule.id] = rule
+        failCount[rule.id] = 0
+        restartWork[rule.id]?.cancel(); restartWork[rule.id] = nil
+        launch(rule)
+    }
+
+    /// 拉起一条隧道的子进程（start 与自动重启共用；不改 intended/退避）。
+    private func launch(_ rule: ForwardRule) {
         guard procs[rule.id] == nil else { return }
-        guard NetworkMonitor.shared.isOnline else { statuses[rule.id] = .failed("网络不可用"); return }
+        guard NetworkMonitor.shared.isOnline else { statuses[rule.id] = .failed("等待网络"); return }
         guard !ssh.host.isEmpty else { statuses[rule.id] = .failed("主机未配置"); return }
 
         let proc = Process()
@@ -172,7 +196,10 @@ final class ForwardManager: ObservableObject {
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 self.graceWork[rule.id] = nil
-                if self.procs[rule.id]?.isRunning == true { self.statuses[rule.id] = .active }
+                if self.procs[rule.id]?.isRunning == true {
+                    self.statuses[rule.id] = .active
+                    self.failCount[rule.id] = 0   // 稳定建立即清零退避
+                }
             }
             graceWork[rule.id] = work
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.graceSeconds, execute: work)
@@ -181,27 +208,56 @@ final class ForwardManager: ObservableObject {
         }
     }
 
-    func stop(_ id: UUID) {
+    /// 终止子进程并清理其登记，但不改 intended/退避（供 stop 与网络重连复用）。
+    private func teardown(_ id: UUID) {
         graceWork[id]?.cancel(); graceWork[id] = nil
         if let p = procs[id] {
-            p.terminationHandler = nil   // 主动停止，不触发失败判定
+            p.terminationHandler = nil   // 主动终止，不触发失败/重启判定
             (p.standardError as? Pipe)?.fileHandleForReading.readabilityHandler = nil
             ForwardProcessRegistry.shared.unregister(p)
             if p.isRunning { p.terminate() }
         }
         procs[id] = nil
+    }
+
+    /// 用户主动停止：取消期望、清退避与待重启，然后终止。
+    func stop(_ id: UUID) {
+        intended.remove(id)
+        failCount[id] = nil
+        restartWork[id]?.cancel(); restartWork[id] = nil
+        teardown(id)
         statuses[id] = .stopped
     }
 
-    func stopAll() { for id in Array(procs.keys) { stop(id) } }
+    func stopAll() { for id in Set(procs.keys).union(intended) { stop(id) } }
 
-    /// 网络切换：重启所有在运行的隧道，不干等 keepalive 超时。
-    func handleNetworkChange(rules: [ForwardRule]) {
-        for rule in rules where status(rule.id).isRunning {
-            stop(rule.id)
-            start(rule)
+    /// 网络切换：离线时取消待重启等待恢复；恢复在线时清零退避、立即重连所有期望运行的隧道。
+    func handleNetworkChange() {
+        if !NetworkMonitor.shared.isOnline {
+            for (_, w) in restartWork { w.cancel() }
+            restartWork.removeAll()
+            return
+        }
+        for id in intended {
+            guard let rule = startedRules[id] else { continue }
+            restartWork[id]?.cancel(); restartWork[id] = nil
+            failCount[id] = 0
+            teardown(id)            // 旧连接已随网络失效，丢弃重连
+            launch(rule)
         }
     }
+
+    /// 看门狗周期巡检：在线时，把「期望运行却已掉线、且无待重启」的隧道补排一次重启。
+    /// 兜底意外漏掉的进程退出信号；离线时跳过（等网络恢复回调统一处理）。
+    func watchdogTick() {
+        guard NetworkMonitor.shared.isOnline else { return }
+        for id in intended where !status(id).isRunning && restartWork[id] == nil {
+            scheduleRestart(id)
+        }
+    }
+
+    // 永久性失败：重试也无济于事（需用户改配置/释放端口），看门狗不自动重启，留待手动处理。
+    private static let fatalReasons: Set<String> = ["本地端口已被占用", "认证失败", "转发请求被拒绝", "主机无法解析"]
 
     private func handleExit(_ id: UUID) {
         // 主动 stop 已把 procs[id] 置 nil 且摘掉 handler；走到这里即意外退出。
@@ -209,7 +265,34 @@ final class ForwardManager: ObservableObject {
         graceWork[id]?.cancel(); graceWork[id] = nil
         ForwardProcessRegistry.shared.unregister(p)
         procs[id] = nil
-        statuses[id] = .failed(Self.failureReason(from: stderrBuf[id] ?? ""))
+        let reason = Self.failureReason(from: stderrBuf[id] ?? "")
+        statuses[id] = .failed(reason)
+        guard intended.contains(id) else { return }
+        if Self.fatalReasons.contains(reason) {
+            // 永久性失败：撤销期望运行，避免看门狗反复无效重试（用户修正后可手动重启）
+            intended.remove(id); failCount[id] = nil
+            restartWork[id]?.cancel(); restartWork[id] = nil
+        } else {
+            scheduleRestart(id)   // 瞬时失败（断线/超时）→ 退避后自动重启
+        }
+    }
+
+    /// 退避后自动重启一条期望运行的隧道（去重、离线不排程）。
+    private func scheduleRestart(_ id: UUID) {
+        guard intended.contains(id), restartWork[id] == nil else { return }
+        guard NetworkMonitor.shared.isOnline, startedRules[id] != nil else { return }
+        let n = failCount[id] ?? 0
+        let delay = min(Self.backoffBase * pow(2, Double(n)), Self.backoffCap)
+        failCount[id] = n + 1
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.restartWork[id] = nil
+            guard self.intended.contains(id), NetworkMonitor.shared.isOnline,
+                  !self.status(id).isRunning, let rule = self.startedRules[id] else { return }
+            self.launch(rule)
+        }
+        restartWork[id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// 把 ssh 的 stderr 翻译成简短中文原因。

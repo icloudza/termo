@@ -13,7 +13,7 @@ enum ItemState: Equatable {
     case cancelled        // 被取消
 }
 
-enum SessionPhase: Equatable { case running, done, cancelled }
+enum SessionPhase: Equatable { case queued, running, paused, done, cancelled }
 enum TransferDirection { case upload, download }
 
 enum OverwriteDecision { case overwrite, skip, cancel }
@@ -79,7 +79,22 @@ final class UploadTask: ObservableObject {
     private let onAllDone: () -> Void
 
     @Published var items: [UploadItem]
-    @Published var phase: SessionPhase = .running   // 选完即跑（无「开始」步骤）
+    @Published var phase: SessionPhase = .queued    // 初始排队；由协调器调用 start() 出队转 .running
+    /// 任务进入终态（完成/取消）时回调一次，供上层推进传输队列。
+    var onFinished: (() -> Void)? = nil
+
+    /// 本任务会写入的目标路径键集合，用于并发去冲突：
+    /// 上传以「主机+远端路径」为键（同机同远端文件才算撞，因 .part 临时名相同）；下载以本地路径为键。
+    var targetKeys: Set<String> {
+        switch direction {
+        case .upload:   return Set(items.map { "up:\(hostId ?? ""):\($0.remotePath)" })
+        case .download: return Set(items.map { "down:\($0.url.path)" })
+        }
+    }
+    /// 两个任务是否会写到同一目标路径（撞 .part 临时文件）。
+    func conflicts(with other: UploadTask) -> Bool {
+        !targetKeys.isDisjoint(with: other.targetKeys)
+    }
     @Published var index = 0
     @Published var overallSent: Int64 = 0
     @Published var speed: Double = 0
@@ -88,6 +103,7 @@ final class UploadTask: ObservableObject {
     private let control = UploadControl()
     private var bulkPolicy: BulkPolicy = .ask
     private var askCont: CheckedContinuation<OverwriteDecision, Never>?
+    private var resumeCont: CheckedContinuation<Void, Never>?   // 暂停时挂起主循环，恢复时唤醒
     private var lastSampledOverall: Int64 = 0
     private var pendingBaselineReset = true
     private var started = false
@@ -116,6 +132,7 @@ final class UploadTask: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        phase = .running            // 出队开跑（初始为 .queued）
         pendingBaselineReset = true
         Task { await sampleLoop() }
         Task { await run() }
@@ -126,10 +143,44 @@ final class UploadTask: ObservableObject {
     }
 
     func cancel() {
-        guard phase == .running else { return }
+        if phase == .queued {           // 尚未开始：直接取消并出队（让协调器推进下一个）
+            phase = .cancelled
+            onFinished?()
+            return
+        }
+        guard phase == .running || phase == .paused else { return }
         control.set(.cancel)
         // 若卡在同名询问，唤醒它（否则 runFrom 挂在 await 上，cancel 无效）
         if let cont = askCont { askCont = nil; pendingAsk = nil; cont.resume(returning: .cancel) }
+        wakeFromPause()   // 暂停态取消：唤醒挂起的主循环，使其看到 .cancel 后收尾
+    }
+
+    /// 暂停：停掉当前传输（保留半截 .part / 本地半截），主循环挂起等待恢复。
+    func pause() {
+        guard phase == .running else { return }
+        phase = .paused
+        control.set(.pause)
+    }
+
+    /// 恢复：从断点续传当前文件，主循环继续推进。
+    func resume() {
+        guard phase == .paused else { return }
+        phase = .running
+        control.set(.run)
+        pendingBaselineReset = true
+        Task { await sampleLoop() }   // 采样循环在暂停时已退出，需重启
+        wakeFromPause()
+    }
+
+    /// 主循环在暂停期间挂起；恢复/取消时由 wakeFromPause 唤醒。
+    /// 取消信号也作为退出条件：否则取消时 phase 仍是 .paused，唤醒后会立刻重新挂起，导致取消无效。
+    private func waitIfPaused() async {
+        while phase == .paused, control.signal != .cancel {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in resumeCont = c }
+        }
+    }
+    private func wakeFromPause() {
+        if let c = resumeCont { resumeCont = nil; c.resume() }
     }
 
     /// 跑完后重试/续传失败项。
@@ -215,12 +266,15 @@ final class UploadTask: ObservableObject {
                 index += 1
             case .cancelled:
                 control.set(.cancel)
+            case .paused:
+                item.interrupted = true             // 保留远端 .part，恢复后从断点续传（不前进 index）
             case .failed(let msg):
                 item.interrupted = true             // 保留半截 .part 供续传（偏移续传时再 probe）
                 item.state = .failed(msg)
                 index += 1                          // 单文件失败不中断队列
             }
             if control.signal == .cancel { break }
+            await waitIfPaused()                     // 暂停则挂起，恢复后回到循环重传当前项
         }
         finish()
     }
@@ -233,22 +287,29 @@ final class UploadTask: ObservableObject {
             if item.state == .done { index += 1; continue }
             item.state = .uploading        // 复用「传输中」态
             control.set(.run)
-            control.setSent(0)
+            // 暂停恢复：本地已有半截则从其大小续传，远端从该偏移继续读
+            let startOffset: Int64 = item.interrupted ? UploadItem.fileSize(item.url) : 0
+            control.setSent(startOffset)
             pendingBaselineReset = true
-            let outcome = await fs.download(item.remotePath, to: item.url, control: control)
+            let outcome = await fs.download(item.remotePath, to: item.url, startOffset: startOffset, control: control)
             switch outcome {
             case .completed:
                 item.sent = item.localSize
+                item.interrupted = false
                 item.state = .done
                 index += 1
             case .cancelled:
                 control.set(.cancel)
+            case .paused:
+                item.interrupted = true             // 保留本地半截，恢复后续传（不前进 index）
             case .failed(let msg):
                 try? FileManager.default.removeItem(at: item.url)   // 删掉下了一半的本地残文件
+                item.interrupted = false
                 item.state = .failed(msg)
                 index += 1
             }
             if control.signal == .cancel { break }
+            await waitIfPaused()
         }
         finish()
     }
@@ -285,6 +346,7 @@ final class UploadTask: ObservableObject {
             postCompletionNotification()
         }
         if landedAny { onAllDone() }
+        onFinished?()   // 终态：推进传输队列
     }
 
     private func postCompletionNotification() {
@@ -418,7 +480,9 @@ struct UploadDialog: View {
     @ViewBuilder private var statusBadge: some View {
         let (label, fg): (String, Color) = {
             switch task.phase {
+            case .queued:    return ("排队中", Pal.overlay)
             case .running:   return ("\(min(task.index + 1, task.items.count))/\(task.items.count)", Pal.mauve)
+            case .paused:    return ("已暂停", Pal.yellow)
             case .done:      return task.hasFailures ? ("部分失败", Pal.yellow) : ("完成", Pal.green)
             case .cancelled: return ("已取消", Pal.overlay)
             }
@@ -476,7 +540,13 @@ struct UploadDialog: View {
         HStack {
             Spacer()
             switch task.phase {
+            case .queued:
+                pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
             case .running:
+                pill("暂停", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.pause() }
+                pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
+            case .paused:
+                pill("继续", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.resume() }
                 pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
             case .done where task.hasFailures:
                 if task.direction == .upload {   // 续传仅上传支持（远端 .part）

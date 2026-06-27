@@ -26,16 +26,75 @@ struct TermoApp: App {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var aboutWindow: NSWindow?
+    private var tray: TrayController?
+    private weak var mainWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         applyAppIcon()
         setupMainMenu()
         _ = OSLogo.fontName   // 预注册随包发行版 Logo 字体(Font Logos)
+        _ = AppModel.shared   // 提前建好单例，使托盘/退出流程在窗口之外也能访问后台任务
         Notifier.requestAuthIfNeeded()   // 申请系统通知权限（上传/下载完成提醒）
+        tray = TrayController(onShow: { [weak self] in self?.showMainWindow() },
+                              onQuit: { [weak self] in self?.requestQuit() })
         NSApp.activate(ignoringOtherApps: true)
+        // 窗口此刻已创建；记录主窗口并接管其关闭行为（隐藏到托盘）。延迟一拍确保 WindowGroup 已出窗口。
+        DispatchQueue.main.async { [weak self] in self?.attachMainWindow() }
+    }
+
+    private func attachMainWindow() {
+        guard mainWindow == nil else { return }
+        // 主窗口 = 非面板、有内容视图的那个（关于窗口/Tooltip 面板此刻尚未创建）。
+        if let w = NSApp.windows.first(where: { !($0 is NSPanel) && $0.contentView != nil }) {
+            mainWindow = w
+            w.delegate = self
+        }
+    }
+
+    /// 从托盘恢复：切回常规激活策略（恢复 Dock 图标与主菜单），前置并激活主窗口。
+    private func showMainWindow() {
+        NSApp.setActivationPolicy(.regular)
+        attachMainWindow()
+        mainWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// 关闭主窗口：
+    /// - 开启「隐藏到托盘」：隐藏窗口 + 切附件模式（仅留菜单栏图标），不退出。
+    /// - 否则：视为退出软件，交给退出流程（含后台任务检查）。一律返回 false 不真正关窗——
+    ///   这样用户在确认弹窗里选「取消」时窗口得以保留，不会陷入「无窗口但仍在运行」的状态。
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender == mainWindow else { return true }
+        if AppSettings.shared.closeToTray {
+            sender.orderOut(nil)
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            requestQuit()   // 走退出流程（含后台任务确认）；取消时窗口因返回 false 得以保留
+        }
+        return false
+    }
+
+    /// 退出入口（菜单/托盘/关窗共用）：有后台任务则弹自定义确认弹窗（先把窗口显出来以便可见），否则直接退出。
+    /// 本方法为自定义（非 NSApplicationDelegate 协议方法，故不自动 @MainActor），访问 @MainActor 的 AppModel
+    /// 需显式跳到主线程；从 AppKit 主线程回调进来，跳转是即时的，不影响交互。
+    @objc func requestQuit() {
+        Task { @MainActor in
+            if AppModel.shared.hasRunningBackground {
+                self.showMainWindow()
+                AppModel.shared.pendingQuitConfirm = true
+            } else {
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    // 自定义弹窗已在退出前做后台任务检查（见 requestQuit / QuitConfirmDialog）。
+    // 系统发起的退出（注销/关机）会直接走到这里：放行退出，残留隧道由 willTerminate 的进程登记表兜底清理。
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        .terminateNow
     }
 
     /// 自定义中文主菜单：应用菜单只保留「关于」「退出」；保留「编辑」菜单以注册
@@ -52,8 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         about.target = self
         appMenu.addItem(about)
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "退出 Termo",
-                                   action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        let quit = NSMenuItem(title: "退出 Termo", action: #selector(requestQuit), keyEquivalent: "q")
+        quit.target = self   // 经退出流程检查后台任务，而非直接 terminate
+        appMenu.addItem(quit)
 
         // 编辑菜单：复制/粘贴/撤销等标准操作依赖这些菜单项把快捷键注册到响应链才生效（输入框/编辑器/sheet 内同理）。
         // 父项必须有标题，否则菜单栏显示为空；每项显式设 keyEquivalentModifierMask = ⌘（与代码库其它菜单一致），
@@ -106,13 +166,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // 关窗行为完全由 windowShouldClose 接管（隐藏到托盘或走退出流程），故不让系统在关窗后自动退出。
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
     }
 }
 
 struct ContentView: View {
-    @StateObject private var model = AppModel()
+    // 观察全局单例（其生命周期由 AppModel.shared 静态属性持有，不归视图所有，故用 ObservedObject）。
+    @ObservedObject private var model = AppModel.shared
     // 侧栏宽度独立成一个对象,拖动它不会牵动 TabBar/Workspace 重算(见 LayoutModel)。
     @StateObject private var layout = LayoutModel()
     @ObservedObject private var theme = ThemeManager.shared
@@ -210,6 +272,24 @@ struct ContentView: View {
             .allowsHitTesting(model.pendingHostKey != nil)
         }
         .overlay { fileOpOverlays }
+        .overlay {
+            ZStack {
+                if model.pendingQuitConfirm {
+                    QuitConfirmDialog(
+                        model: model,
+                        onCancel: { model.pendingQuitConfirm = false },
+                        onConfirm: {
+                            model.pendingQuitConfirm = false
+                            model.stopAllBackground()
+                            ForwardProcessRegistry.shared.terminateAll()
+                            NSApp.terminate(nil)
+                        }
+                    ).transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: model.pendingQuitConfirm)
+            .allowsHitTesting(model.pendingQuitConfirm)
+        }
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
         }
@@ -243,6 +323,16 @@ struct ContentView: View {
                     busy: model.fileDeleteBusy,
                     onConfirm: { model.confirmFileDelete() },
                     onCancel: { model.cancelFileDelete() }
+                ).transition(.opacity)
+            }
+            if let ctx = model.pendingBatchDelete {
+                ConfirmDialog(
+                    title: "删除 \(ctx.files.count) 个项目？",
+                    message: "选中的项目（含其中的目录及内容）将被永久删除，不可恢复。",
+                    confirmTitle: "删除", destructive: true,
+                    busy: model.batchDeleteBusy,
+                    onConfirm: { model.confirmBatchDelete() },
+                    onCancel: { model.cancelBatchDelete() }
                 ).transition(.opacity)
             }
             if let ctx = model.pendingFileRefresh {
@@ -283,10 +373,10 @@ struct ContentView: View {
                     onCancel: { model.pendingFileInfo = nil }
                 ).transition(.opacity)
             }
-            if let task = model.uploadTask, model.showUploadDialog {
+            if let id = model.focusedTransferId, let task = model.transfers.first(where: { $0.id == id }) {
                 UploadDialog(task: task,
-                             onHide: { model.showUploadDialog = false },
-                             onClose: { model.uploadTask = nil; model.showUploadDialog = false })
+                             onHide: { model.focusedTransferId = nil },
+                             onClose: { model.removeTransfer(id) })
                     .transition(.opacity)
             }
             if let task = model.extractTask, model.showExtractDialog {
@@ -296,11 +386,11 @@ struct ContentView: View {
                     .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.18), value: model.uploadTask?.id)
-        .animation(.easeOut(duration: 0.18), value: model.showUploadDialog)
+        .animation(.easeOut(duration: 0.18), value: model.focusedTransferId)
         .animation(.easeOut(duration: 0.18), value: model.extractTask?.id)
         .animation(.easeOut(duration: 0.18), value: model.showExtractDialog)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileDelete?.id)
+        .animation(.easeOut(duration: 0.15), value: model.pendingBatchDelete?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileRename?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileChmod?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileCreate?.id)
@@ -312,10 +402,10 @@ struct ContentView: View {
 
     /// 文件操作叠层里是否有弹窗正在展示（含展开的上传/下载对话框）。
     private var anyFileOverlayActive: Bool {
-        model.pendingFileDelete != nil || model.pendingFileRefresh != nil ||
+        model.pendingFileDelete != nil || model.pendingBatchDelete != nil || model.pendingFileRefresh != nil ||
         model.pendingFileRename != nil || model.pendingFileChmod != nil ||
         model.pendingFileCreate != nil || model.pendingFileInfo != nil ||
-        (model.uploadTask != nil && model.showUploadDialog) ||
+        model.focusedTransferId != nil ||
         (model.extractTask != nil && model.showExtractDialog)
     }
 }

@@ -147,6 +147,10 @@ struct SettingsView: View {
                 ThemedToggle(isOn: $settings.closeConfirm)
             }
 
+            settingRow("关闭窗口时隐藏到菜单栏", description: "关闭主窗口不退出，后台任务（如端口转发）继续运行；从菜单栏图标恢复") {
+                ThemedToggle(isOn: $settings.closeToTray)
+            }
+
             settingRow("下载时询问位置", description: "每次下载都弹出选择保存位置") {
                 ThemedToggle(isOn: $settings.downloadAskEachTime)
             }
@@ -162,6 +166,14 @@ struct SettingsView: View {
                         SecondaryButton(title: "选择…", action: chooseDownloadDir)
                     }
                 }
+            }
+
+            settingRow("并发传输数", description: "同时进行的上传/下载数量（共用一个池），超出自动排队") {
+                ThemedDropdown(
+                    options: [(1, "1 个"), (2, "2 个"), (3, "3 个"), (4, "4 个"), (5, "5 个")],
+                    selection: $settings.maxConcurrentTransfers
+                )
+                .frame(width: 120)
             }
 
             settingRow("资源告警", description: "主机 CPU、内存或磁盘持续高占用时发送系统通知") {

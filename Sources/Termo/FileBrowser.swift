@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 单个文件浏览标签的导航状态（每标签一份，AppModel 缓存）。
 @MainActor
@@ -153,6 +154,11 @@ struct FileBrowser: View {
     let model: AppModel
     var onOpenFile: (RemoteFile) -> Void = { _ in }
     @ObservedObject private var theme = ThemeManager.shared
+    @State private var dropTarget = false
+
+    private static let dropBlue = Color(hex: 0x1E90FF)
+    /// 已连接（有路径）才允许拖拽上传到当前目录。
+    private var canUpload: Bool { !state.path.isEmpty }
 
     /// 当前目录作为上传目标。
     private var currentDir: RemoteFile {
@@ -169,7 +175,47 @@ struct FileBrowser: View {
             content
         }
         .background(Pal.base)
+        .overlay { if dropTarget { dropOverlay } }
+        .animation(.easeOut(duration: 0.12), value: dropTarget)
+        .onDrop(of: [.fileURL], isTargeted: canUpload ? $dropTarget : nil) { providers in
+            guard canUpload else { return false }
+            loadURLs(providers) { urls in
+                if !urls.isEmpty { model.uploadFiles(urls, toDir: state.path, host: host) }
+            }
+            return true
+        }
         .onAppear { state.startIfNeeded() }
+    }
+
+    private var dropOverlay: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(Self.dropBlue.opacity(0.07))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Self.dropBlue, lineWidth: 2))
+            .overlay {
+                VStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.up").font(.system(size: 22, weight: .medium))
+                    Text("松开以上传到当前目录").font(.system(size: 13, weight: .medium))
+                }
+                .foregroundStyle(Self.dropBlue)
+                .padding(.horizontal, 18).padding(.vertical, 14)
+                .background(Pal.solidMantle.opacity(0.92), in: RoundedRectangle(cornerRadius: 10))
+            }
+            .padding(6)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+    }
+
+    private func loadURLs(_ providers: [NSItemProvider], _ completion: @escaping ([URL]) -> Void) {
+        var urls: [URL] = []
+        let group = DispatchGroup()
+        for p in providers {
+            group.enter()
+            _ = p.loadObject(ofClass: URL.self) { url, _ in
+                if let url, url.isFileURL { urls.append(url) }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { completion(urls) }
     }
 
     // MARK: - 工具栏
@@ -188,19 +234,35 @@ struct FileBrowser: View {
                 .textSelection(.enabled)
 
             if !state.selectedFiles.isEmpty {
-                Button { model.downloadFiles(state.selectedFiles, host: host) } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "square.and.arrow.down").font(.system(size: 11))
-                        Text("下载 (\(state.selectedFiles.count))").font(.system(size: 11, weight: .medium))
+                let dlFiles = state.selectedFiles.filter { !$0.isDir }
+                if !dlFiles.isEmpty {
+                    Button { model.downloadFiles(dlFiles, host: host) } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "square.and.arrow.down").font(.system(size: 11))
+                            Text("下载 (\(dlFiles.count))").font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(Pal.mauve)
+                        .padding(.horizontal, 9).frame(height: 26)
+                        .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                        .contentShape(Rectangle())
                     }
-                    .foregroundStyle(Pal.mauve)
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .help("下载选中的文件")
+                }
+                Button { model.requestBatchDelete(state.selectedFiles, host: host, target: state) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "trash").font(.system(size: 11))
+                        Text("删除 (\(state.selectedFiles.count))").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(Pal.red)
                     .padding(.horizontal, 9).frame(height: 26)
-                    .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Pal.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help("下载选中的文件")
+                .help("删除选中的项目")
             }
 
             Button { model.beginUpload(into: currentDir, host: host) } label: {
@@ -274,8 +336,7 @@ struct FileBrowser: View {
                             FileRow(file: file, selected: state.selection.contains(file.path),
                                     onOpen: { if file.isDir { state.enter(file) } else { onOpenFile(file) } },
                                     onClick: { cmd, shift in state.click(file.path, cmd: cmd, shift: shift) })
-                                .fileOpsMenu(file: file, host: host, model: model,
-                                             target: state, onRefresh: { state.reload() })
+                                .contextMenu { rowMenu(for: file) }
                         }
                         if state.visible.isEmpty {
                             Text("空目录").font(.system(size: 13)).foregroundStyle(Pal.overlay)
@@ -288,6 +349,28 @@ struct FileBrowser: View {
                     .contextMenu { blankAreaMenu }              // 右击空白：上传到当前目录 / 刷新（行自身菜单仍优先）
                 }
             }
+        }
+    }
+
+    /// 文件行右击菜单：右击的是多选中的一项时给批量操作（下载/删除选中），否则给单文件菜单。
+    @ViewBuilder
+    private func rowMenu(for file: RemoteFile) -> some View {
+        if state.selection.contains(file.path), state.selection.count > 1 {
+            let sel = state.selectedFiles
+            let dl = sel.filter { !$0.isDir }
+            if !dl.isEmpty {
+                Button { model.downloadFiles(dl, host: host) } label: {
+                    Label("下载选中 (\(dl.count))", systemImage: "square.and.arrow.down")
+                }
+                Divider()
+            }
+            Button(role: .destructive) {
+                model.requestBatchDelete(sel, host: host, target: state)
+            } label: {
+                Label("删除选中 (\(sel.count))", systemImage: "trash")
+            }
+        } else {
+            fileOpsMenuItems(file: file, host: host, model: model, target: state, onRefresh: { state.reload() })
         }
     }
 

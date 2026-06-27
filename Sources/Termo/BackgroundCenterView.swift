@@ -3,6 +3,10 @@ import SwiftUI
 /// 传输任务的强调色（与监控面板上行色一致的 Apple 蓝）；Pal 无内置蓝，故文件内自备。
 private let transferBlue = Color(hex: 0x007AFF)
 
+// 删除/清除记录时的「Q 弹」出入场：缩放 + 透明，配合弹簧动画。
+private let popTransition: AnyTransition = .scale(scale: 0.82, anchor: .center).combined(with: .opacity)
+private let popSpring: Animation = .spring(response: 0.34, dampingFraction: 0.56)
+
 /// 隐形守卫：上传在后台运行时若需用户确认（同名文件），自动展开上传弹窗，避免静默卡住。
 /// 观察 UploadTask 故保持存活；自身不渲染任何可见内容。
 struct UploadAskWatcher: View {
@@ -82,45 +86,92 @@ struct BackgroundCenterPanel: View {
             if n > 0 {
                 Text("\(n) 进行中").font(.system(size: 11)).foregroundStyle(Pal.overlay)
             }
+            if model.hasFinishedBackground {
+                Button { withAnimation(popSpring) { model.clearFinishedBackground() } } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash").font(.system(size: 9))
+                        Text("清理已完成").font(.system(size: 10.5, weight: .medium))
+                    }
+                    .foregroundStyle(Pal.subtext)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Pal.fill(0.06), in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help("清理所有已完成 / 已取消的任务")
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
-    }
-
-    // 一组同主机的后台活动。用具名结构而非元组：Swift 不支持指向元组成员的 KeyPath，ForEach(id:) 会编译失败。
-    private struct HostGroup: Identifiable {
-        let id: String              // hostId 或 "__local__"
-        let hostId: String?
-        let items: [BackgroundActivity]
-    }
-
-    // 按 hostId 分组，保留首次出现顺序，使同一台机器的任务聚在一起。
-    private var groups: [HostGroup] {
-        var order: [String] = []
-        var map: [String: [BackgroundActivity]] = [:]
-        for a in model.backgroundActivities {
-            let key = a.hostId ?? "__local__"
-            if map[key] == nil { order.append(key); map[key] = [] }
-            map[key]?.append(a)
-        }
-        return order.map { HostGroup(id: $0, hostId: $0 == "__local__" ? nil : $0, items: map[$0] ?? []) }
     }
 
     @ViewBuilder
     private var content: some View {
         // 容器恒为 ScrollView：清除最后一条时行仍能完整播放退场动画，空态以 overlay 淡入。
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach(groups) { group in
-                    groupSection(group.hostId, group.items)
-                        .transition(Self.popTransition)
-                }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            BackgroundActivityList(model: model, dismiss: dismiss)
+                .padding(.horizontal, 12).padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .overlay {
             if model.backgroundActivities.isEmpty {
                 emptyState.transition(.opacity)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "tray")
+                .font(.system(size: 26)).foregroundStyle(Pal.overlay)
+            Text("暂无后台任务").font(.system(size: 13)).foregroundStyle(Pal.subtext)
+            Text("端口转发、上传下载、解压等会在此统一管理。")
+                .font(.system(size: 11)).foregroundStyle(Pal.overlay)
+                .multilineTextAlignment(.center).frame(maxWidth: 240)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - 按主机分组的活动列表（中控面板与退出确认共用）
+
+/// 后台活动列表：按主机分组渲染各任务行。`readOnly` 为真时各行只展示数据、不出操作按钮（用于退出确认）。
+struct BackgroundActivityList: View {
+    @ObservedObject var model: AppModel
+    var readOnly: Bool = false
+    var includeFinished: Bool = true   // false=只列进行中（用于退出确认）
+    var dismiss: () -> Void = {}
+
+    // 用具名结构而非元组：Swift 不支持指向元组成员的 KeyPath，ForEach(id:) 会编译失败。
+    private struct HostGroup: Identifiable {
+        let id: String              // hostId 或 "__local__"
+        let hostId: String?
+        let items: [BackgroundActivity]
+    }
+
+    // 按 hostId 分组，保留首次出现顺序；组内进行中的排前、已结束的排后（稳定，保留各自原序）。
+    private var groups: [HostGroup] {
+        var order: [String] = []
+        var map: [String: [BackgroundActivity]] = [:]
+        for a in model.backgroundActivities {
+            if !includeFinished && a.isFinished { continue }
+            let key = a.hostId ?? "__local__"
+            if map[key] == nil { order.append(key); map[key] = [] }
+            map[key]?.append(a)
+        }
+        return order.map { key in
+            let items = map[key] ?? []
+            let sorted = items.filter { !$0.isFinished } + items.filter { $0.isFinished }
+            return HostGroup(id: key, hostId: key == "__local__" ? nil : key, items: sorted)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(groups) { group in
+                groupSection(group.hostId, group.items).transition(popTransition)
             }
         }
     }
@@ -131,16 +182,11 @@ struct BackgroundCenterPanel: View {
             hostHeader(hostId, fallback: items.first?.fallbackHostName ?? "")
             VStack(spacing: 7) {
                 ForEach(items) { activity in
-                    row(activity)
-                        .transition(Self.popTransition)
+                    row(activity).transition(popTransition)
                 }
             }
         }
     }
-
-    // 删除/清除记录时的「Q 弹」出入场：缩放 + 透明，配合弹簧动画。
-    static let popTransition: AnyTransition = .scale(scale: 0.82, anchor: .center).combined(with: .opacity)
-    static let popSpring: Animation = .spring(response: 0.34, dampingFraction: 0.56)
 
     @ViewBuilder
     private func hostHeader(_ hostId: String?, fallback: String) -> some View {
@@ -162,35 +208,82 @@ struct BackgroundCenterPanel: View {
     private func row(_ activity: BackgroundActivity) -> some View {
         switch activity.payload {
         case .forward(let rule, let manager):
-            HubForwardRow(rule: rule, manager: manager,
+            HubForwardRow(rule: rule, manager: manager, readOnly: readOnly,
                           onToggle: { model.toggleForward(rule) },
                           onManage: {
                               if let h = model.host(rule.hostId) { model.openForwardPanel(h) }
                               dismiss()
                           })
         case .transfer(let task):
-            HubTransferRow(task: task,
-                           onOpen: { model.showUploadDialog = true; dismiss() },
-                           onClear: { withAnimation(Self.popSpring) { model.clearUpload() } })
+            HubTransferRow(task: task, readOnly: readOnly,
+                           onOpen: { model.focusedTransferId = task.id; dismiss() },
+                           onClear: { withAnimation(popSpring) { model.removeTransfer(task.id) } })
         case .extract(let task):
-            HubExtractRow(task: task,
+            HubExtractRow(task: task, readOnly: readOnly,
                           onOpen: { model.showExtractDialog = true; dismiss() },
-                          onClear: { withAnimation(Self.popSpring) { model.clearExtract() } })
+                          onClear: { withAnimation(popSpring) { model.clearExtract() } })
         }
     }
+}
 
-    private var emptyState: some View {
-        VStack(spacing: 10) {
-            Spacer()
-            Image(systemName: "tray")
-                .font(.system(size: 26)).foregroundStyle(Pal.overlay)
-            Text("暂无后台任务").font(.system(size: 13)).foregroundStyle(Pal.subtext)
-            Text("端口转发、上传下载、解压等会在此统一管理。")
-                .font(.system(size: 11)).foregroundStyle(Pal.overlay)
-                .multilineTextAlignment(.center).frame(maxWidth: 240)
-            Spacer()
+// MARK: - 退出确认弹窗（自定义，复用活动列表只读展示）
+
+/// 自定义退出确认：列出进行中的后台任务（只读复用中控的行），可取消或关闭任务并退出。
+struct QuitConfirmDialog: View {
+    @ObservedObject var model: AppModel
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+    @ObservedObject private var theme = ThemeManager.shared
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(theme.isDark ? 0.42 : 0.20).ignoresSafeArea()
+                .onTapGesture(perform: onCancel)
+            card
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .preferredColorScheme(theme.isDark ? .dark : .light)
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 15, weight: .medium)).foregroundStyle(Pal.yellow)
+                    .frame(width: 30, height: 30)
+                    .background(Pal.yellow.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("仍有 \(model.activeBackgroundCount) 个后台任务在运行")
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Pal.text)
+                    Text("退出会中断以下任务").font(.system(size: 11)).foregroundStyle(Pal.overlay)
+                }
+                Spacer()
+            }
+
+            ScrollView {
+                BackgroundActivityList(model: model, readOnly: true, includeFinished: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 240)
+
+            HStack(spacing: 10) {
+                Spacer()
+                SecondaryButton(title: "取消", action: onCancel)
+                Button(action: onConfirm) {
+                    Text("关闭任务并退出")
+                        .font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
+                        .padding(.horizontal, 16).padding(.vertical, 7)
+                        .background(Pal.red, in: RoundedRectangle(cornerRadius: 7))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+        }
+        .padding(18)
+        .frame(width: 420)
+        .background(Pal.solidMantle, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Pal.fill(0.08), lineWidth: 1))
+        .shadow(color: .black.opacity(theme.isDark ? 0.40 : 0.14), radius: 24, y: 8)
     }
 }
 
@@ -200,6 +293,7 @@ struct BackgroundCenterPanel: View {
 private struct HubForwardRow: View {
     let rule: ForwardRule
     @ObservedObject var manager: ForwardManager
+    var readOnly: Bool = false
     let onToggle: () -> Void
     let onManage: () -> Void
 
@@ -212,8 +306,10 @@ private struct HubForwardRow: View {
             subtitle: rule.summary,
             statusDot: statusColor, statusText: statusText
         ) {
-            iconButton("stop.fill", color: Pal.red, help: "停止", action: onToggle)
-            iconButton("slider.horizontal.3", color: Pal.subtext, help: "管理", action: onManage)
+            if !readOnly {
+                iconButton("stop.fill", color: Pal.red, help: "停止", action: onToggle)
+                iconButton("slider.horizontal.3", color: Pal.subtext, help: "管理", action: onManage)
+            }
         }
     }
 
@@ -238,6 +334,7 @@ private struct HubForwardRow: View {
 /// 传输行（上传/下载）：观察 UploadTask 实时进度。
 private struct HubTransferRow: View {
     @ObservedObject var task: UploadTask
+    var readOnly: Bool = false
     let onOpen: () -> Void
     let onClear: () -> Void
 
@@ -253,14 +350,23 @@ private struct HubTransferRow: View {
             title: "\(verb) \(task.items.count) 项",
             subtitle: subtitle,
             statusDot: statusColor, statusText: statusText,
-            progress: task.phase == .running ? fraction : nil
+            progress: (task.phase == .running || task.phase == .paused) ? fraction : nil
         ) {
-            if task.phase == .running {
-                iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
-            } else {
-                iconButton("trash", color: Pal.red, help: "清除记录", action: onClear)
+            if !readOnly {
+                switch task.phase {
+                case .running:
+                    iconButton("pause.fill", color: Pal.mauve, help: "暂停") { task.pause() }
+                    iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
+                case .paused:
+                    iconButton("play.fill", color: Pal.green, help: "继续") { task.resume() }
+                    iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
+                case .queued:
+                    iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
+                case .done, .cancelled:
+                    iconButton("trash", color: Pal.red, help: "清除记录", action: onClear)
+                }
+                iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: "展开", action: onOpen)
             }
-            iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: "展开", action: onOpen)
         }
     }
 
@@ -268,12 +374,15 @@ private struct HubTransferRow: View {
         if task.phase == .running {
             return "\(Int(fraction * 100))%" + (task.speed > 0 ? " · \(Self.rate(task.speed))" : "")
         }
+        if task.phase == .paused { return "\(Int(fraction * 100))%" }
         return task.destDir
     }
     private var statusColor: Color {
         if task.pendingAsk != nil { return Pal.yellow }
         switch task.phase {
+        case .queued:    return Pal.overlay
         case .running:   return transferBlue
+        case .paused:    return Pal.yellow
         case .done:      return task.hasFailures ? Pal.yellow : Pal.green
         case .cancelled: return Pal.overlay
         }
@@ -281,7 +390,9 @@ private struct HubTransferRow: View {
     private var statusText: String {
         if task.pendingAsk != nil { return "待确认" }
         switch task.phase {
+        case .queued:    return "排队中"
         case .running:   return "\(verb)中"
+        case .paused:    return "已暂停"
         case .done:      return task.hasFailures ? "部分失败" : "完成"
         case .cancelled: return "已取消"
         }
@@ -298,6 +409,7 @@ private struct HubTransferRow: View {
 /// 解压行：观察 ExtractTask 状态（无逐字节进度）。
 private struct HubExtractRow: View {
     @ObservedObject var task: ExtractTask
+    var readOnly: Bool = false
     let onOpen: () -> Void
     let onClear: () -> Void
 
@@ -314,10 +426,12 @@ private struct HubExtractRow: View {
             statusDot: statusColor, statusText: statusText,
             progress: nil
         ) {
-            if isTerminal {
-                iconButton("trash", color: Pal.red, help: "清除记录", action: onClear)
+            if !readOnly {
+                if isTerminal {
+                    iconButton("trash", color: Pal.red, help: "清除记录", action: onClear)
+                }
+                iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: "展开", action: onOpen)
             }
-            iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: "展开", action: onOpen)
         }
     }
 

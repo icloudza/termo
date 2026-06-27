@@ -14,5 +14,6 @@ struct BackgroundActivity: Identifiable {
     let id: String
     let hostId: String?          // 分组依据；用于按主机（A/B/C）分组
     let fallbackHostName: String // 主机被删除等情况下兜底显示用（视图优先用现存主机的真实名）
+    let isFinished: Bool         // 是否已结束（完成/取消/失败）；由 AppModel 在主线程读 phase 后写入
     let payload: Payload
 }
