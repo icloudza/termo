@@ -151,7 +151,7 @@ struct BackgroundCenterPanel: View {
 
     @ViewBuilder
     private func row(_ activity: BackgroundActivity) -> some View {
-        switch activity {
+        switch activity.payload {
         case .forward(let rule, let manager):
             HubForwardRow(rule: rule, manager: manager,
                           onToggle: { model.toggleForward(rule) },

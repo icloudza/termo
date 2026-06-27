@@ -275,11 +275,18 @@ final class AppModel: ObservableObject {
         var out: [BackgroundActivity] = []
         for rule in forwards {
             if let m = forwardManagers[rule.hostId], m.status(rule.id).isRunning {
-                out.append(.forward(rule: rule, manager: m))
+                out.append(BackgroundActivity(id: "fwd-\(rule.id.uuidString)", hostId: rule.hostId,
+                                              fallbackHostName: "", payload: .forward(rule: rule, manager: m)))
             }
         }
-        if let t = uploadTask { out.append(.transfer(t)) }
-        if let e = extractTask { out.append(.extract(e)) }
+        if let t = uploadTask {
+            out.append(BackgroundActivity(id: "xfer-\(t.id.uuidString)", hostId: t.hostId,
+                                          fallbackHostName: t.hostName, payload: .transfer(t)))
+        }
+        if let e = extractTask {
+            out.append(BackgroundActivity(id: "ext-\(e.id.uuidString)", hostId: e.hostId,
+                                          fallbackHostName: e.hostName, payload: .extract(e)))
+        }
         return out
     }
 
