@@ -305,7 +305,7 @@ struct HostRow: View {
             Button("打开文件") { model.openHostFiles(host) }
             Button("编辑主机") { model.beginEditHost(host) }
             Divider()
-            Button("删除主机", role: .destructive) { model.deleteHost(host.id) }
+            Button("删除主机", role: .destructive) { model.requestDeleteHost(host) }
         }
     }
 }
@@ -350,7 +350,7 @@ struct RDPHostRow: View {
             Button("远程桌面") { model.openHostRDP(host) }
             Button("编辑主机") { model.editingRDPHost = host }
             Divider()
-            Button("删除主机", role: .destructive) { model.deleteHost(host.id) }
+            Button("删除主机", role: .destructive) { model.requestDeleteHost(host) }
         }
     }
 }

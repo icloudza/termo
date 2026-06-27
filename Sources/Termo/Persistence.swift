@@ -40,18 +40,40 @@ enum SSHAskpass {
 }
 
 /// 主机密码的 Keychain 存取——密码只进系统钥匙串，绝不写入磁盘 JSON。
+/// 所有主机密码合并为「单条」钥匙串条目（combined*），读取一次即拿到全部，把授权弹窗从「每主机一次」降到「一次」。
+/// 旧的逐主机条目（service）仅保留用于迁移读取与删除清理。
 enum HostKeychain {
-    private static let service = "com.termo.hostPassword"
+    private static let service = "com.termo.hostPassword"            // 旧：逐主机一条
+    private static let combinedService = "com.termo.hostPasswords"   // 新：合并为一条
+    private static let combinedAccount = "all"
 
-    static func save(_ password: String, for hostId: String) {
-        delete(hostId)
-        guard !password.isEmpty, let data = password.data(using: .utf8) else { return }
+    /// 读取合并条目（全部主机密码）。一次访问 → 最多一次授权弹窗。
+    static func loadAll() -> [String: String] {
         let q: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: hostId,
-            kSecValueData as String: data,
+            kSecAttrService as String: combinedService,
+            kSecAttrAccount as String: combinedAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
         ]
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data,
+              let map = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        return map
+    }
+
+    /// 覆盖写入合并条目（map 为空则删除该条目）。
+    static func saveAll(_ map: [String: String]) {
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: combinedService,
+            kSecAttrAccount as String: combinedAccount,
+        ]
+        SecItemDelete(base as CFDictionary)
+        guard !map.isEmpty, let data = try? JSONEncoder().encode(map) else { return }
+        var q = base
+        q[kSecValueData as String] = data
         SecItemAdd(q as CFDictionary, nil)
     }
 
@@ -96,25 +118,34 @@ enum HostStore {
     static func loadHosts() -> [Host] {
         guard let data = try? Data(contentsOf: hostsURL),
               var hosts = try? JSONDecoder().decode([Host].self, from: data) else { return [] }
-        // JSON 不含密码，从 Keychain 回填（SSH 或 RDP，二者其一）
+        // JSON 不含密码，从 Keychain 回填：优先读合并条目；命中不到再兜底读旧逐主机条目（迁移）。
+        var combined = HostKeychain.loadAll()
+        var migrated = false
         for i in hosts.indices {
-            let pw = HostKeychain.load(hosts[i].id)
-            if hosts[i].ssh != nil {
-                hosts[i].ssh?.password = pw
-            } else if hosts[i].rdp != nil {
-                hosts[i].rdp?.password = pw
+            let id = hosts[i].id
+            var pw = combined[id]
+            if pw == nil {
+                let legacy = HostKeychain.load(id)   // 旧逐主机条目兜底
+                if !legacy.isEmpty { pw = legacy; combined[id] = legacy; migrated = true }
+            }
+            if let pw {
+                if hosts[i].ssh != nil { hosts[i].ssh?.password = pw }
+                else if hosts[i].rdp != nil { hosts[i].rdp?.password = pw }
             }
         }
+        if migrated { HostKeychain.saveAll(combined) }   // 旧条目并入合并条目，下次起只需一次授权
         return hosts
     }
 
     static func saveHosts(_ hosts: [Host]) {
         let hosts = hosts.filter { !$0.isMock }   // 模拟演示主机不落盘
-        // 密码进 Keychain；JSON 由 SSHConnection.CodingKeys 排除了 password 字段
+        // 密码合并写入单条 Keychain 条目；JSON 由 SSHConnection.CodingKeys 排除了 password 字段
+        var pwMap: [String: String] = [:]
         for h in hosts {
-            if let ssh = h.ssh { HostKeychain.save(ssh.password, for: h.id) }
-            else if let rdp = h.rdp { HostKeychain.save(rdp.password, for: h.id) }
+            if let ssh = h.ssh, !ssh.password.isEmpty { pwMap[h.id] = ssh.password }
+            else if let rdp = h.rdp, !rdp.password.isEmpty { pwMap[h.id] = rdp.password }
         }
+        HostKeychain.saveAll(pwMap)
         if let data = try? JSONEncoder().encode(hosts) {
             try? data.write(to: hostsURL, options: .atomic)
         }

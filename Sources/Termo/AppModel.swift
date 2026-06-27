@@ -59,6 +59,7 @@ final class AppModel: ObservableObject {
     private var deleteHandle: CommandHandle?        // 取消正在进行的删除（终止远端 rm）
     @Published var pendingBatchDelete: BatchDeleteContext? = nil   // 批量删除确认弹窗
     @Published var batchDeleteBusy = false         // 批量删除进行中：弹窗保留 + 转圈
+    @Published var pendingHostDelete: Host? = nil  // 删除主机确认弹窗
 
     @Published var hosts: [Host] = []
     /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
@@ -163,6 +164,20 @@ final class AppModel: ObservableObject {
         HostStore.saveHosts(hosts)
         checkReachability(hosts[idx])
     }
+
+    /// 请求删除主机：按设置决定是否先弹确认弹窗（避免误删），否则直接删除。
+    func requestDeleteHost(_ host: Host) {
+        if AppSettings.shared.confirmHostDelete {
+            pendingHostDelete = host
+        } else {
+            deleteHost(host.id)
+        }
+    }
+    func confirmHostDelete() {
+        if let h = pendingHostDelete { deleteHost(h.id) }
+        pendingHostDelete = nil
+    }
+    func cancelHostDelete() { pendingHostDelete = nil }
 
     func deleteHost(_ id: String) {
         // 先停掉该主机的转发隧道并清除其规则，避免删除后残留运行中的 ssh -N
@@ -1577,9 +1592,8 @@ final class AppModel: ObservableObject {
         } else {
             dir = AppSettings.shared.resolvedDownloadDir
         }
-        let task = UploadTask(download: downloadable, toLocalDir: dir, fs: RemoteFS(ssh)) {
-            NSWorkspace.shared.activateFileViewerSelecting([dir])   // 完成后在访达里定位下载目录
-        }
+        // 完成后不再自动弹访达窗口（打断用户）；完成提醒由系统通知给出。
+        let task = UploadTask(download: downloadable, toLocalDir: dir, fs: RemoteFS(ssh)) { }
         task.hostId = host.id
         task.hostName = host.name
         enqueueTransfer(task)

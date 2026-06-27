@@ -340,6 +340,15 @@ struct ContentView: View {
                     onCancel: { model.cancelFileDelete() }
                 ).transition(.opacity)
             }
+            if let h = model.pendingHostDelete {
+                ConfirmDialog(
+                    title: "删除主机「\(h.name)」？",
+                    message: "该主机的配置（含保存的密码、会话历史、端口转发规则）将被删除，不可恢复。",
+                    confirmTitle: "删除", destructive: true,
+                    onConfirm: { model.confirmHostDelete() },
+                    onCancel: { model.cancelHostDelete() }
+                ).transition(.opacity)
+            }
             if let ctx = model.pendingBatchDelete {
                 ConfirmDialog(
                     title: "删除 \(ctx.files.count) 个项目？",
@@ -406,6 +415,7 @@ struct ContentView: View {
         .animation(.easeOut(duration: 0.18), value: model.showExtractDialog)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileDelete?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingBatchDelete?.id)
+        .animation(.easeOut(duration: 0.15), value: model.pendingHostDelete?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileRename?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileChmod?.id)
         .animation(.easeOut(duration: 0.15), value: model.pendingFileCreate?.id)
@@ -417,7 +427,7 @@ struct ContentView: View {
 
     /// 文件操作叠层里是否有弹窗正在展示（含展开的上传/下载对话框）。
     private var anyFileOverlayActive: Bool {
-        model.pendingFileDelete != nil || model.pendingBatchDelete != nil || model.pendingFileRefresh != nil ||
+        model.pendingFileDelete != nil || model.pendingBatchDelete != nil || model.pendingHostDelete != nil || model.pendingFileRefresh != nil ||
         model.pendingFileRename != nil || model.pendingFileChmod != nil ||
         model.pendingFileCreate != nil || model.pendingFileInfo != nil ||
         model.focusedTransferId != nil ||

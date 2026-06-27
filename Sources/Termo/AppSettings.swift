@@ -70,6 +70,11 @@ final class AppSettings: ObservableObject {
         didSet { d.set(closeToTray, forKey: "closeToTray") }
     }
 
+    /// 删除主机前弹出确认弹窗，避免误删。
+    @Published var confirmHostDelete: Bool {
+        didSet { d.set(confirmHostDelete, forKey: "confirmHostDelete") }
+    }
+
     /// 永久隐藏监控面板的采集说明（在「设置 - 通用」中开启，持久化）。
     @Published var monitorNoticeHidden: Bool {
         didSet { d.set(monitorNoticeHidden, forKey: "monitorNoticeHidden") }
@@ -92,6 +97,7 @@ final class AppSettings: ObservableObject {
         maxConcurrentTransfers = d.object(forKey: "maxConcurrentTransfers") as? Int ?? 2
         resourceAlerts = d.object(forKey: "resourceAlerts") as? Bool ?? true
         closeToTray = d.object(forKey: "closeToTray") as? Bool ?? false
+        confirmHostDelete = d.object(forKey: "confirmHostDelete") as? Bool ?? true
         monitorNoticeHidden = d.object(forKey: "monitorNoticeHidden") as? Bool ?? false
     }
 

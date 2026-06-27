@@ -99,6 +99,8 @@ struct SettingsView: View {
                     switch model.settingsTab {
                     case .general: generalSettings
                     case .terminal: terminalSettings
+                    case .transfer: transferSettings
+                    case .monitor: monitorSettings
                     case .keys: keysSettings
                     case .about: aboutSettings
                     }
@@ -135,21 +137,21 @@ struct SettingsView: View {
                 .frame(width: 160)
             }
 
-            settingRow("默认 Shell", description: "新终端使用的 Shell 程序") {
-                ThemedDropdown(
-                    options: [(DefaultShell.auto, "自动检测"), (.zsh, "/bin/zsh"), (.bash, "/bin/bash")],
-                    selection: $settings.defaultShell
-                )
-                .frame(width: 160)
-            }
-
-            settingRow("关闭确认", description: "关闭有活跃进程的终端时提示确认") {
-                ThemedToggle(isOn: $settings.closeConfirm)
-            }
-
             settingRow("关闭窗口时隐藏到菜单栏", description: "关闭主窗口不退出，后台任务（如端口转发）继续运行；从菜单栏图标恢复") {
                 ThemedToggle(isOn: $settings.closeToTray)
             }
+
+            settingRow("删除主机前确认", description: "删除主机时弹出确认弹窗，避免误删") {
+                ThemedToggle(isOn: $settings.confirmHostDelete)
+            }
+        }
+    }
+
+    // MARK: - 传输
+
+    private var transferSettings: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            sectionHeader("传输")
 
             settingRow("下载时询问位置", description: "每次下载都弹出选择保存位置") {
                 ThemedToggle(isOn: $settings.downloadAskEachTime)
@@ -175,6 +177,14 @@ struct SettingsView: View {
                 )
                 .frame(width: 120)
             }
+        }
+    }
+
+    // MARK: - 监控
+
+    private var monitorSettings: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            sectionHeader("监控")
 
             settingRow("资源告警", description: "主机 CPU、内存或磁盘持续高占用时发送系统通知") {
                 ThemedToggle(isOn: $settings.resourceAlerts)
@@ -201,6 +211,18 @@ struct SettingsView: View {
     private var terminalSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
             sectionHeader("终端")
+
+            settingRow("默认 Shell", description: "新终端使用的 Shell 程序") {
+                ThemedDropdown(
+                    options: [(DefaultShell.auto, "自动检测"), (.zsh, "/bin/zsh"), (.bash, "/bin/bash")],
+                    selection: $settings.defaultShell
+                )
+                .frame(width: 160)
+            }
+
+            settingRow("关闭确认", description: "关闭有活跃进程的终端时提示确认") {
+                ThemedToggle(isOn: $settings.closeConfirm)
+            }
 
             settingRow("字体", description: "终端显示使用的字体") {
                 ThemedDropdown(
