@@ -29,7 +29,7 @@ struct HostOverview: View {
                 HStack(spacing: 10) {
                     action("terminal", "终端", primary: true) { model.openHostTerminal(host) }
                     action("folder", "文件 (SFTP)") { model.openHostFiles(host) }
-                    action("arrow.left.arrow.right", "端口转发") { model.openForwardPanel(host) }
+                    action("arrow.left.arrow.right", "端口转发", badge: model.hasRunningForward(hostId: host.id)) { model.openForwardPanel(host) }
                     action("pencil", "编辑") { model.beginEditHost(host) }
                 }
                 .padding(.bottom, 26)
@@ -100,7 +100,7 @@ struct HostOverview: View {
     }
 
     @ViewBuilder
-    private func action(_ symbol: String, _ label: String, primary: Bool = false, _ act: @escaping () -> Void) -> some View {
+    private func action(_ symbol: String, _ label: String, primary: Bool = false, badge: Bool = false, _ act: @escaping () -> Void) -> some View {
         Button(action: act) {
             VStack(spacing: 8) {
                 Image(systemName: symbol).font(.system(size: 21))
@@ -118,6 +118,14 @@ struct HostOverview: View {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(primary ? Pal.mauve.opacity(0.25) : Pal.fill(0.07), lineWidth: 1)
             )
+            // 有进行中的后台任务（如运行中的转发隧道）时，右上角亮一个绿点
+            .overlay(alignment: .topTrailing) {
+                if badge {
+                    Circle().fill(Pal.green).frame(width: 8, height: 8)
+                        .overlay(Circle().stroke(Pal.base, lineWidth: 1.5))
+                        .padding(7)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

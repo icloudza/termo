@@ -162,6 +162,7 @@ final class AppModel: ObservableObject {
         // 先停掉该主机的转发隧道并清除其规则，避免删除后残留运行中的 ssh -N
         forwardManagers[id]?.stopAll()
         forwardManagers.removeValue(forKey: id)
+        forwardCancellables.removeValue(forKey: id)
         if forwards.contains(where: { $0.hostId == id }) {
             forwards.removeAll { $0.hostId == id }
             HostStore.saveForwards(forwards)
@@ -253,18 +254,53 @@ final class AppModel: ObservableObject {
     // ---------- 端口转发 ----------
     // 每台主机一份运行态管理器，隧道在后台常驻直到用户停止或退出 App。
     private var forwardManagers: [String: ForwardManager] = [:]
+    // 把各管理器的状态变化（启停/失败，低频）桥接到本对象，驱动转发 dot 与后台中控刷新。
+    // 转发状态变化稀疏，不会像传输逐帧进度那样引发重绘风暴，故可安全转发 objectWillChange。
+    private var forwardCancellables: [String: AnyCancellable] = [:]
 
     /// 取得（或惰性创建）某主机的端口转发管理器。
     func forwardManager(for host: Host) -> ForwardManager {
         if let m = forwardManagers[host.id] { return m }
         let m = ForwardManager(ssh: host.ssh ?? SSHConnection())
+        forwardCancellables[host.id] = m.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
         forwardManagers[host.id] = m
         return m
+    }
+
+    /// 全部进行中的后台活动（端口转发运行中的隧道 + 当前传输 + 当前解压），供左下角统一中控。
+    /// 携带活动对象本身，使中控各行可直接观察其实时状态/进度；分组与命名由视图按 hostId 解析。
+    var backgroundActivities: [BackgroundActivity] {
+        var out: [BackgroundActivity] = []
+        for rule in forwards {
+            if let m = forwardManagers[rule.hostId], m.status(rule.id).isRunning {
+                out.append(.forward(rule: rule, manager: m))
+            }
+        }
+        if let t = uploadTask { out.append(.transfer(t)) }
+        if let e = extractTask { out.append(.extract(e)) }
+        return out
+    }
+
+    /// 进行中的后台活动数（用于中控按钮角标）。
+    var activeBackgroundCount: Int {
+        var n = 0
+        for rule in forwards where forwardManagers[rule.hostId]?.status(rule.id).isRunning == true { n += 1 }
+        if uploadTask != nil { n += 1 }
+        if extractTask != nil { n += 1 }
+        return n
     }
 
     /// 某主机的全部转发规则（按创建顺序）。
     func forwardRules(for hostId: String) -> [ForwardRule] {
         forwards.filter { $0.hostId == hostId }
+    }
+
+    /// 某主机是否有运行中的转发隧道（只读，不会惰性创建管理器，可安全在视图 body 中调用）。
+    func hasRunningForward(hostId: String) -> Bool {
+        guard let m = forwardManagers[hostId] else { return false }
+        return forwards.contains { $0.hostId == hostId && m.status($0.id).isRunning }
     }
 
     /// 打开某主机的端口转发管理面板。
@@ -1216,6 +1252,8 @@ final class AppModel: ObservableObject {
                               fs: RemoteFS(host.ssh ?? SSHConnection())) { [weak self] in
             self?.refreshTrees(host: host, dir: destDir)
         }
+        task.hostId = host.id
+        task.hostName = host.name
         uploadTask = task
         showUploadDialog = true
         task.start()
@@ -1387,6 +1425,8 @@ final class AppModel: ObservableObject {
         let task = UploadTask(download: downloadable, toLocalDir: dir, fs: RemoteFS(ssh)) {
             NSWorkspace.shared.activateFileViewerSelecting([dir])   // 完成后在访达里定位下载目录
         }
+        task.hostId = host.id
+        task.hostName = host.name
         uploadTask = task
         showUploadDialog = true
         task.start()
@@ -1406,10 +1446,13 @@ final class AppModel: ObservableObject {
         }
         let parent = (file.path as NSString).deletingLastPathComponent
         let dir = parent.isEmpty ? "/" : parent
-        extractTask = ExtractTask(archive: file, kind: kind, parentDir: dir,
-                                  fs: RemoteFS(ssh)) { [weak self] in
+        let task = ExtractTask(archive: file, kind: kind, parentDir: dir,
+                               fs: RemoteFS(ssh)) { [weak self] in
             self?.refreshTrees(host: host, dir: dir)
         }
+        task.hostId = host.id
+        task.hostName = host.name
+        extractTask = task
         showExtractDialog = true
     }
 

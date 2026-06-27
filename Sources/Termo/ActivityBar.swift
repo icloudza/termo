@@ -22,12 +22,14 @@ struct ActivityBar: View {
                 item(symbol, section)
             }
             Spacer()
-            if let task = model.uploadTask, !model.showUploadDialog {
-                UploadMiniIndicator(task: task) { model.showUploadDialog = true }
-            }
-            if let task = model.extractTask, !model.showExtractDialog {
-                ExtractMiniIndicator(task: task) { model.showExtractDialog = true }
-            }
+            BackgroundCenterButton(model: model)
+                // 上传在后台时若需同名确认，守卫自动展开弹窗，避免静默卡住（原迷你环的职责，已并入中控）。
+                // 以 background 挂载：零尺寸、不参与 VStack 间距，避免上传时多出一段空隙。
+                .background {
+                    if let task = model.uploadTask, !model.showUploadDialog {
+                        UploadAskWatcher(task: task) { model.showUploadDialog = true }
+                    }
+                }
             settingsButton
         }
         .padding(.top, isFullScreen ? 12 : 52)

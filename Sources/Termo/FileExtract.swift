@@ -71,6 +71,9 @@ final class ExtractTask: ObservableObject {
     let kind: ArchiveKind
     let parentDir: String          // 归档所在目录（解压产物落此层）
     let folderName: String         // 同名新文件夹 / 单文件解压后的文件名
+    // 所属主机（用于后台中控按主机分组；创建后即设，仅展示用）
+    var hostId: String? = nil
+    var hostName: String = ""
 
     @Published var phase: ExtractPhase = .ready
     @Published var toSubfolder: Bool   // 解压到同名新文件夹（否则当前目录）
@@ -330,53 +333,4 @@ struct ExtractDialog: View {
     }
 }
 
-// MARK: - 后台解压迷你指示
-
-/// 解压弹窗隐藏后，显示在活动栏底部的迷你状态；点击重新展开弹窗。
-struct ExtractMiniIndicator: View {
-    @ObservedObject var task: ExtractTask
-    let onTap: () -> Void
-    @State private var hover = false
-
-    var body: some View {
-        Button(action: onTap) {
-            ZStack {
-                if task.phase == .running {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: centerIcon).font(.system(size: 11, weight: .bold)).foregroundStyle(tint)
-                }
-            }
-            .frame(width: 22, height: 22)
-            .frame(width: 38, height: 38)
-            .background(hover ? Pal.fill(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .onHover { hover = $0 }
-        .help(helpText)
-    }
-
-    private var tint: Color {
-        switch task.phase {
-        case .done:   return Pal.green
-        case .failed: return Pal.red
-        default:      return Pal.mauve
-        }
-    }
-    private var centerIcon: String {
-        switch task.phase {
-        case .done:   return "checkmark"
-        case .failed: return "exclamationmark"
-        default:      return "doc.zipper"
-        }
-    }
-    private var helpText: String {
-        switch task.phase {
-        case .ready, .running: return "解压中 · 点击展开"
-        case .done:            return "解压完成 · 点击查看"
-        case .failed:          return "解压失败 · 点击查看"
-        }
-    }
-}
+// 后台解压状态已并入左下角「后台任务」统一中控（见 BackgroundCenterView）。

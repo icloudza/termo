@@ -72,6 +72,9 @@ final class UploadTask: ObservableObject {
     let direction: TransferDirection
     let destDir: String
     let totalBytes: Int64
+    // 所属主机（用于后台中控按主机分组；创建后即设，仅展示用）
+    var hostId: String? = nil
+    var hostName: String = ""
     private let fs: RemoteFS
     private let onAllDone: () -> Void
 
@@ -578,64 +581,4 @@ struct UploadRow: View {
     }
 }
 
-// MARK: - 后台上传迷你进度
-
-/// 上传弹窗隐藏后，显示在活动栏底部的迷你进度环；点击重新展开弹窗。
-struct UploadMiniIndicator: View {
-    @ObservedObject var task: UploadTask
-    let onTap: () -> Void
-    @State private var hover = false
-
-    private var fraction: CGFloat {
-        task.totalBytes > 0 ? CGFloat(min(1, Double(task.overallSent) / Double(task.totalBytes))) : 0
-    }
-
-    var body: some View {
-        Button(action: onTap) {
-            ZStack {
-                Circle().stroke(Pal.fill(0.14), lineWidth: 3)
-                Circle().trim(from: 0, to: task.phase == .running ? max(0.03, fraction) : 1)
-                    .stroke(ringColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .animation(.linear(duration: 0.15), value: fraction)
-                Image(systemName: centerIcon).font(.system(size: 9, weight: .bold)).foregroundStyle(ringColor)
-            }
-            .frame(width: 22, height: 22)
-            .frame(width: 38, height: 38)
-            .background(hover ? Pal.fill(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .onHover { hover = $0 }
-        .help(helpText)
-        // 后台运行时若需用户确认（同名文件），自动展开弹窗，避免静默卡住。
-        .onChange(of: task.pendingAsk?.id) { id in if id != nil { onTap() } }
-    }
-
-    private var ringColor: Color {
-        if task.pendingAsk != nil { return Pal.yellow }
-        switch task.phase {
-        case .running:   return Pal.mauve
-        case .done:      return task.hasFailures ? Pal.yellow : Pal.green
-        case .cancelled: return Pal.overlay
-        }
-    }
-    private var centerIcon: String {
-        if task.pendingAsk != nil { return "questionmark" }
-        switch task.phase {
-        case .running:   return task.direction == .upload ? "arrow.up" : "arrow.down"
-        case .done:      return task.hasFailures ? "exclamationmark" : "checkmark"
-        case .cancelled: return "xmark"
-        }
-    }
-    private var helpText: String {
-        let verb = task.direction == .upload ? "上传" : "下载"
-        if task.pendingAsk != nil { return "需要确认（同名文件）· 点击处理" }
-        switch task.phase {
-        case .running:   return "\(verb)中 \(Int(fraction * 100))% · 点击展开"
-        case .done:      return task.hasFailures ? "\(verb)部分失败 · 点击查看" : "\(verb)完成 · 点击查看"
-        case .cancelled: return "\(verb)已取消 · 点击查看"
-        }
-    }
-}
+// 后台传输进度已并入左下角「后台任务」统一中控（见 BackgroundCenterView）。
