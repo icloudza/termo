@@ -55,10 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// 从托盘恢复：切回常规激活策略（恢复 Dock 图标与主菜单），前置并激活主窗口。
+    /// 现场重新解析窗口（orderOut 后窗口仍在 NSApp.windows 列表中），不依赖可能过期的 mainWindow。
     private func showMainWindow() {
         NSApp.setActivationPolicy(.regular)
-        attachMainWindow()
-        mainWindow?.makeKeyAndOrderFront(nil)
+        let w = mainWindow ?? NSApp.windows.first { !($0 is NSPanel) && $0.contentView != nil }
+        if mainWindow == nil, let w { mainWindow = w; w.delegate = self }
+        w?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -77,19 +79,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return false
     }
 
-    /// 退出入口（菜单/托盘/关窗共用）：有后台任务则弹自定义确认弹窗（先把窗口显出来以便可见），否则直接退出。
-    /// 本方法为自定义（非 NSApplicationDelegate 协议方法，故不自动 @MainActor），访问 @MainActor 的 AppModel
-    /// 需显式跳到主线程；从 AppKit 主线程回调进来，跳转是即时的，不影响交互。
+    /// 退出入口（菜单/托盘/关窗共用）。本方法为自定义（非 NSApplicationDelegate 协议方法，故不自动 @MainActor），
+    /// 访问 @MainActor 的 AppModel 需显式跳到主线程；从 AppKit 主线程回调进来，跳转是即时的，不影响交互。
+    /// - 已配置「隐藏到菜单栏」且无后台任务：显式退出直接走，不再追问。
+    /// - 否则一律弹自定义确认（含「隐藏到菜单栏」选项；有任务时优先展示任务警告与列表）。
     @objc func requestQuit() {
         Task { @MainActor in
-            if AppModel.shared.hasRunningBackground {
+            if AppSettings.shared.closeToTray, !AppModel.shared.hasRunningBackground {
+                NSApp.terminate(nil)
+            } else {
                 self.showMainWindow()
                 AppModel.shared.pendingQuitConfirm = true
-            } else {
-                NSApp.terminate(nil)
             }
         }
     }
+
 
     // 自定义弹窗已在退出前做后台任务检查（见 requestQuit / QuitConfirmDialog）。
     // 系统发起的退出（注销/关机）会直接走到这里：放行退出，残留隧道由 willTerminate 的进程登记表兜底清理。
@@ -278,6 +282,15 @@ struct ContentView: View {
                     QuitConfirmDialog(
                         model: model,
                         onCancel: { model.pendingQuitConfirm = false },
+                        onHideToTray: {
+                            model.pendingQuitConfirm = false
+                            AppSettings.shared.closeToTray = true
+                            // 直接隐藏当前所有可见内容窗口（不绕 AppDelegate 引用，杜绝取不到/过期）。
+                            for w in NSApp.windows where w.isVisible && !(w is NSPanel) && w.contentView != nil {
+                                w.orderOut(nil)
+                            }
+                            NSApp.setActivationPolicy(.accessory)
+                        },
                         onConfirm: {
                             model.pendingQuitConfirm = false
                             model.stopAllBackground()

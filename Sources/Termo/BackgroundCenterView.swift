@@ -226,14 +226,24 @@ struct BackgroundActivityList: View {
     }
 }
 
-// MARK: - 退出确认弹窗（自定义，复用活动列表只读展示）
+// MARK: - 退出确认弹窗（自定义）
 
-/// 自定义退出确认：列出进行中的后台任务（只读复用中控的行），可取消或关闭任务并退出。
+/// 自定义退出确认：
+/// - 有后台任务：顶部警告 + 只读任务列表（优先级最高，明确告知会被中断）。
+/// - 无任务：简洁的退出确认。
+/// 勾选「关闭窗口时隐藏到菜单栏」即开启设置里的同名开关（实时持久化）；勾选后「确定」改为隐藏到托盘而非退出。
 struct QuitConfirmDialog: View {
     @ObservedObject var model: AppModel
     let onCancel: () -> Void
-    let onConfirm: () -> Void
+    let onHideToTray: () -> Void   // 已勾选 → 隐藏到托盘（开关由 checkbox 实时打开）
+    let onConfirm: () -> Void       // 未勾选 → 退出
+    @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var theme = ThemeManager.shared
+
+    private var hasTasks: Bool { model.hasRunningBackground }
+    private var confirmTitle: String {
+        settings.closeToTray ? "确定" : (hasTasks ? "关闭任务并退出" : "退出")
+    }
 
     var body: some View {
         ZStack {
@@ -246,33 +256,34 @@ struct QuitConfirmDialog: View {
 
     private var card: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 15, weight: .medium)).foregroundStyle(Pal.yellow)
-                    .frame(width: 30, height: 30)
-                    .background(Pal.yellow.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("仍有 \(model.activeBackgroundCount) 个后台任务在运行")
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Pal.text)
-                    Text("退出会中断以下任务").font(.system(size: 11)).foregroundStyle(Pal.overlay)
+            header
+            if hasTasks {
+                ScrollView {
+                    BackgroundActivityList(model: model, readOnly: true, includeFinished: false)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Spacer()
+                .frame(maxHeight: 240)
             }
 
-            ScrollView {
-                BackgroundActivityList(model: model, readOnly: true, includeFinished: false)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            // 勾选即开启设置里的「关闭窗口时隐藏到菜单栏」（实时持久化），后台任务继续运行。
+            HStack(spacing: 8) {
+                ThemedCheckbox(isOn: settings.closeToTray) { settings.closeToTray.toggle() }
+                Text("关闭窗口时隐藏到菜单栏（后台任务继续运行）")
+                    .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                    .onTapGesture { settings.closeToTray.toggle() }
+                Spacer(minLength: 0)
             }
-            .frame(maxHeight: 240)
 
             HStack(spacing: 10) {
                 Spacer()
                 SecondaryButton(title: "取消", action: onCancel)
-                Button(action: onConfirm) {
-                    Text("关闭任务并退出")
+                Button {
+                    if settings.closeToTray { onHideToTray() } else { onConfirm() }
+                } label: {
+                    Text(confirmTitle)
                         .font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
                         .padding(.horizontal, 16).padding(.vertical, 7)
-                        .background(Pal.red, in: RoundedRectangle(cornerRadius: 7))
+                        .background(settings.closeToTray ? Pal.mauve : Pal.red, in: RoundedRectangle(cornerRadius: 7))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -284,6 +295,23 @@ struct QuitConfirmDialog: View {
         .background(Pal.solidMantle, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Pal.fill(0.08), lineWidth: 1))
         .shadow(color: .black.opacity(theme.isDark ? 0.40 : 0.14), radius: 24, y: 8)
+    }
+
+    @ViewBuilder private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: hasTasks ? "exclamationmark.triangle.fill" : "power")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(hasTasks ? Pal.yellow : Pal.mauve)
+                .frame(width: 30, height: 30)
+                .background((hasTasks ? Pal.yellow : Pal.mauve).opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(hasTasks ? "仍有 \(model.activeBackgroundCount) 个后台任务在运行" : "退出 Termo？")
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Pal.text)
+                Text(hasTasks ? "退出会中断以下任务" : "确认后将关闭应用")
+                    .font(.system(size: 11)).foregroundStyle(Pal.overlay)
+            }
+            Spacer()
+        }
     }
 }
 
