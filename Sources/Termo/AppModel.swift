@@ -368,6 +368,18 @@ final class AppModel: ObservableObject {
         return n
     }
 
+    /// 是否有运行中的端口转发隧道（任意主机）。常驻后台任务，用图标中心的绿色呼吸点表示，不计入数字角标。
+    var hasRunningForward: Bool {
+        forwards.contains { forwardManagers[$0.hostId]?.status($0.id).isRunning == true }
+    }
+
+    /// 非转发的进行中后台任务数（进行中/排队/暂停的传输 + 进行中的解压），用于数字角标。
+    var nonForwardActiveCount: Int {
+        var n = transfers.filter { $0.phase == .running || $0.phase == .queued || $0.phase == .paused }.count
+        if extractTask?.phase == .running { n += 1 }
+        return n
+    }
+
     /// 某主机的全部转发规则（按创建顺序）。
     func forwardRules(for hostId: String) -> [ForwardRule] {
         forwards.filter { $0.hostId == hostId }

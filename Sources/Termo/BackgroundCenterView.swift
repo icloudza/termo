@@ -128,6 +128,23 @@ final class BackgroundProgressModel: ObservableObject {
     }
 }
 
+/// 端口转发运行中时叠在图标中心的绿色呼吸点：纯 SwiftUI 自反转动画（缩放 + 透明），无定时器；
+/// 视图随 hasRunningForward 出现/消失，转发停止即移除，空闲零开销。
+private struct ForwardBreathingDot: View {
+    @State private var on = false
+    var body: some View {
+        Circle()
+            .fill(Color(hex: 0x32D74B))                  // 运行绿
+            .frame(width: 3.5, height: 3.5)              // dot 大小
+            .scaleEffect(on ? 1.0 : 0.85)
+            .opacity(on ? 1.0 : 0.6)
+            .allowsHitTesting(false)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { on = true }
+            }
+    }
+}
+
 /// 活动栏底部的「后台任务」入口按钮：常驻显示，有进行中的任务时带数字角标；点击弹出统一中控面板。
 /// 有可度量的传输时，沿按钮圆角边缘绘制一圈细进度环（overlay，不占布局，不改变按钮尺寸）。
 struct BackgroundCenterButton: View {
@@ -141,7 +158,8 @@ struct BackgroundCenterButton: View {
     private static let ringWidth: CGFloat = 1.8
 
     var body: some View {
-        let count = model.activeBackgroundCount
+        // 数字角标只计「非转发」任务（传输/解压）；端口转发为常驻后台，改用图标中心的绿色呼吸点表示。
+        let count = model.nonForwardActiveCount
         Button { open.toggle() } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "tray.full.fill")
@@ -153,6 +171,7 @@ struct BackgroundCenterButton: View {
                         in: Circle()
                     )
                     .overlay { progressRing }
+                    .overlay { if model.hasRunningForward { ForwardBreathingDot().offset(x: 0, y: 0.25) } }   // 端口转发运行中：中心绿色呼吸点
                     .background(GeometryReader { geo in        // 上报按钮全局中心，作为下载飞入动画的终点
                         Color.clear
                             .onAppear { report(geo) }
