@@ -34,7 +34,7 @@ struct AboutContent: View {
     /// 取不到（嵌入未生效）则回退到「开发版」。以后改版本只动 Info.plist 一处。
     static var versionLine: String {
         guard let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else {
-            return "版本 0.7.43 (开发版)"
+            return "版本 0.7.44 (开发版)"
         }
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
         return build.map { "版本 \(v) (build \($0))" } ?? "版本 \(v)"

@@ -40,9 +40,13 @@ struct PortForwardView: View {
         .background(Pal.solidBase)
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .overlay {
-            if let rule = pendingDelete {
-                deleteConfirm(rule).transition(.opacity)
+            // 无弹窗时整层不吃点击：避免 .transition 淡出期间残留的全屏命中层短暂挡住下方点击。
+            ZStack {
+                if let rule = pendingDelete {
+                    deleteConfirm(rule).transition(.opacity)
+                }
             }
+            .allowsHitTesting(pendingDelete != nil)
         }
         .animation(.easeOut(duration: 0.15), value: pendingDelete?.id)
     }
