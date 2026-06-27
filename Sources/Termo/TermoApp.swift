@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if AppSettings.shared.closeToTray {
             sender.orderOut(nil)
             NSApp.setActivationPolicy(.accessory)
+            tray?.rebuild()   // 切 .accessory 后状态栏图标会被系统丢弃，重建恢复
         } else {
             requestQuit()   // 走退出流程（含后台任务确认）；取消时窗口因返回 false 得以保留
         }
@@ -290,6 +291,7 @@ struct ContentView: View {
                                 w.orderOut(nil)
                             }
                             NSApp.setActivationPolicy(.accessory)
+                            TrayController.shared?.rebuild()   // 切 .accessory 后状态栏图标会被系统丢弃，重建恢复
                         },
                         onConfirm: {
                             model.pendingQuitConfirm = false

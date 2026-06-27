@@ -4,6 +4,9 @@ import AppKit
 /// 让端口转发等常驻后台任务在主窗口隐藏后仍可被看到与管理（隐藏到托盘时见 AppDelegate）。
 @MainActor
 final class TrayController: NSObject, NSMenuDelegate {
+    /// 供退出弹窗等处直接重建状态栏图标（不绕 AppDelegate 引用）。AppDelegate 持有强引用，此处弱引用即可。
+    static weak var shared: TrayController?
+
     private var statusItem: NSStatusItem?
     private let onShow: () -> Void
     private let onQuit: () -> Void
@@ -12,6 +15,16 @@ final class TrayController: NSObject, NSMenuDelegate {
         self.onShow = onShow
         self.onQuit = onQuit
         super.init()
+        install()
+        Self.shared = self
+    }
+
+    /// 创建（或重建）状态栏图标。运行时把激活策略从 .regular 切到 .accessory 时，
+    /// 已存在的 NSStatusItem 在部分 macOS 版本（含 15）会被系统丢弃，切换后调用本方法恢复显示。
+    func rebuild() { install() }
+
+    private func install() {
+        if let old = statusItem { NSStatusBar.system.removeStatusItem(old) }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = Self.logoImage()
         item.button?.toolTip = "Termo"
