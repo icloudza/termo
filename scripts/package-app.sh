@@ -2,6 +2,12 @@
 # 把 SwiftPM 可执行文件打包成带图标的标准 macOS .app
 set -e
 
+# SwiftPM 需要完整 Xcode 工具链（actool 等）编译依赖里的 .xcassets 资源并生成 Bundle.module；
+# 仅装 Command Line Tools 会报 “type 'Bundle' has no member 'module'”。检测到 Xcode 则指向它（仅本次构建生效）。
+if [ -z "$DEVELOPER_DIR" ] && [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/termo.app"
 NAME="termo"

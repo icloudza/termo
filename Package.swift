@@ -16,6 +16,10 @@ let package = Package(
         // 本地 vendoring CodeEditSourceEditor：为汉化 Find/Replace 面板与右键菜单的写死英文。
         // identity=codeeditsourceeditor 的 path 依赖取代远程 0.15.2。
         .package(path: "./LocalPackages/CodeEditSourceEditor"),
+        // 本地 vendoring 覆盖 CodeEditSymbols 0.2.3：上游 manifest 未把 Symbols.xcassets 声明为资源，
+        // 纯 swift build 因此缺 Bundle.module（Xcode 能自动处理 asset catalog，故只在命令行打包时暴露）。
+        // identity=codeeditsymbols 的 path 依赖取代远程版本，并补上资源声明。
+        .package(path: "./LocalPackages/CodeEditSymbols"),
     ],
     targets: [
         .executableTarget(
@@ -38,7 +42,9 @@ let package = Package(
                     "-Xlinker", "-sectcreate",
                     "-Xlinker", "__TEXT",
                     "-Xlinker", "__info_plist",
-                    "-Xlinker", "Sources/Termo/Info.plist",
+                    // 绝对路径：链接器的工作目录在不同构建方式/配置下不固定（release 常在 .build 内），
+                    // 相对路径会 errno=2 找不到；用 Context.packageDirectory 锚定到包根。
+                    "-Xlinker", "\(Context.packageDirectory)/Sources/Termo/Info.plist",
                 ]),
             ]
         ),
