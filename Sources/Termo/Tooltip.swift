@@ -25,9 +25,20 @@ final class TooltipController {
         panel?.orderOut(nil)
     }
 
+    // 文本最大宽度（超出则换行）。
+    private static let maxTextWidth: CGFloat = 440
+
+    /// 先用 NSString 量出单行宽度，据此决定一个确定的换行宽度交给 SwiftUI。
+    /// 高度仍由 SwiftUI 自己在该宽度下排版得出（fittingSize），避免 fixedSize+maxWidth 测高与渲染不一致导致裁切。
+    private static func wrapWidth(for text: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 11.5)
+        let single = (text as NSString).size(withAttributes: [.font: font]).width
+        return min(ceil(single) + 2, maxTextWidth)   // +2 余量，避免临界值被迫换行
+    }
+
     private func present(_ text: String) {
         let panel = ensurePanel()
-        hosting?.rootView = TooltipView(text: text)
+        hosting?.rootView = TooltipView(text: text, textWidth: Self.wrapWidth(for: text))
         panel.layoutIfNeeded()
         let size = hosting?.fittingSize ?? CGSize(width: 120, height: 28)
 
@@ -59,7 +70,7 @@ final class TooltipController {
         p.ignoresMouseEvents = true          // 永不抢事件/焦点
         p.hidesOnDeactivate = false
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        let h = NSHostingView(rootView: TooltipView(text: ""))
+        let h = NSHostingView(rootView: TooltipView(text: "", textWidth: 0))
         p.contentView = h
         hosting = h
         panel = p
@@ -70,21 +81,23 @@ final class TooltipController {
 /// Tooltip 卡片视图（自定义样式）。
 private struct TooltipView: View {
     let text: String
+    let textWidth: CGFloat   // 由 controller 量定的确定换行宽度
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         Text(text)
             .font(.system(size: 11.5))
             .foregroundStyle(Pal.text)
+            .multilineTextAlignment(.leading)
             .lineLimit(3)
+            // 宽度确定后再 fixedSize 垂直方向：高度按该宽度真实换行排版得出，杜绝多行被裁。
+            .frame(width: textWidth, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 9).padding(.vertical, 5)
-            .frame(maxWidth: 460, alignment: .leading)
             .background(Pal.solidMantle, in: RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(Pal.fill(0.10), lineWidth: 1))
             .padding(2)                      // 无阴影，仅留极小余量防描边贴边被裁
             .environment(\.colorScheme, theme.isDark ? .dark : .light)
-            .fixedSize()
     }
 }
 

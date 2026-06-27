@@ -225,6 +225,9 @@ struct ContentView: View {
         .sheet(item: $model.editingRDPHost) { host in
             AddRDPHostView(model: model, editing: host)
         }
+        .sheet(item: $model.forwardPanelHost) { host in
+            PortForwardView(model: model, host: host)
+        }
         .onAppear { model.applyStartupIfNeeded() }
     }
 

@@ -91,6 +91,7 @@ enum HostStore {
     }
     private static var hostsURL: URL { dir.appendingPathComponent("hosts.json") }
     private static var sessionsURL: URL { dir.appendingPathComponent("sessions.json") }
+    private static var forwardsURL: URL { dir.appendingPathComponent("forwards.json") }
 
     static func loadHosts() -> [Host] {
         guard let data = try? Data(contentsOf: hostsURL),
@@ -128,6 +129,18 @@ enum HostStore {
     static func saveSessions(_ sessions: [SessionEvent]) {
         if let data = try? JSONEncoder().encode(sessions) {
             try? data.write(to: sessionsURL, options: .atomic)
+        }
+    }
+
+    static func loadForwards() -> [ForwardRule] {
+        guard let data = try? Data(contentsOf: forwardsURL),
+              let f = try? JSONDecoder().decode([ForwardRule].self, from: data) else { return [] }
+        return f
+    }
+
+    static func saveForwards(_ forwards: [ForwardRule]) {
+        if let data = try? JSONEncoder().encode(forwards) {
+            try? data.write(to: forwardsURL, options: .atomic)
         }
     }
 }

@@ -29,7 +29,7 @@ struct HostOverview: View {
                 HStack(spacing: 10) {
                     action("terminal", "终端", primary: true) { model.openHostTerminal(host) }
                     action("folder", "文件 (SFTP)") { model.openHostFiles(host) }
-                    action("arrow.left.arrow.right", "端口转发") {}
+                    action("arrow.left.arrow.right", "端口转发") { model.openForwardPanel(host) }
                     action("pencil", "编辑") { model.beginEditHost(host) }
                 }
                 .padding(.bottom, 26)

@@ -59,6 +59,10 @@ final class AppModel: ObservableObject {
     @Published var hosts: [Host] = []
     /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
     @Published var sessions: [SessionEvent] = []
+    /// 全部端口转发规则（持久化）；运行态由 [[ForwardManager]] 单独维护。
+    @Published var forwards: [ForwardRule] = []
+    /// 非 nil 时展示该主机的端口转发管理面板。
+    @Published var forwardPanelHost: Host? = nil
     /// 正在 SSH 探测系统信息的主机 id。
     @Published var probingHosts: Set<String> = []
 
@@ -155,6 +159,13 @@ final class AppModel: ObservableObject {
     }
 
     func deleteHost(_ id: String) {
+        // 先停掉该主机的转发隧道并清除其规则，避免删除后残留运行中的 ssh -N
+        forwardManagers[id]?.stopAll()
+        forwardManagers.removeValue(forKey: id)
+        if forwards.contains(where: { $0.hostId == id }) {
+            forwards.removeAll { $0.hostId == id }
+            HostStore.saveForwards(forwards)
+        }
         hosts.removeAll { $0.id == id }
         sessions.removeAll { $0.hostId == id }
         HostKeychain.delete(id)
@@ -237,6 +248,54 @@ final class AppModel: ObservableObject {
         hostMonitors.removeValue(forKey: hostId)
         alertStreak = alertStreak.filter { !$0.key.hasPrefix(hostId + "|") }
         alertLast = alertLast.filter { !$0.key.hasPrefix(hostId + "|") }
+    }
+
+    // ---------- 端口转发 ----------
+    // 每台主机一份运行态管理器，隧道在后台常驻直到用户停止或退出 App。
+    private var forwardManagers: [String: ForwardManager] = [:]
+
+    /// 取得（或惰性创建）某主机的端口转发管理器。
+    func forwardManager(for host: Host) -> ForwardManager {
+        if let m = forwardManagers[host.id] { return m }
+        let m = ForwardManager(ssh: host.ssh ?? SSHConnection())
+        forwardManagers[host.id] = m
+        return m
+    }
+
+    /// 某主机的全部转发规则（按创建顺序）。
+    func forwardRules(for hostId: String) -> [ForwardRule] {
+        forwards.filter { $0.hostId == hostId }
+    }
+
+    /// 打开某主机的端口转发管理面板。
+    func openForwardPanel(_ host: Host) { forwardPanelHost = host }
+
+    /// 启停一条规则：启动时记一条「端口转发」会话。
+    func toggleForward(_ rule: ForwardRule) {
+        guard let host = hosts.first(where: { $0.id == rule.hostId }) else { return }
+        let m = forwardManager(for: host)
+        if m.status(rule.id).isRunning {
+            m.stop(rule.id)
+        } else {
+            m.start(rule)
+            recordSession(hostId: host.id, kind: .portForward, detail: rule.summary)
+        }
+    }
+
+    /// 新增或更新一条规则（按 id 匹配）。
+    func saveForwardRule(_ rule: ForwardRule) {
+        if let i = forwards.firstIndex(where: { $0.id == rule.id }) { forwards[i] = rule }
+        else { forwards.append(rule) }
+        HostStore.saveForwards(forwards)
+    }
+
+    /// 删除一条规则：先停掉其运行中的隧道，再移除并落盘。
+    func deleteForwardRule(_ rule: ForwardRule) {
+        if let host = hosts.first(where: { $0.id == rule.hostId }) {
+            forwardManager(for: host).stop(rule.id)
+        }
+        forwards.removeAll { $0.id == rule.id }
+        HostStore.saveForwards(forwards)
     }
 
     /// 逐指标判定阈值告警：持续越界且过冷却期才发一条系统通知。按 id 取最新 host，改名后告警用新名。
@@ -537,6 +596,7 @@ final class AppModel: ObservableObject {
         hosts = HostStore.loadHosts()
         hosts.append(Self.makeMockHost())   // 注入模拟演示主机（内存中、不落盘），用于预览监控面板
         sessions = HostStore.loadSessions()
+        forwards = HostStore.loadForwards()
         HostKeyVerifier.resetSession()   // 清空「仅本次信任」的会话临时 known_hosts
         // 启动即对所有主机做一次轻量在线检测
         defer { refreshAllStatuses() }
@@ -559,6 +619,7 @@ final class AppModel: ObservableObject {
         NetworkMonitor.shared.onChange = { [weak self] online in
             guard let self else { return }
             for (_, m) in self.hostMonitors { m.handleNetworkChange() }
+            for (hid, fm) in self.forwardManagers { fm.handleNetworkChange(rules: self.forwardRules(for: hid)) }
             if online {
                 self.reconnectDroppedTerminals()
                 self.reconnectFileViewsAfterNetworkChange()
@@ -573,6 +634,11 @@ final class AppModel: ObservableObject {
         }
         nc.addObserver(forName: NSApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.stopStatusTimer() }
+        }
+        // 退出前掐断所有端口转发隧道：ssh -N 不写 stdout，不会随父进程退出自然终止，必须显式 kill 以免残留。
+        // 经线程安全的进程登记表清理，nonisolated 可在退出通知的同步回调里直接调用（不依赖 macOS 14 的 assumeIsolated）。
+        nc.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in
+            ForwardProcessRegistry.shared.terminateAll()
         }
     }
 
