@@ -523,7 +523,8 @@ private struct HubTransferRow: View {
             title: "\(verb) \(task.items.count) 项",
             subtitle: subtitle,
             statusDot: statusColor, statusText: statusText,
-            progress: (task.phase == .running || task.phase == .paused) ? fraction : nil
+            progress: (task.phase == .running || task.phase == .paused) ? fraction : nil,
+            subtitleTooltip: task.destDir   // 悬停看完整保存路径（副标题中间截断，不便阅读）
         ) {
             if !readOnly {
                 switch task.phase {
@@ -600,7 +601,8 @@ private struct HubExtractRow: View {
             title: "解压 \(task.archive.name)",
             subtitle: task.destDir,
             statusDot: statusColor, statusText: statusText,
-            progress: nil
+            progress: nil,
+            subtitleTooltip: task.destDir   // 悬停看完整解压目标路径
         ) {
             if !readOnly {
                 if isTerminal {
@@ -638,6 +640,7 @@ private func rowShell<Actions: View>(
     title: String, subtitle: String,
     statusDot: Color, statusText: String,
     progress: Double? = nil,
+    subtitleTooltip: String? = nil,
     @ViewBuilder actions: () -> Actions
 ) -> some View {
     HStack(spacing: 10) {
@@ -664,6 +667,7 @@ private func rowShell<Actions: View>(
                     Text(subtitle)
                         .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Pal.overlay)
                         .lineLimit(1).truncationMode(.middle)
+                        .tooltip(subtitleTooltip ?? "", when: subtitleTooltip?.isEmpty == false)
                 }
             }
         }

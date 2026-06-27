@@ -370,10 +370,7 @@ private struct FlatRow: View {
                 } else {
                     Spacer().frame(width: 12)
                 }
-                let ic = FileIcon.info(for: node.file)
-                Image(systemName: ic.symbol)
-                    .font(.system(size: 12))
-                    .foregroundStyle(ic.color)
+                FileTypeIcon(file: node.file, size: 12)
                     .frame(width: 16)
                 Text(node.file.name)
                     .font(.system(size: 12)).foregroundStyle(Pal.text)

@@ -218,8 +218,7 @@ struct FileViewerView: View {
 
     private var toolbar: some View {
         HStack(spacing: 10) {
-            let ic = FileIcon.info(for: state.file)
-            Image(systemName: ic.symbol).font(.system(size: 13)).foregroundStyle(ic.color)
+            FileTypeIcon(file: state.file, size: 13)
             Text(state.file.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Pal.text)
                 .lineLimit(1)
             if state.isDirty {
@@ -450,6 +449,7 @@ private struct HostPill: View {
             HStack(spacing: 4) {
                 Image(systemName: "server.rack").font(.system(size: 9))
                 Text(name).font(.system(size: 10.5, weight: .medium)).lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(Pal.mauve)
             .padding(.horizontal, 7).padding(.vertical, 2)
@@ -475,13 +475,13 @@ private struct CrumbText: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 if isLast {
-                    let ic = FileIcon.info(for: file)
-                    Image(systemName: ic.symbol).font(.system(size: 9.5)).foregroundStyle(ic.color)
+                    FileTypeIcon(file: file, size: 9.5)
                 }
                 Text(name)
                     .font(.system(size: 10.5, weight: isLast ? .medium : .regular))
                     .foregroundStyle(isLast ? Pal.text : (hover ? Pal.subtext : Pal.overlay))
                     .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)   // 面包屑可横向滚动，不缩略文件/目录名
             }
             .padding(.horizontal, 4).padding(.vertical, 1.5)
             .background(hover ? Pal.fill(0.06) : Color.clear, in: RoundedRectangle(cornerRadius: 4))

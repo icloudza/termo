@@ -487,10 +487,7 @@ private struct FileRow: View {
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 9) {
-                let ic = FileIcon.info(for: file)
-                Image(systemName: ic.symbol)
-                    .font(.system(size: 13))
-                    .foregroundStyle(ic.color)
+                FileTypeIcon(file: file, size: 13)
                     .frame(width: 18)
                 Text(file.name).font(.system(size: 13)).foregroundStyle(Pal.text).lineLimit(1)
             }
