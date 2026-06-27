@@ -951,7 +951,10 @@ final class AppModel: ObservableObject {
             var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
             let lang = ProcessInfo.processInfo.environment["LANG"] ?? ""
             if !lang.uppercased().contains("UTF-8") { env.append("LANG=en_US.UTF-8") }
-            tv.startProcess(executable: AppSettings.shared.resolvedShell, args: ["-l"], environment: env)
+            // 在用户家目录启动（与系统终端一致）；否则会继承 App 进程的工作目录——
+            // Xcode 调试时是 .../Build/Products/Debug（提示符里冒出 "Debug"），打包运行时是 "/"。
+            tv.startProcess(executable: AppSettings.shared.resolvedShell, args: ["-l"], environment: env,
+                            currentDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
         }
         return tv
     }

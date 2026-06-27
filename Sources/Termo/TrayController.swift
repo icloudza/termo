@@ -71,11 +71,13 @@ final class TrayController: NSObject, NSMenuDelegate {
     @objc private func showTapped() { onShow() }
     @objc private func quitTapped() { onQuit() }
 
-    /// 菜单栏模板图标：终端提示符 `>_` 的描边图形。isTemplate 让系统按明暗菜单栏自动着色。
+    /// 菜单栏图标：终端提示符 `>_`。`>` 用跟随明暗菜单栏的标签色，`_` 用品牌蓝以体现 logo 特色。
+    /// 因含彩色不能用模板渲染（模板会被强制单色）；`>` 用 labelColor 在绘制时按目标外观解析，仍随明暗自适应。
     static func logoImage() -> NSImage {
         let size = NSSize(width: 18, height: 18)
+        let blue = NSColor(srgbRed: 0.25, green: 0.62, blue: 1.0, alpha: 1)   // 品牌蓝的 `_`
         let img = NSImage(size: size, flipped: false) { _ in
-            NSColor.black.setStroke()
+            NSColor.labelColor.setStroke()
             let chevron = NSBezierPath()
             chevron.lineWidth = 2.1
             chevron.lineCapStyle = .round
@@ -84,15 +86,21 @@ final class TrayController: NSObject, NSMenuDelegate {
             chevron.line(to: NSPoint(x: 9.5, y: 9))
             chevron.line(to: NSPoint(x: 5, y: 5))
             chevron.stroke()
+            // `_`：先用更宽的白色描一遍垫底，再描蓝色——蓝线四周露出约 0.6px 细白边，
+            // 避免蓝色壁纸（暗色菜单栏透出）把蓝色 `_` 同化，同时足够细不影响观感。
             let bar = NSBezierPath()
-            bar.lineWidth = 2.1
             bar.lineCapStyle = .round
             bar.move(to: NSPoint(x: 12, y: 5))   // 与 > 拉开一点间距
             bar.line(to: NSPoint(x: 15.5, y: 5))
+            NSColor.white.withAlphaComponent(0.9).setStroke()
+            bar.lineWidth = 2.7
+            bar.stroke()
+            blue.setStroke()
+            bar.lineWidth = 2.1
             bar.stroke()
             return true
         }
-        img.isTemplate = true
+        img.isTemplate = false   // 含蓝色 `_`，关闭模板渲染（否则会被系统强制单色）
         return img
     }
 }
