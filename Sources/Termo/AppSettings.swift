@@ -75,7 +75,7 @@ final class AppSettings: ObservableObject {
         editorMinimap = d.object(forKey: "editorMinimap") as? Bool ?? true
         termFont = d.string(forKey: "termFont") ?? ""
         termFontSize = d.object(forKey: "termFontSize") as? Int ?? 12
-        termCursorStyle = d.string(forKey: "termCursorStyle") ?? "block"
+        termCursorStyle = d.string(forKey: "termCursorStyle") ?? "bar"
         termCursorBlink = d.object(forKey: "termCursorBlink") as? Bool ?? true
         termScrollback = d.object(forKey: "termScrollback") as? Int ?? 1000
         downloadDir = d.string(forKey: "downloadDir") ?? ""

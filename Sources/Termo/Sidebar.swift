@@ -7,6 +7,8 @@ struct Sidebar: View {
     @ObservedObject var layout: LayoutModel
     @ObservedObject private var theme = ThemeManager.shared
     @FocusState private var searchFocused: Bool
+    // 已折叠的分组名集合（仅本次运行有效，重启不保留）
+    @State private var collapsedGroups: Set<String> = []
 
     private var filteredHosts: [Host] {
         // 「主机」面板只列 SSH 主机；RDP 主机归入 RDP 面板
@@ -203,16 +205,40 @@ struct Sidebar: View {
     private var hostList: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(groups, id: \.self) { group in
-                Text(group)
-                    .font(.system(size: 11)).foregroundStyle(Pal.overlay)
-                    .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
-                ForEach(filteredHosts.filter { $0.group == group }) { host in
-                    HostRow(host: host, model: model, isActive: model.activeHostId == host.id)
+                groupHeader(group)
+                if !collapsedGroups.contains(group) {
+                    ForEach(filteredHosts.filter { $0.group == group }) { host in
+                        HostRow(host: host, model: model, isActive: model.activeHostId == host.id)
+                    }
                 }
             }
         }
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func groupHeader(_ group: String) -> some View {
+        let collapsed = collapsedGroups.contains(group)
+        return Button {
+            if collapsed { collapsedGroups.remove(group) } else { collapsedGroups.insert(group) }
+        } label: {
+            HStack(spacing: 4) {
+                // 折叠图标与分组名同字号等宽，展开向下、折叠向右
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Pal.overlay)
+                    .frame(width: 11)
+                    .rotationEffect(.degrees(collapsed ? -90 : 0))
+                Text(group)
+                    .font(.system(size: 11)).foregroundStyle(Pal.overlay)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .animation(.easeOut(duration: 0.15), value: collapsed)
     }
 
     private var localTerminalButton: some View {
