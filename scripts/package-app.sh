@@ -50,8 +50,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>com.termo.app</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.7.44</string>
-    <key>CFBundleVersion</key><string>10</string>
+    <key>CFBundleShortVersionString</key><string>0.7.45</string>
+    <key>CFBundleVersion</key><string>11</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -65,6 +65,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Ad-hoc 签名：UNUserNotificationCenter（上传/下载完成通知）要求 .app 有代码签名，未签名会拿不到授权；
+# 顺带让代码签名相对稳定，减少钥匙串重复授权。如已配置开发者证书可把 "-" 换成对应身份。
+echo "▸ 签名（ad-hoc）…"
+codesign --force --deep --sign - "$APP" || echo "⚠️ 签名失败（通知可能不可用）"
 
 # 刷新 Finder 图标缓存
 touch "$APP"

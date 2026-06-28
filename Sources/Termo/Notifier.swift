@@ -8,10 +8,12 @@ import UserNotifications
 enum Notifier {
     static var available: Bool { Bundle.main.bundleURL.pathExtension == "app" }
 
-    /// 启动时申请通知权限（首次会弹系统授权框）。
+    /// 启动时申请通知权限（首次会弹系统授权框），并设置代理使前台也能展示通知。
     static func requestAuthIfNeeded() {
         guard available else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        let center = UNUserNotificationCenter.current()
+        center.delegate = ForegroundPresenter.shared   // 否则 App 在前台时通知会被系统静默吞掉
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     /// 发一条系统通知。未授权时系统自行忽略。
@@ -23,5 +25,15 @@ enum Notifier {
         content.sound = .default
         let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(req)
+    }
+}
+
+/// 让 App 处于前台时通知也能展示为横幅 + 声音（默认前台会被系统抑制，导致「看着传完却没通知」）。
+private final class ForegroundPresenter: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = ForegroundPresenter()
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
     }
 }

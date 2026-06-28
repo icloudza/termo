@@ -398,6 +398,7 @@ struct BackgroundActivityList: View {
 /// 勾选「关闭窗口时隐藏到菜单栏」即开启设置里的同名开关（实时持久化）；勾选后「确定」改为隐藏到托盘而非退出。
 struct QuitConfirmDialog: View {
     @ObservedObject var model: AppModel
+    var forceMode: Bool = false    // 托盘「退出 Termo」触发：确认即停任务退出，无隐藏选项、不受设置影响
     let onCancel: () -> Void
     let onHideToTray: () -> Void   // 已勾选 → 隐藏到托盘（开关由 checkbox 实时打开）
     let onConfirm: () -> Void       // 未勾选 → 退出
@@ -405,8 +406,11 @@ struct QuitConfirmDialog: View {
     @ObservedObject private var theme = ThemeManager.shared
 
     private var hasTasks: Bool { model.hasRunningBackground }
+    // 是否走「隐藏到菜单栏」语义：仅常规模式且已开启设置时；彻底退出模式恒为退出。
+    private var hidesOnConfirm: Bool { !forceMode && settings.closeToTray }
     private var confirmTitle: String {
-        settings.closeToTray ? "确定" : (hasTasks ? "关闭任务并退出" : "退出")
+        if forceMode { return hasTasks ? "停止任务并退出" : "退出" }
+        return settings.closeToTray ? "确定" : (hasTasks ? "关闭任务并退出" : "退出")
     }
 
     var body: some View {
@@ -430,24 +434,27 @@ struct QuitConfirmDialog: View {
             }
 
             // 勾选即开启设置里的「关闭窗口时隐藏到菜单栏」（实时持久化），后台任务继续运行。
-            HStack(spacing: 8) {
-                ThemedCheckbox(isOn: settings.closeToTray) { settings.closeToTray.toggle() }
-                Text("关闭窗口时隐藏到菜单栏（后台任务继续运行）")
-                    .font(.system(size: 12)).foregroundStyle(Pal.subtext)
-                    .onTapGesture { settings.closeToTray.toggle() }
-                Spacer(minLength: 0)
+            // 彻底退出模式（托盘「退出 Termo」）不提供隐藏选项——用户已明确选择退出。
+            if !forceMode {
+                HStack(spacing: 8) {
+                    ThemedCheckbox(isOn: settings.closeToTray) { settings.closeToTray.toggle() }
+                    Text("关闭窗口时隐藏到菜单栏（后台任务继续运行）")
+                        .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                        .onTapGesture { settings.closeToTray.toggle() }
+                    Spacer(minLength: 0)
+                }
             }
 
             HStack(spacing: 10) {
                 Spacer()
                 SecondaryButton(title: "取消", action: onCancel)
                 Button {
-                    if settings.closeToTray { onHideToTray() } else { onConfirm() }
+                    if hidesOnConfirm { onHideToTray() } else { onConfirm() }
                 } label: {
                     Text(confirmTitle)
                         .font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
                         .padding(.horizontal, 16).padding(.vertical, 7)
-                        .background(settings.closeToTray ? Pal.mauve : Pal.red, in: RoundedRectangle(cornerRadius: 7))
+                        .background(hidesOnConfirm ? Pal.mauve : Pal.red, in: RoundedRectangle(cornerRadius: 7))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

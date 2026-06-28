@@ -479,6 +479,8 @@ private struct FileRow: View {
     let file: RemoteFile
     let selected: Bool
     let hovered: Bool
+    // 观察主题：切换深浅色时强制重算 body，否则 Pal 配色不刷新（旧色残留，hover 才意外恢复）。
+    @ObservedObject private var theme = ThemeManager.shared
 
     private static let dateFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm"; return f

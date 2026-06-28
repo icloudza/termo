@@ -82,6 +82,8 @@ final class AppModel: ObservableObject {
     @Published var forwardPanelHost: Host? = nil
     /// 为真时展示「仍有后台任务」的自定义退出确认弹窗。
     @Published var pendingQuitConfirm = false
+    // 退出确认弹窗是否为「彻底退出」模式（托盘「退出 Termo」触发）：确认即停任务退出，不受「隐藏到菜单栏」影响。
+    @Published var pendingQuitForce = false
     /// 正在 SSH 探测系统信息的主机 id。
     @Published var probingHosts: Set<String> = []
 
@@ -393,6 +395,17 @@ final class AppModel: ObservableObject {
 
     /// 打开某主机的端口转发管理面板。
     func openForwardPanel(_ host: Host) { forwardPanelHost = host }
+
+    /// 关闭所有打开的 sheet（设置/添加主机/端口转发等）。退出/隐藏前调用：
+    /// 退出确认弹窗是 ContentView 的 overlay，会被 sheet 盖在下面；sheet 还是窗口级模态、可能阻塞退出。
+    func dismissAllSheets() {
+        showSettings = false
+        showAddHost = false
+        editingHost = nil
+        showAddRDPHost = false
+        editingRDPHost = nil
+        forwardPanelHost = nil
+    }
 
     /// 删除转发规则是否跳过确认：仅本次运行有效（内存态，不持久化）；勾选「不再询问」后本次运行内不再弹窗，
     /// 下次重开 App 仍会提示。故意不放进设置——它是一次性的临时偏好。
@@ -1168,13 +1181,19 @@ final class AppModel: ObservableObject {
         return s
     }
 
+    // 正在打开「文件 (SFTP)」的主机 id：指纹预检/连接较慢时，概览页的 SFTP 卡片显示加载中，给高延迟主机即时反馈。
+    @Published var openingFilesHostId: String? = nil
+
     func openHostFiles(_ host: Host) {
         // 同一主机已有文件标签则切过去
         if let existing = tabs.first(where: { $0.kind == .files && $0.hostId == host.id }) {
             activeTabId = existing.id
             return
         }
+        guard openingFilesHostId != host.id else { return }   // 防连点重复发起
+        openingFilesHostId = host.id
         Task {
+            defer { openingFilesHostId = nil }   // 成功开标签 / 取消 / 失败都清除加载态
             guard await verifyHostKey(host) else { return }
             addTab(.files, title: host.name, hostId: host.id)
             recordSession(hostId: host.id, kind: .files, detail: "文件浏览")

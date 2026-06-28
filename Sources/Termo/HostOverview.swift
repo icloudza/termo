@@ -28,7 +28,7 @@ struct HostOverview: View {
 
                 HStack(spacing: 10) {
                     action("terminal", "终端", primary: true) { model.openHostTerminal(host) }
-                    action("folder", "文件 (SFTP)") { model.openHostFiles(host) }
+                    action("folder", "文件 (SFTP)", loading: model.openingFilesHostId == host.id) { model.openHostFiles(host) }
                     action("arrow.left.arrow.right", "端口转发", badge: model.hasRunningForward(hostId: host.id)) { model.openForwardPanel(host) }
                     action("pencil", "编辑") { model.beginEditHost(host) }
                 }
@@ -100,13 +100,20 @@ struct HostOverview: View {
     }
 
     @ViewBuilder
-    private func action(_ symbol: String, _ label: String, primary: Bool = false, badge: Bool = false, _ act: @escaping () -> Void) -> some View {
+    private func action(_ symbol: String, _ label: String, primary: Bool = false, badge: Bool = false,
+                        loading: Bool = false, _ act: @escaping () -> Void) -> some View {
         Button(action: act) {
             VStack(spacing: 8) {
-                Image(systemName: symbol).font(.system(size: 21))
-                    .foregroundStyle(primary ? Pal.mauve : Pal.subtext)
-                    .frame(height: 24)   // 固定图标高度，避免不同字形造成卡片高度参差
-                Text(label).font(.system(size: 12)).foregroundStyle(Pal.text)
+                Group {
+                    if loading {
+                        ProgressView().controlSize(.small)   // 连接/指纹预检中：转圈给高延迟主机即时反馈
+                    } else {
+                        Image(systemName: symbol).font(.system(size: 21))
+                            .foregroundStyle(primary ? Pal.mauve : Pal.subtext)
+                    }
+                }
+                .frame(height: 24)   // 固定图标高度，避免不同字形造成卡片高度参差
+                Text(loading ? "连接中…" : label).font(.system(size: 12)).foregroundStyle(Pal.text)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)

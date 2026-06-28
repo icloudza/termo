@@ -95,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 真正彻底退出走托盘菜单的「退出 Termo」（forceQuit），不受本设置影响。
     @objc func requestQuit() {
         Task { @MainActor in
+            AppModel.shared.dismissAllSheets()   // 先关掉打开的 sheet：否则退出确认弹窗被盖住、或 sheet 模态阻塞退出
             if AppSettings.shared.closeToTray {
                 if AppModel.shared.hasRunningBackground {
                     self.hideToTray()        // 有后台任务：隐藏保活，不打断、不弹窗
@@ -103,17 +104,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             } else {
                 self.showMainWindow()
+                AppModel.shared.pendingQuitForce = false   // 关窗/⌘Q 的常规确认（可选隐藏到菜单栏）
                 AppModel.shared.pendingQuitConfirm = true
             }
         }
     }
 
     /// 托盘「退出 Termo」：显式彻底退出，忽略「关闭隐藏到菜单栏」设置。
-    /// 有后台任务则弹确认（列出任务、可在弹窗里取消勾选后退出），无任务直接退出。
+    /// 有后台任务则弹「停止任务并退出」确认（确认即停任务退出，不再变成隐藏），无任务直接退出。
     @objc func forceQuit() {
         Task { @MainActor in
+            AppModel.shared.dismissAllSheets()   // 同上：避免退出确认弹窗被 sheet 盖住
             if AppModel.shared.hasRunningBackground {
                 self.showMainWindow()
+                AppModel.shared.pendingQuitForce = true    // 彻底退出模式：确认即退出
                 AppModel.shared.pendingQuitConfirm = true
             } else {
                 NSApp.terminate(nil)
@@ -125,7 +129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 自定义弹窗已在退出前做后台任务检查（见 requestQuit / QuitConfirmDialog）。
     // 系统发起的退出（注销/关机）会直接走到这里：放行退出，残留隧道由 willTerminate 的进程登记表兜底清理。
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        .terminateNow
+        // Dock/系统发起的退出：先在 AppKit 层结束所有附着的 sheet（窗口级模态可能阻塞退出），再放行。
+        for w in NSApp.windows { if let sheet = w.attachedSheet { w.endSheet(sheet) } }
+        AppModel.shared.dismissAllSheets()
+        return .terminateNow
     }
 
     /// 自定义中文主菜单：应用菜单只保留「关于」「退出」；保留「编辑」菜单以注册
@@ -327,9 +334,11 @@ struct ContentView: View {
                 if model.pendingQuitConfirm {
                     QuitConfirmDialog(
                         model: model,
-                        onCancel: { model.pendingQuitConfirm = false },
+                        forceMode: model.pendingQuitForce,
+                        onCancel: { model.pendingQuitConfirm = false; model.pendingQuitForce = false },
                         onHideToTray: {
                             model.pendingQuitConfirm = false
+                            model.pendingQuitForce = false
                             AppSettings.shared.closeToTray = true
                             // 直接隐藏当前所有可见内容窗口（不绕 AppDelegate 引用，杜绝取不到/过期）。
                             for w in NSApp.windows where w.isVisible && !(w is NSPanel) && w.contentView != nil {
@@ -340,6 +349,7 @@ struct ContentView: View {
                         },
                         onConfirm: {
                             model.pendingQuitConfirm = false
+                            model.pendingQuitForce = false
                             model.stopAllBackground()
                             ForwardProcessRegistry.shared.terminateAll()
                             NSApp.terminate(nil)

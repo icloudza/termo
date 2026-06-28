@@ -347,6 +347,8 @@ private struct FlatRow: View {
     let onTap: () -> Void
     let onOpenFile: (RemoteFile) -> Void
     @State private var hover = false
+    // 观察主题：切换深浅色时强制重算 body，否则 Pal 配色不刷新（同 FileRow 的旧色残留问题）。
+    @ObservedObject private var theme = ThemeManager.shared
 
     /// 估算名字是否可能被截断 → 截断才挂 tooltip。
     /// 廉价估算：仅按字符数 + 缩进深度判断，不做 NSString 文本测量、也不读侧栏宽度
