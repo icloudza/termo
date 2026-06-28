@@ -361,6 +361,90 @@ final class ChangeBarCoordinator: NSObject, TextViewCoordinator, NSTextStorageDe
         return out
     }
 
+    // MARK: hover 字符级高亮（核心卖点）
+    /// 供 ChangeBarView 在 hover 时取「改动字符段」：以当前 TextView 文本与基准**实时**计算，
+    /// 故永远新鲜、永不错位（hover 非高频，每次进入某 hunk 才算一次）。
+    /// 返回：当前行号 → 该行改动字符段的**文档级 UTF-16 范围**（与 NSTextStorage 同坐标，可直接喂 rectsFor）。
+    func charRangesForHover() -> [Int: [NSRange]] {
+        guard baselineEstablished, let s = controller?.textView?.string else { return [:] }
+        return Self.computeCharRanges(curText: s, baselineLines: baselineLines)
+    }
+
+    /// 对每个改动的当前行算出「改动字符段」。Modified 行与配对的基准行做**公共前后缀**求差
+    /// （read→readAAA 只标 AAA）；整行新增（配空基准行）→ 整行；纯删除（当前行更短、无新增）→ 整行。
+    private static func computeCharRanges(curText: String, baselineLines: [String]) -> [Int: [NSRange]] {
+        let curLines = splitLines(curText)
+        let diff = curLines.difference(from: baselineLines)
+        var partner: [Int: String] = [:]   // Modified：当前行号 → 配对的基准行内容
+        var added = Set<Int>()             // Added：整行新增（无基准配对）
+        if !diff.isEmpty {
+            var removeOffsets: [Int] = [], insertOffsets: [Int] = []
+            for change in diff {
+                switch change {
+                case let .remove(o, _, _): removeOffsets.append(o)
+                case let .insert(o, _, _): insertOffsets.append(o)
+                }
+            }
+            let delRuns = collapseRuns(removeOffsets)
+            let insRuns = collapseRuns(insertOffsets)
+            var di = 0, ii = 0, delta = 0
+            while di < delRuns.count || ii < insRuns.count {
+                let d = di < delRuns.count ? delRuns[di] : nil
+                let i = ii < insRuns.count ? insRuns[ii] : nil
+                if let d, let i, i.start <= d.start + delta {
+                    if i.start == d.start + delta {                  // Modified：逐行配对
+                        for k in 0 ..< i.len {
+                            let curLn = i.start + k
+                            let baseLn = d.start + k
+                            if k < d.len && baseLn >= 0 && baseLn < baselineLines.count {
+                                partner[curLn] = baselineLines[baseLn]
+                            } else {
+                                added.insert(curLn)                  // 当前行多于基准行 → 多出的当新增
+                            }
+                        }
+                        delta += i.len - d.len; di += 1; ii += 1
+                    } else {                                         // Added（删除前）
+                        for k in 0 ..< i.len { added.insert(i.start + k) }
+                        delta += i.len; ii += 1
+                    }
+                } else if let d, (i == nil || d.start + delta < i!.start) {  // 纯删除：不标记
+                    delta -= d.len; di += 1
+                } else if let i {                                    // Added（收尾）
+                    for k in 0 ..< i.len { added.insert(i.start + k) }
+                    delta += i.len; ii += 1
+                }
+            }
+        }
+        // 行号 → 行首文档 UTF-16 偏移（前缀和，与 computeOffsets 同坐标）。
+        var starts = [Int](repeating: 0, count: curLines.count + 1)
+        for k in 0..<curLines.count { starts[k + 1] = starts[k] + curLines[k].utf16.count + 1 }
+        var out: [Int: [NSRange]] = [:]
+        func emit(_ ln: Int, base: String) {
+            guard ln >= 0 && ln < curLines.count else { return }
+            let r = changedRange(cur: curLines[ln], base: base, lineStart: starts[ln])
+            if !r.isEmpty { out[ln] = r }
+        }
+        for (ln, base) in partner { emit(ln, base: base) }
+        for ln in added { emit(ln, base: "") }
+        return out
+    }
+
+    /// 行内「公共前后缀」求差 → 当前行里改动字符段的文档级范围（UTF-16）。
+    /// 整行新增传 base=""（→ 整行）；纯删除（前后缀夹空）退化为整行；超长行直接整行以省算力。
+    private static func changedRange(cur: String, base: String, lineStart: Int) -> [NSRange] {
+        let c = Array(cur.utf16), b = Array(base.utf16)
+        if c.isEmpty { return [] }                                  // 当前行空 → 无可框
+        if c.count > 4000 { return [NSRange(location: lineStart, length: c.count)] }
+        let maxMatch = min(c.count, b.count)
+        var p = 0
+        while p < maxMatch && c[p] == b[p] { p += 1 }
+        var s = 0
+        while s < (maxMatch - p) && c[c.count - 1 - s] == b[b.count - 1 - s] { s += 1 }
+        let start = p, end = c.count - s
+        if end <= start { return [NSRange(location: lineStart, length: c.count)] }  // 纯删除 → 整行
+        return [NSRange(location: lineStart + start, length: end - start)]
+    }
+
     private func install() {
         guard let controller, let scrollView = controller.scrollView, controller.textView != nil else { return }
         barView?.removeFromSuperview()
@@ -368,6 +452,7 @@ final class ChangeBarCoordinator: NSObject, TextViewCoordinator, NSTextStorageDe
         v.controller = controller
         v.dirtyOffsets = dirtyOffsets
         v.onResize = { [weak self] in self?.updateFrame() }   // hover 时撑宽/收窄
+        v.charRanges = { [weak self] in self?.charRangesForHover() ?? [:] }   // hover 字符级高亮取数
         // 加在 gutter 之后 → z 序在 gutter 之上；for:.horizontal 与 gutter 一致（横滚不动、纵滚随内容）
         scrollView.addFloatingSubview(v, for: .horizontal)
         barView = v
@@ -407,7 +492,9 @@ final class ChangeBarCoordinator: NSObject, TextViewCoordinator, NSTextStorageDe
 }
 
 /// change hunk gutter indicator：每个「连续未保存改动区间(hunk)」= 一颗竖向圆角蓝胶囊
-/// （内部浅、外圈稍深细边框，半镂空感）。hover 时该 hunk 叠一层淡蓝横向背景做范围反馈、胶囊略放大。
+/// （内部浅、外圈稍深细边框，半镂空感）。hover 时该 hunk 叠一层淡蓝横向背景做范围反馈、胶囊略放大，
+/// 并在此之上再叠一层**独立**的字符级高亮（框选式纯填充底色，仅盖正文里真正改动的字符段，
+/// 公共前后缀求差，read→readAAA 只盖 AAA）——一眼看出改了哪里。字符层纯叠加，不改原背景/胶囊任何逻辑。
 /// 仅最左缘窄带(stripWidth)接收事件，其余区域点击穿透，不影响行号栏折叠/正文选择。
 private final class ChangeBarView: NSView {
     weak var controller: TextViewController?
@@ -426,16 +513,26 @@ private final class ChangeBarView: NSView {
     var onResize: (() -> Void)?
     func desiredWidth(viewport: CGFloat) -> CGFloat { animHunk != nil ? viewport : narrowWidth }
 
+    /// hover 时取「改动字符段」（文档级 UTF-16 范围，由协调器按当前文本实时算）。
+    var charRanges: (() -> [Int: [NSRange]])?
+    /// 当前 hover 的 hunk 内、待画高亮框的改动字符段（文档坐标，进入 hunk 时取一次）。
+    private var hoverRanges: [NSRange] = []
+
     private var hoveredHunk: Int? {               // 当前悬停的 hunk（来自鼠标）
         didSet {
             guard hoveredHunk != oldValue else { return }
             if let h = hoveredHunk {
+                let hs = hunks()
+                let lines = h < hs.count ? hs[h].lines : []
+                let map = charRanges?() ?? [:]
+                hoverRanges = lines.flatMap { map[$0] ?? [] }   // 进入 hunk 时实时取改动字符段
                 animHunk = h
-                onResize?()                       // 撑到整宽以画背景
+                onResize?()                       // 撑到整宽以画字符高亮框
                 animate(to: 1)                    // 张开
             } else {
                 animate(to: 0) { [weak self] in
                     self?.animHunk = nil
+                    self?.hoverRanges = []
                     self?.onResize?()             // 收回窄条
                     self?.needsDisplay = true
                 }
@@ -500,27 +597,28 @@ private final class ChangeBarView: NSView {
 
     /// 每个连续段（hunk）的竖直范围（文档坐标，与 textView 同空间）。
     /// 偏移锚点 → 实时行位置（textLineForOffset），按**行号**升序后把相邻行并成一个 hunk。
-    private func hunks() -> [(top: CGFloat, bottom: CGFloat)] {
+    private func hunks() -> [(top: CGFloat, bottom: CGFloat, lines: [Int])] {
         guard let lm = controller?.textView?.layoutManager else { return [] }
         var byIndex: [Int: (top: CGFloat, bottom: CGFloat)] = [:]
         for off in dirtyOffsets {
             guard let pos = lm.textLineForOffset(off) else { continue }
             byIndex[pos.index] = (pos.yPos, pos.yPos + pos.height)
         }
-        var result: [(top: CGFloat, bottom: CGFloat)] = []
+        var result: [(top: CGFloat, bottom: CGFloat, lines: [Int])] = []
         var have = false, prevIdx = -2
         var top: CGFloat = 0, bottom: CGFloat = 0
+        var lines: [Int] = []
         for idx in byIndex.keys.sorted() {
             let info = byIndex[idx]!
             if have && idx == prevIdx + 1 {
-                top = min(top, info.top); bottom = max(bottom, info.bottom)
+                top = min(top, info.top); bottom = max(bottom, info.bottom); lines.append(idx)
             } else {
-                if have { result.append((top, bottom)) }
-                top = info.top; bottom = info.bottom; have = true
+                if have { result.append((top, bottom, lines)) }
+                top = info.top; bottom = info.bottom; have = true; lines = [idx]
             }
             prevIdx = idx
         }
-        if have { result.append((top, bottom)) }
+        if have { result.append((top, bottom, lines)) }
         return result
     }
 
@@ -542,6 +640,19 @@ private final class ChangeBarView: NSView {
                 let bp = NSBezierPath(roundedRect: band, xRadius: w / 2, yRadius: w / 2)
                 barColor.withAlphaComponent(0.09 * p).setFill(); bp.fill()
                 barColor.withAlphaComponent(0.40 * p).setStroke(); bp.lineWidth = 1; bp.stroke()
+            }
+
+            // hover 字符级高亮（独立叠加层，不影响上面的整行背景/胶囊）：在整行背景之上、
+            // 正文里**真正改动的字符段**上铺一层「框选式」纯填充底色（像选中文本，无边框无圆角），
+            // 一眼看出改了哪里。改动段由协调器对改动行做「公共前后缀」求差得出（read→readAAA 只框 AAA）；
+            // rectsFor 给出字符范围在 textView 坐标系的矩形，convert 转入本浮层坐标系后绘制。
+            if p > 0.01, let tv = controller?.textView, let lm = tv.layoutManager {
+                barColor.withAlphaComponent(0.30 * p).setFill()
+                for r in hoverRanges {
+                    for rect in lm.rectsFor(range: r) {
+                        NSBezierPath(rect: convert(rect, from: tv)).fill()
+                    }
+                }
             }
 
             // 圆角胶囊（覆在背景左端）：放大只变宽，颜色/边框与静止时完全一致（不变亮、不填满）。
