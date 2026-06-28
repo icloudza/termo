@@ -28,6 +28,7 @@ struct HostOverview: View {
 
                 HStack(spacing: 10) {
                     action("terminal", "终端", primary: true) { model.openHostTerminal(host) }
+                        .contextMenu { Button("新建终端") { model.openHostTerminal(host, forceNew: true) } }
                     action("folder", "文件 (SFTP)", loading: model.openingFilesHostId == host.id) { model.openHostFiles(host) }
                     action("arrow.left.arrow.right", "端口转发", badge: model.hasRunningForward(hostId: host.id)) { model.openForwardPanel(host) }
                     action("pencil", "编辑") { model.beginEditHost(host) }
@@ -44,7 +45,11 @@ struct HostOverview: View {
                 }
 
                 if host.ssh != nil {
-                    MonitorPanel(monitor: model.hostMonitor(for: host))
+                    if needsAuth {
+                        monitorAuthPlaceholder
+                    } else {
+                        MonitorPanel(monitor: model.hostMonitor(for: liveHost))
+                    }
                 }
             }
             .padding(.horizontal, 28).padding(.top, 38).padding(.bottom, 20)
@@ -52,10 +57,54 @@ struct HostOverview: View {
         }
         // 监控只在概览可见时跑：切到此 tab 开始采集，切走（视图移出）几秒后自动停流，保持轻量。
         .onAppear {
-            model.probeHostIfNeeded(host)
-            model.overviewAppeared(host)
+            model.probeHostIfNeeded(liveHost)
+            model.overviewAppeared(liveHost)
+        }
+        // 「每次询问」主机：取得本会话密码后（needsAuth 由 true→false），开始采集。
+        .onChange(of: needsAuth) { stillNeeds in
+            if !stillNeeds {
+                model.probeHostIfNeeded(liveHost)
+                model.overviewAppeared(liveHost)
+            }
         }
         .onDisappear { model.overviewDisappeared(host.id) }
+    }
+
+    /// 实时主机：host 是 Workspace 传入的快照，输密码等变化要从 model 取最新值（HostOverview 已 @ObservedObject model）。
+    private var liveHost: Host { model.host(host.id) ?? host }
+
+    /// 「每次询问」且本会话尚未输入密码：监控无法采集，显示占位而非无限「正在建立监控…」。
+    private var needsAuth: Bool {
+        liveHost.ssh?.authMethod == .ask && (liveHost.ssh?.password ?? "").isEmpty
+    }
+
+    private var monitorAuthPlaceholder: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("监控").font(.system(size: 12)).foregroundStyle(Pal.overlay)
+                Circle().fill(Pal.overlay).frame(width: 6, height: 6)
+            }
+            HStack(spacing: 12) {
+                Image(systemName: "lock.circle").font(.system(size: 24)).foregroundStyle(Pal.overlay)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("连接后开始监控").font(.system(size: 13)).foregroundStyle(Pal.subtext)
+                    Text("该主机为「每次询问」，输入密码连接成功后，将在本次运行内采集监控数据。")
+                        .font(.system(size: 11)).foregroundStyle(Pal.overlay)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Button { model.verifyConnect(host) } label: {
+                    Text("连接").font(.system(size: 12)).foregroundStyle(Pal.mauve)
+                        .padding(.horizontal, 14).padding(.vertical, 6)
+                        .background(Pal.mauve.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).pointerCursor()
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Pal.fill(0.04), in: RoundedRectangle(cornerRadius: 10))
+        }
     }
 
     @ViewBuilder

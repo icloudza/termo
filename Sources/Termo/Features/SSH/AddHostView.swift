@@ -163,6 +163,12 @@ struct AddHostView: View {
         }
     }
 
+    /// 「密钥来源」下拉选项：手动文件 + 密钥库中的每把密钥。
+    private var keySourceOptions: [(value: String, label: String)] {
+        [(value: "", label: "手动指定文件…")]
+            + model.sshKeys.map { (value: $0.id, label: "\($0.name)（\($0.type.label)）") }
+    }
+
     // MARK: - 各分区内容
 
     @ViewBuilder
@@ -194,19 +200,29 @@ struct AddHostView: View {
             }
             field("登录用户", placeholder: "root", text: $draft.user)
             if draft.authMethod == .key {
-                labeled("私钥文件") {
-                    HStack(spacing: 8) {
-                        ThemedTextField(placeholder: "~/.ssh/id_ed25519", text: $draft.keyPath)
-                        SecondaryButton(title: "选择…") { chooseKeyFile() }
+                labeled("密钥来源") {
+                    ThemedDropdown(options: keySourceOptions, selection: $draft.keyId)
+                }
+                if draft.keyId.isEmpty {
+                    labeled("私钥文件") {
+                        HStack(spacing: 8) {
+                            ThemedTextField(placeholder: "~/.ssh/id_ed25519", text: $draft.keyPath)
+                            SecondaryButton(title: "选择…") { chooseKeyFile() }
+                        }
                     }
                 }
                 labeled("私钥密码", optional: true) {
                     ThemedSecureField(placeholder: "（私钥有 passphrase 时填写）", text: $draft.password)
                 }
-            } else {
+            } else if draft.authMethod == .password {
                 labeled("登录密码", optional: true) {
                     ThemedSecureField(placeholder: "（可选）", text: $draft.password)
                 }
+            } else {
+                // 每次询问：不保存任何凭证，连接时弹窗输入本次密码。
+                Text("每次连接时弹窗输入本次密码，不保存任何凭证。")
+                    .font(.system(size: 11)).foregroundStyle(Pal.overlay)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             labeled("主机备注") {
                 ThemedTextEditor(placeholder: "备注信息…", text: $draft.notes)

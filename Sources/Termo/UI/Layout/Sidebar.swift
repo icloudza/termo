@@ -31,7 +31,16 @@ struct Sidebar: View {
             HStack {
                 Text(sectionTitle).font(.system(size: 15, weight: .medium)).foregroundStyle(Pal.text)
                 Spacer()
-                if model.section == .hosts || model.section == .rdp {
+                if model.section == .sshKeys {
+                    Button { model.presentImportKey() } label: {
+                        Image(systemName: "square.and.arrow.down").font(.system(size: 13)).foregroundStyle(Pal.mauve)
+                    }
+                    .buttonStyle(.plain).pointerCursor().help("导入已有私钥")
+                    Button { model.showGenerateKey = true } label: {
+                        Image(systemName: "plus").font(.system(size: 14)).foregroundStyle(Pal.mauve)
+                    }
+                    .buttonStyle(.plain).pointerCursor().help("生成新密钥")
+                } else if model.section == .hosts || model.section == .rdp {
                     Button {
                         if model.section == .rdp { model.showAddRDPHost = true }
                         else { model.showAddHost = true }
@@ -60,6 +69,10 @@ struct Sidebar: View {
                 Spacer().frame(height: 10)
                 searchBox
                 rdpPanel
+            } else if model.section == .sshKeys {
+                Spacer().frame(height: 10)
+                searchBox
+                KeysPanel(model: model)
             } else {
                 Spacer()
                 Text("\(sectionTitle)模块开发中")
@@ -81,6 +94,7 @@ struct Sidebar: View {
         switch model.section {
         case .hosts: return "主机"
         case .files: return "文件"
+        case .sshKeys: return "密钥"
         case .rdp: return "RDP"
         case .snippets: return "代码片段"
         case .settings: return "设置"
@@ -302,6 +316,7 @@ struct HostRow: View {
         .onHover { hover = $0 }
         .contextMenu {
             Button("打开终端") { model.openHostTerminal(host) }
+            Button("新建终端") { model.openHostTerminal(host, forceNew: true) }
             Button("打开文件") { model.openHostFiles(host) }
             Button("编辑主机") { model.beginEditHost(host) }
             Divider()

@@ -12,6 +12,7 @@ struct ActivityBar: View {
     private let items: [(String, Section)] = [
         ("server.rack", .hosts),
         ("folder", .files),
+        ("key", .sshKeys),
         ("display", .rdp),
         ("chevron.left.forwardslash.chevron.right", .snippets),
     ]

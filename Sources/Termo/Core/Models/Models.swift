@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum Section: Hashable {
-    case hosts, files, rdp, snippets, settings
+    case hosts, files, sshKeys, rdp, snippets, settings
 }
 
 enum SettingsTab: String, CaseIterable, Hashable {
@@ -67,7 +67,7 @@ struct SessionEvent: Codable, Identifiable {
 struct SSHConnection: Codable {
     // 密码不进 JSON（存 Keychain），其余字段全部持久化
     enum CodingKeys: String, CodingKey {
-        case user, host, port, authMethod, keyPath, encoding, hostKeyAlgos, ciphers, kexAlgos
+        case user, host, port, authMethod, keyPath, keyId, encoding, hostKeyAlgos, ciphers, kexAlgos
         case proxyURL, disableProxy, timeoutMs, heartbeatMs, initialCommand, defaultPath
     }
 
@@ -77,6 +77,7 @@ struct SSHConnection: Codable {
     var authMethod: AuthMethod = .password
     var password: String = ""
     var keyPath: String = ""
+    var keyId: String = ""   // 关联密钥库的密钥 id；非空则用库密钥（连接时落 0600 工作文件），优先于 keyPath
     var encoding: String = ""
     var hostKeyAlgos: String = ""
     var ciphers: String = ""
@@ -92,9 +93,15 @@ struct SSHConnection: Codable {
         authMethod == .password && !password.isEmpty
     }
 
-    /// 是否需要 askpass 自动喂密钥：密码登录喂密码，密钥登录喂私钥 passphrase（密码框非空时）。
+    /// 是否需要 askpass 自动喂密码：密码登录喂密码、密钥登录喂私钥 passphrase、每次询问喂弹窗输入的一次性密码。
     var needsAskpass: Bool {
-        !password.isEmpty && (authMethod == .password || authMethod == .key)
+        !password.isEmpty && (authMethod == .password || authMethod == .key || authMethod == .ask)
+    }
+
+    /// 当前是否已具备自动连接所需凭证：「每次询问」需已输入本会话密码；其它方式恒为 true。
+    /// 用于门控后台监控/规格探测——无凭证时跳过（UI 显示占位、不反复弹密码框），有凭证后正常采集。
+    var hasUsableCredentials: Bool {
+        authMethod == .ask ? !password.isEmpty : true
     }
 
     /// 把「终端显示编码」映射为远端 locale，经 SetEnv 转发（best-effort，依赖服务器有该 locale）。
@@ -135,13 +142,17 @@ struct SSHConnection: Codable {
         } else {
             a += ["-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=\(HostKeyVerifier.userKnownHostsArg())"]
         }
+        // 每次询问：密码经 askpass 一次性喂入，故只走 password 认证、限 1 次。
         a += ["-o", "NumberOfPasswordPrompts=1"]
+        if authMethod == .ask { a += ["-o", "PreferredAuthentications=password"] }
         a += ["-p", String(port)]
         if timeoutMs > 0 { a += ["-o", "ConnectTimeout=\(max(1, timeoutMs / 1000))"] }
         if heartbeatMs > 0 { a += ["-o", "ServerAliveInterval=\(max(1, heartbeatMs / 1000))"] }
-        // 密钥登录：指定私钥文件，只用它（不尝试 agent/默认 key）
-        if authMethod == .key, !keyPath.isEmpty {
-            a += ["-i", keyPath, "-o", "IdentitiesOnly=yes"]
+        // 密钥登录：指定私钥文件，只用它（不尝试 agent/默认 key）。
+        // 关联了密钥库的密钥（keyId）时，把库私钥落成 0600 工作文件再用，优先于手填的 keyPath。
+        if authMethod == .key {
+            let path = keyId.isEmpty ? keyPath : (KeyMaterializer.path(forKeyId: keyId) ?? keyPath)
+            if !path.isEmpty { a += ["-i", path, "-o", "IdentitiesOnly=yes"] }
         }
         // 终端显示编码：把对应 locale 转发给远端（依赖服务器 AcceptEnv LC_*）
         if let loc = remoteLocale { a += ["-o", "SetEnv=LC_ALL=\(loc)"] }

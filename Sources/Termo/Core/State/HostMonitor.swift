@@ -48,7 +48,7 @@ final class HostMonitor: ObservableObject {
     /// 每解析出一帧调用一次，供上层做阈值告警；监控本身只产数据、不判定告警。
     var onSample: ((HostMetrics) -> Void)?
 
-    private let ssh: SSHConnection
+    private var ssh: SSHConnection
     private let simulated: Bool          // true=合成数据演示主机，不连真服务器
     private var process: Process?
     private var buffer = Data()
@@ -90,6 +90,21 @@ final class HostMonitor: ObservableObject {
     init(ssh: SSHConnection, simulated: Bool = false) {
         self.ssh = ssh
         self.simulated = simulated
+    }
+
+    /// 用最新连接信息刷新（如「每次询问」先输错密码、缓存的监控仍持旧密码，改对后需更新）。
+    /// 关键字段变化时若正在运行则立即用新信息重连，避免缓存的监控一直用旧/错密码连接失败。
+    func updateConnection(_ s: SSHConnection) {
+        guard !simulated else { return }
+        let changed = s.password != ssh.password || s.host != ssh.host
+            || s.port != ssh.port || s.user != ssh.user || s.keyId != ssh.keyId || s.keyPath != ssh.keyPath
+        guard changed else { return }
+        ssh = s
+        guard running else { return }
+        restartWork?.cancel(); restartWork = nil
+        teardownProcess()
+        phase = .connecting
+        launch()
     }
 
     func start() {

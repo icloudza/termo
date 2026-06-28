@@ -311,6 +311,7 @@ struct ContentView: View {
             ZStack {
                 if let h = model.connectingHost {
                     ConnectingDialog(host: h,
+                                     successHint: model.connectingActionHint,
                                      verify: { await model.verifyHostKey(h) },
                                      onConnected: { model.finishConnecting() },
                                      onCancel: { model.cancelConnecting() })
@@ -329,6 +330,19 @@ struct ContentView: View {
             }
             .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
             .allowsHitTesting(model.pendingHostKey != nil)
+        }
+        // 「每次询问」主机连接前的一次性密码弹窗（在连接弹窗之前出现）
+        .overlay {
+            ZStack {
+                if let h = model.pendingAskAuth {
+                    AskPasswordDialog(host: h,
+                                      onConfirm: { model.submitAskAuth($0) },
+                                      onCancel: { model.cancelAskAuth() })
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: model.pendingAskAuth?.id)
+            .allowsHitTesting(model.pendingAskAuth != nil)
         }
         .overlay { fileOpOverlays }
         .overlay {
@@ -381,24 +395,7 @@ struct ContentView: View {
             .animation(.easeOut(duration: 0.15), value: model.pendingQuitConfirm)
             .allowsHitTesting(model.pendingQuitConfirm)
         }
-        .sheet(isPresented: $model.showSettings) {
-            SettingsView(model: model)
-        }
-        .sheet(isPresented: $model.showAddHost) {
-            AddHostView(model: model)
-        }
-        .sheet(item: $model.editingHost) { host in
-            AddHostView(model: model, editing: host)
-        }
-        .sheet(isPresented: $model.showAddRDPHost) {
-            AddRDPHostView(model: model)
-        }
-        .sheet(item: $model.editingRDPHost) { host in
-            AddRDPHostView(model: model, editing: host)
-        }
-        .sheet(item: $model.forwardPanelHost) { host in
-            PortForwardView(model: model, host: host)
-        }
+        .modifier(AppSheets(model: model))
         .onAppear { model.applyStartupIfNeeded() }
     }
 
@@ -508,6 +505,32 @@ struct ContentView: View {
         model.pendingFileCreate != nil || model.pendingFileInfo != nil ||
         model.focusedTransferId != nil ||
         (model.extractTask != nil && model.showExtractDialog)
+    }
+}
+
+/// 把全部 sheet 与 alert 收进一个 ViewModifier：避免 ContentView.body 单表达式过长，
+/// 触发「编译器无法在合理时间内类型检查」。
+private struct AppSheets: ViewModifier {
+    @ObservedObject var model: AppModel
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $model.showSettings) { SettingsView(model: model) }
+            .sheet(isPresented: $model.showAddHost) { AddHostView(model: model) }
+            .sheet(item: $model.editingHost) { host in AddHostView(model: model, editing: host) }
+            .sheet(isPresented: $model.showAddRDPHost) { AddRDPHostView(model: model) }
+            .sheet(item: $model.editingRDPHost) { host in AddRDPHostView(model: model, editing: host) }
+            .sheet(item: $model.forwardPanelHost) { host in PortForwardView(model: model, host: host) }
+            .sheet(isPresented: $model.showGenerateKey) { GenerateKeyView(model: model) }
+            .sheet(item: $model.detailKey) { key in KeyDetailView(model: model, key: key) }
+            .alert("操作失败", isPresented: Binding(
+                get: { model.keyOpError != nil },
+                set: { if !$0 { model.keyOpError = nil } }
+            )) {
+                Button("好", role: .cancel) { model.keyOpError = nil }
+            } message: {
+                Text(model.keyOpError ?? "")
+            }
     }
 }
 

@@ -18,6 +18,8 @@
 		214DBAD8BB3BF450D9FB4FED /* FileOpDialogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74B00A78906F02FDF56EBD41 /* FileOpDialogs.swift */; };
 		22BBD78B16A35C44545FDCB9 /* TermoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 378DC135FD44382B156D0962 /* TermoApp.swift */; };
 		231073A89F60C8A40C0F657C /* BackgroundCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE9E32A5E9159F655A73E5BF /* BackgroundCenterView.swift */; };
+		2427B7F862F1CC4E0B851434 /* KeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF93F7C2CB96381B3D8682DF /* KeyStore.swift */; };
+		24F1DE630ADC2864F0D65FCD /* SSHKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFEDC0474E0B08D643A426BE /* SSHKey.swift */; };
 		33DBD3DB7DF5705E2825092D /* FileBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EBF06C1CB06D90A5431A6F9 /* FileBrowser.swift */; };
 		36DAD864AFE87E7E6905DA9B /* SidebarDivider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD95C1DE696E2B3C571629D9 /* SidebarDivider.swift */; };
 		3C671D0C4AFE998602CF7970 /* RemoteFS.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7ACEFB62B48ECD8CB02F129 /* RemoteFS.swift */; };
@@ -32,7 +34,9 @@
 		6230196B411281BE30BE9F98 /* Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F99F4521F073C0F6EBE2A15F /* Sidebar.swift */; };
 		675631DAFE0038141AD7E36D /* ActivityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2B1F2367735B26316EFCAE /* ActivityBar.swift */; };
 		681FC30033C9D9595459F348 /* BackgroundActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3B106C395798D7D918E612C /* BackgroundActivity.swift */; };
+		6E576AE2C3A9EBB9B0ABC80B /* AskPasswordDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BC8B6218101C6D504E5E417 /* AskPasswordDialog.swift */; };
 		70368C6F3AD80D35C9609C7C /* TabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF5B626E52FF76F6257E7E9 /* TabBar.swift */; };
+		716F8DDD30AFEA0CED4A2F9B /* KeysPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FC0DFB1C9D5E6805389124 /* KeysPanel.swift */; };
 		71A71809A6578EEE02FFD6DF /* PortForward.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6A45D97AEF8BC66A230D83F /* PortForward.swift */; };
 		7D2B36151DB3353C994A2866 /* TerminalSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BC93663AC67FB54DB26730C /* TerminalSurface.swift */; };
 		845145BE8684731DF1966A3A /* BundleResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AE45AF740056FFEDCF438D7 /* BundleResources.swift */; };
@@ -40,7 +44,9 @@
 		94EA7CFD93E209456370E8B3 /* AddHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C3F9ABE2C3B85C56F64004A /* AddHostView.swift */; };
 		9AA03663CED60768B9588084 /* HostOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31B60E5DF27272949854BD2 /* HostOverview.swift */; };
 		9D90BEE4EF81D4A9D9ECA935 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE86F5261BEE28EEEAD5629 /* SettingsView.swift */; };
+		A37D33771B5FCCBC1171DF50 /* KeySheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC11098225BAD85DF7ED613E /* KeySheets.swift */; };
 		A4AF9FB18C790019AD0DA150 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D42CCF77BBBD6DED25DDA975 /* AppModel.swift */; };
+		A67AC1BE5E0AA9A81D084A73 /* KeyTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8652066AD7DD5183A60BAF7B /* KeyTools.swift */; };
 		A773D479DB0F2E78E0D4354C /* NerdFontIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC6B79FAC1DC6C893F549D35 /* NerdFontIcons.swift */; };
 		AC8B245CD416E83B5BAD6519 /* RemoteCodeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3582436FB595AFD591987D04 /* RemoteCodeEditor.swift */; };
 		B155B9106551ADDA31ACFBEB /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = AF6F6501654CF986924A8F64 /* AppIcon.icns */; };
@@ -70,6 +76,7 @@
 		0363712C1408496DE53D15C2 /* FileIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileIcons.swift; sourceTree = "<group>"; };
 		04A0717781C07243DEBEE999 /* SFTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SFTPClient.swift; sourceTree = "<group>"; };
 		0BE95862035ABBECE0B6955E /* Tooltip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tooltip.swift; sourceTree = "<group>"; };
+		1BC8B6218101C6D504E5E417 /* AskPasswordDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskPasswordDialog.swift; sourceTree = "<group>"; };
 		1D36DD358AF3013CC360F2E3 /* RDPSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPSessionView.swift; sourceTree = "<group>"; };
 		289A93F118D5B77CD3C4AB1D /* PortForwardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortForwardView.swift; sourceTree = "<group>"; };
 		2C3F9ABE2C3B85C56F64004A /* AddHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddHostView.swift; sourceTree = "<group>"; };
@@ -92,6 +99,7 @@
 		74B00A78906F02FDF56EBD41 /* FileOpDialogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileOpDialogs.swift; sourceTree = "<group>"; };
 		841D32427616B75CDA225BAB /* TabsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabsModel.swift; sourceTree = "<group>"; };
 		856A0A0639957E4600712D99 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		8652066AD7DD5183A60BAF7B /* KeyTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyTools.swift; sourceTree = "<group>"; };
 		8A540DCD165796795721D0E6 /* FileExtract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileExtract.swift; sourceTree = "<group>"; };
 		8B98C4B8B210F38C372B2955 /* Termo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Termo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		95BB3A9A564341C8AAB6915E /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
@@ -105,7 +113,10 @@
 		B75B6F6C6B05DC28C88B5052 /* Notifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifier.swift; sourceTree = "<group>"; };
 		BC6B79FAC1DC6C893F549D35 /* NerdFontIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NerdFontIcons.swift; sourceTree = "<group>"; };
 		BE9E32A5E9159F655A73E5BF /* BackgroundCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundCenterView.swift; sourceTree = "<group>"; };
+		C0FC0DFB1C9D5E6805389124 /* KeysPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeysPanel.swift; sourceTree = "<group>"; };
 		C311DA328EB02E45EE2FB383 /* font-logos.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "font-logos.ttf"; sourceTree = "<group>"; };
+		CF93F7C2CB96381B3D8682DF /* KeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyStore.swift; sourceTree = "<group>"; };
+		CFEDC0474E0B08D643A426BE /* SSHKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKey.swift; sourceTree = "<group>"; };
 		D1CF00BF6A5FE837574DD533 /* TrayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrayController.swift; sourceTree = "<group>"; };
 		D42CCF77BBBD6DED25DDA975 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		D7ACEFB62B48ECD8CB02F129 /* RemoteFS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteFS.swift; sourceTree = "<group>"; };
@@ -120,6 +131,7 @@
 		EE2B1F2367735B26316EFCAE /* ActivityBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityBar.swift; sourceTree = "<group>"; };
 		F6EFD2AC520F4F37D90D2FE3 /* RDPSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPSession.swift; sourceTree = "<group>"; };
 		F99F4521F073C0F6EBE2A15F /* Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sidebar.swift; sourceTree = "<group>"; };
+		FC11098225BAD85DF7ED613E /* KeySheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeySheets.swift; sourceTree = "<group>"; };
 		FC1EA9F4C446E73C7416A6C6 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
 		FFF5B626E52FF76F6257E7E9 /* TabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBar.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -138,6 +150,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		10EBD0B886A89CDC00E924BD /* Keys */ = {
+			isa = PBXGroup;
+			children = (
+				FC11098225BAD85DF7ED613E /* KeySheets.swift */,
+				C0FC0DFB1C9D5E6805389124 /* KeysPanel.swift */,
+				8652066AD7DD5183A60BAF7B /* KeyTools.swift */,
+			);
+			path = Keys;
+			sourceTree = "<group>";
+		};
 		1CB34637C8516E4FB24EBA61 /* Notifications */ = {
 			isa = PBXGroup;
 			children = (
@@ -151,6 +173,7 @@
 			children = (
 				65995E5CD0B707BD7D935FEA /* HostDraft.swift */,
 				856A0A0639957E4600712D99 /* Models.swift */,
+				CFEDC0474E0B08D643A426BE /* SSHKey.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -280,6 +303,7 @@
 		C145E26A8DBF3BD0E754537D /* Persistence */ = {
 			isa = PBXGroup;
 			children = (
+				CF93F7C2CB96381B3D8682DF /* KeyStore.swift */,
 				468E11EA513CEFEEDB6833F4 /* Persistence.swift */,
 			);
 			path = Persistence;
@@ -289,6 +313,7 @@
 			isa = PBXGroup;
 			children = (
 				DCE8407D36F6A378FF756BA4 /* File */,
+				10EBD0B886A89CDC00E924BD /* Keys */,
 				5D367E4992C7AE2AFEC343EC /* PortForward */,
 				9E4ED61BBE5A43ED51863828 /* RDP */,
 				725D3C9A600BD0F09E64DB36 /* Settings */,
@@ -377,6 +402,7 @@
 			isa = PBXGroup;
 			children = (
 				2C3F9ABE2C3B85C56F64004A /* AddHostView.swift */,
+				1BC8B6218101C6D504E5E417 /* AskPasswordDialog.swift */,
 				66009CD647C5DC9E867DBC6F /* HostKeyDialog.swift */,
 				DD59C1D00B8D0401EF697B41 /* HostKeyVerifier.swift */,
 				E31B60E5DF27272949854BD2 /* HostOverview.swift */,
@@ -496,6 +522,7 @@
 				8BC3B280403DE01A0B4F5B40 /* AddRDPHostView.swift in Sources */,
 				A4AF9FB18C790019AD0DA150 /* AppModel.swift in Sources */,
 				F77A5A97D9208A83426E05D2 /* AppSettings.swift in Sources */,
+				6E576AE2C3A9EBB9B0ABC80B /* AskPasswordDialog.swift in Sources */,
 				681FC30033C9D9595459F348 /* BackgroundActivity.swift in Sources */,
 				231073A89F60C8A40C0F657C /* BackgroundCenterView.swift in Sources */,
 				845145BE8684731DF1966A3A /* BundleResources.swift in Sources */,
@@ -513,6 +540,10 @@
 				47ECCFFA633DDC6F609D6A50 /* HostKeyVerifier.swift in Sources */,
 				C365974A8B836FA098CECFA7 /* HostMonitor.swift in Sources */,
 				9AA03663CED60768B9588084 /* HostOverview.swift in Sources */,
+				A37D33771B5FCCBC1171DF50 /* KeySheets.swift in Sources */,
+				2427B7F862F1CC4E0B851434 /* KeyStore.swift in Sources */,
+				A67AC1BE5E0AA9A81D084A73 /* KeyTools.swift in Sources */,
+				716F8DDD30AFEA0CED4A2F9B /* KeysPanel.swift in Sources */,
 				11E7AA6FD2D73BB1C16A80FA /* LayoutModel.swift in Sources */,
 				00952F24C6B3AC94A372BFE1 /* Models.swift in Sources */,
 				A773D479DB0F2E78E0D4354C /* NerdFontIcons.swift in Sources */,
@@ -526,6 +557,7 @@
 				AC8B245CD416E83B5BAD6519 /* RemoteCodeEditor.swift in Sources */,
 				3C671D0C4AFE998602CF7970 /* RemoteFS.swift in Sources */,
 				C4810204614CFD474D242EA1 /* SFTPClient.swift in Sources */,
+				24F1DE630ADC2864F0D65FCD /* SSHKey.swift in Sources */,
 				9D90BEE4EF81D4A9D9ECA935 /* SettingsView.swift in Sources */,
 				6230196B411281BE30BE9F98 /* Sidebar.swift in Sources */,
 				36DAD864AFE87E7E6905DA9B /* SidebarDivider.swift in Sources */,
@@ -582,7 +614,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 15;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -596,7 +628,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 0.7.53;
+				MARKETING_VERSION = 0.7.54;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -686,7 +718,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 15;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -706,7 +738,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 0.7.53;
+				MARKETING_VERSION = 0.7.54;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

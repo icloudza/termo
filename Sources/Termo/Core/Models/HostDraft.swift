@@ -54,6 +54,7 @@ enum SSHOptions {
 enum AuthMethod: String, CaseIterable, Hashable, Codable {
     case password = "密码"
     case key = "密钥"
+    case ask = "每次询问"           // 每次连接时弹窗输入本次密码，不保存任何凭证
 }
 
 enum HostFormSection: String, CaseIterable, Hashable {
@@ -83,10 +84,11 @@ final class HostDraft: ObservableObject {
     @Published var creatingGroup = false
     @Published var name = ""
     @Published var address = ""
-    @Published var authMethod: AuthMethod = .password
+    @Published var authMethod: AuthMethod = .ask   // 新增主机默认「每次询问」（连接时弹窗输入，不存凭证）
     @Published var user = "root"
     @Published var password = ""
     @Published var keyPath = ""        // 私钥文件路径（认证方式为「密钥」时使用）
+    @Published var keyId = ""          // 关联密钥库的密钥 id（非空则用库密钥，优先于 keyPath）
     @Published var notes = ""
 
     // 连接设置
@@ -133,6 +135,7 @@ final class HostDraft: ObservableObject {
         authMethod = s.authMethod
         password = s.password
         keyPath = s.keyPath
+        keyId = s.keyId
         encoding = s.encoding
         hostKeyAlgos = s.hostKeyAlgos
         ciphers = s.ciphers
@@ -153,6 +156,7 @@ final class HostDraft: ObservableObject {
             authMethod: authMethod,
             password: password,
             keyPath: keyPath.trimmingCharacters(in: .whitespaces),
+            keyId: keyId,
             encoding: encoding,
             hostKeyAlgos: hostKeyAlgos,
             ciphers: ciphers,

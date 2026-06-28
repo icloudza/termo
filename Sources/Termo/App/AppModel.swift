@@ -45,6 +45,16 @@ final class AppModel: ObservableObject {
     @Published var editingHost: Host? = nil   // 非 nil 时以编辑模式打开主机表单
     @Published var showAddRDPHost = false
     @Published var editingRDPHost: Host? = nil   // 非 nil 时以编辑模式打开 RDP 主机表单
+    // 密钥库（SSH Keys）
+    @Published var sshKeys: [SSHKey] = []
+    @Published var showGenerateKey = false        // 显示「生成密钥」弹窗
+    @Published var detailKey: SSHKey? = nil        // 非 nil 显示密钥详情弹窗
+    @Published var keyOpError: String? = nil       // 密钥操作错误提示（生成/导入失败）
+    @Published var pendingAskAuth: Host? = nil     // 「每次询问」主机的密码弹窗（连接前）
+    private var pendingAskContinuation: (() -> Void)?   // 密码确认后要执行的动作（终端/文件/转发等）
+    private var connectingContinuation: (() -> Void)?   // 「正在连接」验证弹窗成功后要执行的原动作
+    var connectingActionHint = "正在进入终端…"          // 连接弹窗成功提示，按动作变化（ContentView 读取）
+    private var askVerifiedHosts: Set<String> = []      // 「每次询问」本会话已成功验证过密码的主机（之后文件/转发直连，不再弹连接弹窗）
     @Published var pendingHostKey: PendingHostKey? = nil   // 首次连接待验证的主机指纹
     @Published var connectingHost: Host? = nil   // 正在连接的主机（展示连接进度弹窗）
 
@@ -209,6 +219,70 @@ final class AppModel: ObservableObject {
         HostStore.saveSessions(sessions)
     }
 
+    // ---------- 密钥库（SSH Keys）----------
+    /// 生成新密钥对：私钥进钥匙串，元数据落 JSON。
+    func generateKey(name: String, type: SSHKeyType, comment: String, passphrase: String) {
+        do {
+            let g = try KeyTools.generate(type: type, comment: comment, passphrase: passphrase)
+            let key = SSHKey(name: name.isEmpty ? "未命名密钥" : name, type: type,
+                             publicKey: g.publicKey, fingerprint: g.fingerprint,
+                             comment: comment, hasPassphrase: !passphrase.isEmpty)
+            KeyKeychain.set(key.id, g.privateKey)
+            sshKeys.append(key)
+            KeyStore.save(sshKeys)
+        } catch {
+            keyOpError = (error as? KeyError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// 弹文件选择器导入已有私钥。
+    func presentImportKey() {
+        let panel = NSOpenPanel()
+        panel.title = "导入私钥"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true   // ~/.ssh 下私钥多为隐藏
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        importKey(from: url)
+    }
+
+    private func importKey(from url: URL) {
+        do {
+            let pem = try String(contentsOf: url, encoding: .utf8)
+            let info = try KeyTools.importInfo(privatePath: url.path)
+            let key = SSHKey(name: url.deletingPathExtension().lastPathComponent,
+                             type: info.type, publicKey: info.publicKey,
+                             fingerprint: info.fingerprint, comment: info.comment,
+                             hasPassphrase: info.hasPassphrase)
+            KeyKeychain.set(key.id, pem)
+            sshKeys.append(key)
+            KeyStore.save(sshKeys)
+        } catch {
+            keyOpError = (error as? KeyError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    func deleteKey(_ key: SSHKey) {
+        sshKeys.removeAll { $0.id == key.id }
+        KeyKeychain.remove(key.id)
+        KeyMaterializer.remove(key.id)   // 清理落盘的工作私钥文件
+        KeyStore.save(sshKeys)
+        if detailKey?.id == key.id { detailKey = nil }
+    }
+
+    func renameKey(_ id: String, to name: String) {
+        guard let i = sshKeys.firstIndex(where: { $0.id == id }) else { return }
+        sshKeys[i].name = name.isEmpty ? sshKeys[i].name : name
+        KeyStore.save(sshKeys)
+    }
+
+    /// 复制公钥到剪贴板（贴到服务器 authorized_keys 用）。
+    func copyPublicKey(_ key: SSHKey) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(key.publicKey, forType: .string)
+    }
+
     // ---------- 会话历史 ----------
     /// 记录一条会话事件并持久化。
     func recordSession(hostId: String, kind: SessionKind, detail: String) {
@@ -244,7 +318,9 @@ final class AppModel: ObservableObject {
     private static let alertCooldown: TimeInterval = 300
 
     private var monitorStartWork: [String: DispatchWorkItem] = [:]   // 防抖：稳定停留后再启动采集
+    private var monitorStopWork: [String: DispatchWorkItem] = [:]    // 离开后延迟停流；快速切回则取消，避免切 tab 反复连断
     private static let monitorDebounce: TimeInterval = 0.4           // 频繁切换主机时，未停留够此时长不启动
+    private static let monitorStopGrace: TimeInterval = 4            // 切走后保留监控连接的宽限期
 
     /// 取得（或惰性创建）某主机的监控对象；不在此启动采集——采集只在其概览为当前激活视图时跑（见 overviewAppeared）。
     func hostMonitor(for host: Host) -> HostMonitor {
@@ -259,20 +335,33 @@ final class AppModel: ObservableObject {
     /// 概览成为当前激活视图：防抖后再启动采集。在该时长内切走则启动被取消——飞速切换主机时不会把一堆监控点着，
     /// 任一时刻只有真正停留的那台在跑。
     func overviewAppeared(_ host: Host) {
+        monitorStopWork[host.id]?.cancel()                 // 切回了：取消挂起的延迟停流，保留连接、不重连
+        monitorStopWork.removeValue(forKey: host.id)
+        // 「每次询问」未输密码前无凭证，跳过实时指标采集（UI 显示占位；后台 ssh 否则会反复认证失败/挂起）。
+        if !(host.ssh?.hasUsableCredentials ?? true) { return }
         monitorStartWork[host.id]?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.monitorStartWork.removeValue(forKey: host.id)
-            self?.hostMonitor(for: host).start()   // start 幂等（已在跑则跳过）
+            guard let self else { return }
+            self.monitorStartWork.removeValue(forKey: host.id)
+            let m = self.hostMonitor(for: host)
+            m.updateConnection(self.host(host.id)?.ssh ?? host.ssh ?? SSHConnection())   // 用实时密码刷新（防缓存旧/错密码）
+            m.start()   // start 幂等（已在跑则跳过）
         }
         monitorStartWork[host.id] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.monitorDebounce, execute: work)
     }
 
-    /// 概览不再是当前激活视图：取消待启动并立即冻结该主机监控（停流、保留上次数据快照）。不在后台继续跑。
+    /// 概览不再是当前激活视图：取消待启动，并在宽限期后停流（快速切回则取消停止，避免反复连断）。
     func overviewDisappeared(_ hostId: String) {
         monitorStartWork[hostId]?.cancel()
         monitorStartWork.removeValue(forKey: hostId)
-        hostMonitors[hostId]?.stop()
+        monitorStopWork[hostId]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.monitorStopWork.removeValue(forKey: hostId)
+            self?.hostMonitors[hostId]?.stop()
+        }
+        monitorStopWork[hostId] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.monitorStopGrace, execute: work)
     }
 
     /// 主机已无任何标签时彻底释放其监控对象与告警状态。
@@ -280,6 +369,8 @@ final class AppModel: ObservableObject {
         guard !tabs.contains(where: { $0.hostId == hostId }) else { return }
         monitorStartWork[hostId]?.cancel()
         monitorStartWork.removeValue(forKey: hostId)
+        monitorStopWork[hostId]?.cancel()
+        monitorStopWork.removeValue(forKey: hostId)
         hostMonitors[hostId]?.stop()
         hostMonitors.removeValue(forKey: hostId)
         alertStreak = alertStreak.filter { !$0.key.hasPrefix(hostId + "|") }
@@ -394,7 +485,21 @@ final class AppModel: ObservableObject {
     }
 
     /// 打开某主机的端口转发管理面板。
-    func openForwardPanel(_ host: Host) { forwardPanelHost = host }
+    func openForwardPanel(_ host: Host) {
+        requireAuth(host) { [weak self] in self?.proceedForward(host.id) }
+    }
+
+    /// 「每次询问」首次（未验证）先走连接验证弹窗后再开转发面板；已验证或密码/密钥直接开（你要求的：连过一次后转发进入不再弹窗）。
+    private func proceedForward(_ hostId: String) {
+        guard let host = hosts.first(where: { $0.id == hostId }) else { return }
+        if host.ssh?.authMethod == .ask, !askVerifiedHosts.contains(hostId) {
+            connectThen(hostId, hint: "正在打开端口转发…") { [weak self] in
+                self?.forwardPanelHost = self?.hosts.first(where: { $0.id == hostId })
+            }
+        } else {
+            forwardPanelHost = host
+        }
+    }
 
     /// 关闭所有打开的 sheet（设置/添加主机/端口转发等）。退出/隐藏前调用：
     /// 退出确认弹窗是 ContentView 的 overlay，会被 sheet 盖在下面；sheet 还是窗口级模态、可能阻塞退出。
@@ -502,7 +607,8 @@ final class AppModel: ObservableObject {
     /// 打开主机概览时调用：后台 SSH 跑一次探测脚本，取真实系统信息并缓存。
     /// 已有未过期的缓存(probedAt 在 specsTTL 内)则跳过——系统信息变化慢，无需每次打开都重探。
     func probeHostIfNeeded(_ host: Host) {
-        guard let ssh = host.ssh, !ssh.host.isEmpty, !probingHosts.contains(host.id), !host.isMock else { return }
+        guard let ssh = host.ssh, !ssh.host.isEmpty, ssh.hasUsableCredentials,
+              !probingHosts.contains(host.id), !host.isMock else { return }
         if let probedAt = host.specs?.probedAt, Date().timeIntervalSince(probedAt) < Self.specsTTL { return }
         probingHosts.insert(host.id)
         let id = host.id
@@ -741,6 +847,7 @@ final class AppModel: ObservableObject {
         hosts.append(Self.makeMockHost())   // 注入模拟演示主机（内存中、不落盘），用于预览监控面板
         sessions = HostStore.loadSessions()
         forwards = HostStore.loadForwards()
+        sshKeys = KeyStore.load()
         HostKeyVerifier.resetSession()   // 清空「仅本次信任」的会话临时 known_hosts
         // 启动即对所有主机做一次轻量在线检测
         defer { refreshAllStatuses() }
@@ -859,7 +966,7 @@ final class AppModel: ObservableObject {
     func terminalView(for tabId: Int) -> LocalProcessTerminalView {
         if let tv = terminals[tabId] { return tv }
         let hostId = tabs.first(where: { $0.id == tabId })?.hostId
-        let conn = hostId.flatMap { hid in hosts.first(where: { $0.id == hid })?.ssh }
+        let conn = hostId.flatMap { hid in hosts.first(where: { $0.id == hid })?.ssh }   // .ask 的本会话密码已在 host.ssh 内
         let tv = makeTerminal(ssh: conn, hostId: hostId, tabId: tabId)
         terminals[tabId] = tv
         return tv
@@ -1032,6 +1139,7 @@ final class AppModel: ObservableObject {
         performCloseTab(tabId)
         if let hostId, let host = hosts.first(where: { $0.id == hostId }) {
             let stillUsed = tabs.contains { ($0.kind == .terminal || $0.kind == .files) && $0.hostId == hostId }
+            // 注：「每次询问」的本会话密码保留在 host.ssh 内、整个 App 运行期有效（冷启动才清），关标签不清除。
             // 传输进行中不关主连接（closeMaster 会掐断复用同一 master 的传输；审查 R20）
             if !stillUsed, !hostHasRunningTransfer(hostId) { RemoteFS(host.ssh ?? SSHConnection()).closeMaster() }
         }
@@ -1063,7 +1171,7 @@ final class AppModel: ObservableObject {
               NetworkMonitor.shared.isOnline else { return }
         conn.attempt += 1
         let gen = conn.dropGen
-        startTerminalProcess(tv: tv, ssh: ssh)
+        startTerminalProcess(tv: tv, ssh: ssh)   // .ask 的本会话密码已在 host.ssh 内，重连复用
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
             guard let self, let c = self.terminalConns[tabId],
                   c.phase == .dropped, c.dropGen == gen else { return }
@@ -1137,19 +1245,85 @@ final class AppModel: ObservableObject {
         addTab(.overview, title: host.name, hostId: host.id)
     }
 
-    func openHostTerminal(_ host: Host) {
-        // 立刻显示连接弹窗；指纹验证与真实连接都在弹窗内分步进行（避免海外高延迟主机点击后长时间无反馈）
-        connectingHost = host
+    /// 打开终端：默认复用该主机已打开的终端标签（不新建）；forceNew=true 则强制新建（右键「新建终端」）。
+    func openHostTerminal(_ host: Host, forceNew: Bool = false) {
+        if !forceNew, let existing = tabs.first(where: { $0.kind == .terminal && $0.hostId == host.id }) {
+            activeTabId = existing.id
+            return
+        }
+        requireAuth(host) { [weak self] in
+            self?.connectThen(host.id, hint: "正在进入终端…") { self?.openTerminalTab(host.id) }
+        }
     }
 
-    /// 连接进度弹窗成功 → 打开真实终端标签。
-    func finishConnecting() {
-        guard let host = connectingHost else { return }
-        connectingHost = nil
+    /// 仅为监控等场景验证连接（「每次询问」输密码 → 走连接验证弹窗）：成功后不开任何标签，
+    /// 概览据此切到实时监控；失败则清密码。供概览监控占位的「连接」按钮使用。
+    func verifyConnect(_ host: Host) {
+        requireAuth(host) { [weak self] in self?.connectThen(host.id, hint: "开始监控…") { } }
+    }
+
+    /// 闸门：若是「每次询问」且本会话还没输入过密码 → 先弹密码框（确认后执行 action）；否则直接执行。
+    /// 适用于终端 / 文件 / 端口转发等所有需要 SSH 凭证的入口。
+    /// **始终按 id 取最新 host 判断**：调用方常传旧快照（不含本会话已缓存的密码），用快照判断会重复弹框。
+    private func requireAuth(_ host: Host, _ action: @escaping () -> Void) {
+        let live = hosts.first(where: { $0.id == host.id }) ?? host
+        if live.ssh?.authMethod == .ask, (live.ssh?.password ?? "").isEmpty {
+            pendingAskAuth = live
+            pendingAskContinuation = action
+            return
+        }
+        action()
+    }
+
+    /// 「每次询问」弹窗确认：把密码写进该主机内存 ssh（本会话有效、绝不落盘——saveHosts 对 .ask 跳过），
+    /// 此后该主机的终端/文件/转发/监控等所有走 host.ssh 的操作自动带上密码；冷启动后为空、需重新输入。
+    func submitAskAuth(_ password: String) {
+        guard let host = pendingAskAuth, let idx = hosts.firstIndex(where: { $0.id == host.id }) else {
+            pendingAskAuth = nil; pendingAskContinuation = nil; return
+        }
+        pendingAskAuth = nil
+        hosts[idx].ssh?.password = password
+        let cont = pendingAskContinuation
+        pendingAskContinuation = nil
+        cont?()
+    }
+
+    func cancelAskAuth() { pendingAskAuth = nil; pendingAskContinuation = nil }
+
+    /// 启动「正在连接」验证弹窗（用 askpass 密码真实认证 + 展示连接日志），成功后执行 then。
+    /// 「每次询问」从任意入口（终端/文件/转发/监控）确认密码后都经此验证；密码/密钥的终端连接亦走此弹窗。
+    private func connectThen(_ hostId: String, hint: String = "正在进入终端…", _ then: @escaping () -> Void) {
+        guard let host = hosts.first(where: { $0.id == hostId }) else { return }
+        connectingActionHint = hint
+        connectingContinuation = then
+        connectingHost = host   // 指纹验证与连接探测在弹窗内分步进行（海外高延迟主机点击后有反馈）
+    }
+
+    /// 打开终端标签（连接验证成功后调用）。
+    private func openTerminalTab(_ hostId: String) {
+        guard let host = hosts.first(where: { $0.id == hostId }) else { return }
         let title = uniqueTabTitle(host.name) { $0.kind == .terminal && $0.hostId == host.id }
         addTab(.terminal, title: title, hostId: host.id)
         recordSession(hostId: host.id, kind: .terminal, detail: "终端会话")
         prewarmExplorer(for: host)
+    }
+
+    /// 清掉「每次询问」主机的本会话密码（连接失败/取消时）：下次操作重新询问，并停掉用错误密码的监控。
+    private func clearAskPassword(_ hostId: String) {
+        guard let i = hosts.firstIndex(where: { $0.id == hostId }), hosts[i].ssh?.authMethod == .ask else { return }
+        hosts[i].ssh?.password = ""
+        askVerifiedHosts.remove(hostId)   // 验证态一并清除：下次需重新验证
+        hostMonitors[hostId]?.stop()
+    }
+
+    /// 连接验证弹窗成功 → 标记该「每次询问」主机本会话已验证（之后文件/转发直连），执行原动作（开终端 / 文件 / 转发）。
+    func finishConnecting() {
+        guard let host = connectingHost else { return }
+        if host.ssh?.authMethod == .ask { askVerifiedHosts.insert(host.id) }
+        connectingHost = nil
+        let cont = connectingContinuation
+        connectingContinuation = nil
+        (cont ?? {})()
     }
 
     /// SSH 连上后立刻在后台预建主机资源管理器树，使后续打开文件无可感知的加载。
@@ -1158,7 +1332,12 @@ final class AppModel: ObservableObject {
         explorerTree(for: host).startIfNeeded()
     }
 
-    func cancelConnecting() { connectingHost = nil }
+    func cancelConnecting() {
+        // 「每次询问」连接失败/取消：清掉本会话密码，下次重新询问（处理密码输错）。
+        if let host = connectingHost, host.ssh?.authMethod == .ask { clearAskPassword(host.id) }
+        connectingHost = nil
+        connectingContinuation = nil
+    }
 
     // ---------- RDP 远程桌面 ----------
     /// 打开（或切到）一台 RDP 主机的远程桌面标签。
@@ -1190,6 +1369,21 @@ final class AppModel: ObservableObject {
             activeTabId = existing.id
             return
         }
+        requireAuth(host) { [weak self] in self?.proceedFiles(host.id) }
+    }
+
+    /// 「每次询问」首次（未验证）先走连接验证弹窗后再开文件；已验证或密码/密钥直接开。
+    private func proceedFiles(_ hostId: String) {
+        guard let host = hosts.first(where: { $0.id == hostId }) else { return }
+        if host.ssh?.authMethod == .ask, !askVerifiedHosts.contains(hostId) {
+            connectThen(hostId, hint: "正在打开文件…") { [weak self] in self?.startOpenHostFiles(hostId) }
+        } else {
+            startOpenHostFiles(hostId)
+        }
+    }
+
+    private func startOpenHostFiles(_ hostId: String) {
+        guard let host = hosts.first(where: { $0.id == hostId }) else { return }
         guard openingFilesHostId != host.id else { return }   // 防连点重复发起
         openingFilesHostId = host.id
         Task {
@@ -1860,8 +2054,8 @@ final class AppModel: ObservableObject {
         let taken = Set(tabs.filter(predicate).map(\.title))
         if !taken.contains(base) { return base }
         var n = 2
-        while taken.contains("\(base) \(n)") { n += 1 }
-        return "\(base) \(n)"
+        while taken.contains("\(base) (\(n))") { n += 1 }
+        return "\(base) (\(n))"
     }
 
     /// 请求重命名标签（弹输入框）。

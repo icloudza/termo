@@ -142,7 +142,8 @@ enum HostStore {
         // 密码合并写入单条 Keychain 条目；JSON 由 SSHConnection.CodingKeys 排除了 password 字段
         var pwMap: [String: String] = [:]
         for h in hosts {
-            if let ssh = h.ssh, !ssh.password.isEmpty { pwMap[h.id] = ssh.password }
+            // 「每次询问」的密码是本会话内存值，绝不落盘（冷启动后需重新输入）。
+            if let ssh = h.ssh, ssh.authMethod != .ask, !ssh.password.isEmpty { pwMap[h.id] = ssh.password }
             else if let rdp = h.rdp, !rdp.password.isEmpty { pwMap[h.id] = rdp.password }
         }
         HostKeychain.saveAll(pwMap)

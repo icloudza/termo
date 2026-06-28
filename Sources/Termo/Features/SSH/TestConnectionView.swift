@@ -154,6 +154,7 @@ struct ConnectionProgressView: View {
 /// 连接主机时的进度弹窗（复用 ConnectionProgressView），成功后回调进入终端。
 struct ConnectingDialog: View {
     let host: Host
+    var successHint: String = "正在进入终端…"   // 成功后的提示，按动作变化（终端/文件/转发/监控）
     let verify: () async -> Bool   // 指纹验证（可能弹出指纹核对框）；返回是否继续连接
     let onConnected: () -> Void
     let onCancel: () -> Void
@@ -191,7 +192,7 @@ struct ConnectingDialog: View {
                         SecondaryButton(title: "取消") { onCancel() }
                         PrimaryButton(title: "重试") { tester.start(conn: host.ssh ?? SSHConnection()) }
                     } else {
-                        Text("连接成功，正在进入终端…").font(.system(size: 12)).foregroundStyle(Pal.green)
+                        Text("连接成功，\(successHint)").font(.system(size: 12)).foregroundStyle(Pal.green)
                     }
                 }
                 .padding(.horizontal, 20).padding(.vertical, 14)
