@@ -71,5 +71,8 @@ extension MinimapView {
             )
         )
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        // [termo] 滚动后主动重新布局可见区，消除「断层」：缩略图内容视图(MinimapContentView)只有在自身
+        // layout() 时才 layoutLines()，而 scroll(to:) 不会触发其 layout → 滚动到的新区域不渲染留空。
+        contentView.layoutManager?.layoutLines()
     }
 }

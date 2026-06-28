@@ -280,7 +280,12 @@ public class MinimapView: FlippedNSView {
         // hittable.
         if documentVisibleView.frame.contains(point) {
             return documentVisibleView
-        } else if visibleRect.contains(point) {
+        } else if bounds.contains(point) {
+            // [termo] 原为 visibleRect.contains(point)：visibleRect 被 override 成 scrollView 内容(含滚动偏移)
+            // 坐标系，而 point 是本视图 bounds 坐标系，二者不一致——长文件缩略图滚动后 visibleRect.origin.y 很大、
+            // point.y 很小 → 永不命中 → 落到 super.hitTest 命中绑定了编辑器 textView/selectionManager 的
+            // contentView → 在缩略图里拖动会错误地框选编辑器正文。改用 bounds：缩略图区域内一律自身吃掉鼠标
+            // 事件（见下方 mouseDown/mouseDragged 空实现），不再穿透到正文选择。
             return self
         } else {
             return super.hitTest(point)
