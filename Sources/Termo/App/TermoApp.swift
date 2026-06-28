@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if mainWindow == nil, let w { mainWindow = w; w.delegate = self }
         w?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        applyAppIcon()   // .accessory→.regular 重建 Dock 图标时系统会重解析，需重新断言，否则回落为通用「exec」占位图标
     }
 
     /// 关闭主窗口：
