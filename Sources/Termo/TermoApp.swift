@@ -57,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 从托盘恢复：切回常规激活策略（恢复 Dock 图标与主菜单），前置并激活主窗口。
     /// 现场重新解析窗口（orderOut 后窗口仍在 NSApp.windows 列表中），不依赖可能过期的 mainWindow。
     private func showMainWindow() {
-        NSApp.setActivationPolicy(.regular)
+        // App 全程保持 .regular（不再切附件模式），故无需改激活策略；直接前置并激活主窗口即可。
         let w = mainWindow ?? NSApp.windows.first { !($0 is NSPanel) && $0.contentView != nil }
         if mainWindow == nil, let w { mainWindow = w; w.delegate = self }
         w?.makeKeyAndOrderFront(nil)
@@ -78,14 +78,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return false
     }
 
-    /// 隐藏到菜单栏：隐藏所有可见内容窗口、切附件模式、点亮托盘图标。后台任务继续运行。
-    /// 标 @MainActor：内部调用 @MainActor 的 tray.rebuild()；调用方（windowShouldClose / @MainActor Task）均在主线程。
+    /// 隐藏到菜单栏：仅隐藏所有可见内容窗口，后台任务继续运行。
+    /// 不切换激活策略：macOS 15/26 在 .regular↔.accessory 切换时会丢弃/重排状态栏图标，导致托盘图标消失
+    /// 或位置被重置。保持 .regular、只隐藏窗口，托盘图标（启动时创建、全程不动）位置与存在都稳定。
+    /// 代价：隐藏时 Dock 图标仍在；点 Dock 图标可重新打开窗口（见 applicationShouldHandleReopen）。
     @MainActor private func hideToTray() {
         for w in NSApp.windows where w.isVisible && !(w is NSPanel) && w.contentView != nil {
             w.orderOut(nil)
         }
-        NSApp.setActivationPolicy(.accessory)
-        tray?.rebuild()   // 切 .accessory 后重新点亮托盘图标的可见性（不重建，避免闪烁/丢位置）
+    }
+
+    /// 点 Dock 图标（隐藏到托盘后窗口不可见时）重新打开主窗口。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { showMainWindow() }
+        return true
     }
 
     /// 关窗 / 菜单退出（⌘Q）入口。本方法为自定义（非协议方法，故不自动 @MainActor），访问 @MainActor 的
@@ -340,12 +346,10 @@ struct ContentView: View {
                             model.pendingQuitConfirm = false
                             model.pendingQuitForce = false
                             AppSettings.shared.closeToTray = true
-                            // 直接隐藏当前所有可见内容窗口（不绕 AppDelegate 引用，杜绝取不到/过期）。
+                            // 仅隐藏窗口，不切激活策略（避免 macOS 15/26 丢弃或重排托盘图标）。
                             for w in NSApp.windows where w.isVisible && !(w is NSPanel) && w.contentView != nil {
                                 w.orderOut(nil)
                             }
-                            NSApp.setActivationPolicy(.accessory)
-                            TrayController.shared?.rebuild()   // 切 .accessory 后重新点亮托盘图标（不重建，避免闪烁/丢位置）
                         },
                         onConfirm: {
                             model.pendingQuitConfirm = false
