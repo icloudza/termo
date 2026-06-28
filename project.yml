@@ -13,8 +13,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.7.52"
-    CURRENT_PROJECT_VERSION: "13"
+    MARKETING_VERSION: "0.7.53"
+    CURRENT_PROJECT_VERSION: "14"
     SWIFT_VERSION: "5.9"
     DEAD_CODE_STRIPPING: YES
     ARCHS: arm64                  # 仅 Apple Silicon（放弃 Intel）：相比通用二进制约省一半体积

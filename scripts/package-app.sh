@@ -107,10 +107,10 @@ create-dmg \
     --volname "$VOLNAME" \
     --background "$BG" \
     --window-pos 200 120 \
-    --window-size 660 420 \
+    --window-size 660 400 \
     --icon-size 128 \
-    --icon "$APP_NAME.app" 170 215 \
-    --app-drop-link 490 215 \
+    --icon "$APP_NAME.app" 170 198 \
+    --app-drop-link 490 198 \
     --hide-extension "$APP_NAME.app" \
     --no-internet-enable \
     "$DMG" "$STAGE" >>"$LOG" 2>&1 || true

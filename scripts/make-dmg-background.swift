@@ -1,15 +1,26 @@
 // 生成 DMG 安装窗口的品牌叠层（@1x + @2x），离屏 CoreGraphics/CoreText 渲染，无需显示器。
 // 透明底：只画品牌字标 + 拖拽箭头 + 指引，浮在默认浅色 Finder 窗口上（不铺任何底色）。
 // >_ 复用托盘 logo 的描边路径（圆角端点、蓝色 _），与菜单栏图标视觉一致。
-// 坐标系与 create-dmg 对齐：窗口内容 660x420，App 图标(170,215)、Applications(490,215)，图标 128。
+// 坐标系与 create-dmg 对齐：create-dmg 窗口 660x400（含标题栏），背景图高度取「可视内容高度」
+// 660x368（≈400-标题栏28），使图正好铺满内容区、底部不被标题栏挤出而切到指引文字；
+// App 图标(170,198)、Applications(490,198)、图标 128，对应背景里箭头/图标行 image-y = 368-198 = 170。
 // 用法：swift make-dmg-background.swift <输出目录>  → 产出 background.png / background@2x.png
 import Foundation
+import AppKit
 import CoreGraphics
 import CoreText
 import ImageIO
 import UniformTypeIdentifiers
 
-let W: CGFloat = 660, H: CGFloat = 420
+/// 取系统圆体（SF Pro Rounded）：用 NSFont 的 .rounded 设计变体最可靠（按 PostScript 名常取不到）。
+/// NSFont 与 CTFont 免费桥接，可直接交给 CoreText 绘制。
+func roundedFont(_ size: CGFloat, _ weight: NSFont.Weight) -> CTFont {
+    let base = NSFont.systemFont(ofSize: size, weight: weight)
+    if let d = base.fontDescriptor.withDesign(.rounded) { return NSFont(descriptor: d, size: size) ?? base }
+    return base
+}
+
+let W: CGFloat = 660, H: CGFloat = 368
 let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 
 func c(_ r: Int, _ g: Int, _ b: Int, _ a: CGFloat = 1) -> CGColor {
@@ -61,22 +72,22 @@ func render(scale: CGFloat) -> CGImage? {
     let s: CGFloat = 3.2
     let gW = promptGlyphWidth * s
     let gap: CGFloat = 16
-    let termoFont = CTFontCreateWithName("SFProRounded-Semibold" as CFString, 40, nil)
+    let termoFont = roundedFont(40, .semibold)
     let termoLine = CTLineCreateWithAttributedString(attr("Termo", termoFont, ink) as CFAttributedString)
     let tW = measure(termoLine)
     let total = gW + gap + tW
     let startX = (W - total) / 2
-    let baseY: CGFloat = H - 84
+    let baseY: CGFloat = H - 60
     drawPrompt(ox: startX - 4.3*s, baselineY: baseY, s: s, in: ctx)
     ctx.textPosition = CGPoint(x: startX + gW + gap, y: baseY)
     CTLineDraw(termoLine, ctx)
 
     // 副标题
     let subFont = CTFontCreateWithName("PingFangSC-Regular" as CFString, 14, nil)
-    drawCentered(attr("服务器 · 主机管理工具", subFont, subtle), centerX: W/2, baselineY: H-114, in: ctx)
+    drawCentered(attr("服务器 · 主机管理工具", subFont, subtle), centerX: W/2, baselineY: H-88, in: ctx)
 
-    // 拖拽箭头（两图标之间，图标中心 bottom-left y=205）
-    let ay: CGFloat = 205, ax0: CGFloat = 268, ax1: CGFloat = 392
+    // 拖拽箭头（两图标之间，图标中心 image-y = H-198 = 170）
+    let ay: CGFloat = 170, ax0: CGFloat = 268, ax1: CGFloat = 392
     ctx.setStrokeColor(gray); ctx.setLineWidth(3); ctx.setLineCap(.round)
     ctx.beginPath(); ctx.move(to: CGPoint(x: ax0, y: ay)); ctx.addLine(to: CGPoint(x: ax1, y: ay)); ctx.strokePath()
     ctx.setFillColor(blue)
@@ -86,7 +97,7 @@ func render(scale: CGFloat) -> CGImage? {
 
     // 底部指引
     let hintFont = CTFontCreateWithName("PingFangSC-Medium" as CFString, 15, nil)
-    drawCentered(attr("将 Termo 拖到「应用程序」完成安装", hintFont, ink), centerX: W/2, baselineY: 52, in: ctx)
+    drawCentered(attr("将 Termo 拖到「应用程序」完成安装", hintFont, ink), centerX: W/2, baselineY: 40, in: ctx)
 
     return ctx.makeImage()
 }
