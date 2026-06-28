@@ -32,16 +32,36 @@ final class TrayController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// 兜底确保图标可见（极少用）。App 全程保持 .regular、不再切附件模式，故图标不会被系统丢弃，
-    /// 平时无需调用；保留此方法仅作保险。
+    /// 切到 .accessory 后确保图标仍显示。
+    /// macOS 15：切 .accessory 会把已有 NSStatusItem 丢弃，仅 isVisible=true 无法找回 → 必须重建；
+    /// 借助 autosaveName，重建后系统会把图标还原到用户原来的位置，不会跑到默认位置。
+    /// macOS 14 及更早：图标不会被丢弃，只需重新点亮可见性（不重建，避免闪烁/丢位置）。
     func rebuild() {
-        if statusItem == nil { install() } else { statusItem?.isVisible = true }
+        guard statusItem != nil else { install(); return }
+        if #available(macOS 15.0, *) {
+            recreate()
+        } else {
+            reassertVisible()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.reassertVisible() }
+        }
     }
 
-    /// 创建状态栏图标（仅一次，常驻整个 App 生命周期，全程不移除/不重建）。
-    /// autosaveName 让系统持久化其位置（跨重启还原到用户拖动的位置）。
+    /// 重新点亮已存在的状态栏图标（不新建，保留其位置）；顺带按当前后台状态刷新图标（含小圆点）。
+    private func reassertVisible() {
+        statusItem?.isVisible = true
+        updateImage()
+    }
+
+    /// 移除旧图标并重建（仅 macOS 15 切 .accessory 后用）。autosaveName 使位置得以还原，不丢用户调整。
+    private func recreate() {
+        if let old = statusItem { NSStatusBar.system.removeStatusItem(old) }
+        statusItem = nil
+        install()
+    }
+
+    /// 创建状态栏图标。已存在则只确保可见。autosaveName 让系统持久化其位置（跨重建/重启还原）。
     private func install() {
-        if statusItem != nil { return }
+        if statusItem != nil { reassertVisible(); return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.autosaveName = "TermoBackgroundStatusItem"   // 持久化位置：重建/重启后还原到用户拖动的位置
         item.button?.toolTip = "Termo"
