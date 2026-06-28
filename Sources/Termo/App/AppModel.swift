@@ -55,6 +55,7 @@ final class AppModel: ObservableObject {
     @Published var showCreateSnippet = false               // 显示「新建片段」弹窗
     @Published var editingSnippet: Snippet? = nil          // 非 nil 显示片段编辑/详情弹窗
     @Published var pendingSnippetRun: SnippetRunRequest? = nil  // 非 nil 显示变量填值弹窗
+    @Published var pendingSnippetAction: Snippet? = nil    // 非 nil 显示「插入/运行」选择弹窗
     @Published var snippetNotice: String? = nil            // 片段操作提示（如无可用终端）
     @Published var pendingAskAuth: Host? = nil     // 「每次询问」主机的密码弹窗（连接前）
     private var pendingAskContinuation: (() -> Void)?   // 密码确认后要执行的动作（终端/文件/转发等）
@@ -336,6 +337,25 @@ final class AppModel: ObservableObject {
         NSPasteboard.general.setString(snippet.content, forType: .string)
     }
 
+    /// 片段的「默认动作」入口（▶ 按钮 / 双击）：按设置决定直接运行 / 仅插入 / 弹框询问。
+    /// 右键菜单的「运行」「插入」是显式直达，不走这里。
+    func triggerSnippet(_ snippet: Snippet) {
+        switch AppSettings.shared.snippetAction {
+        case .insert: sendSnippet(snippet, run: false)
+        case .run:    sendSnippet(snippet, run: true)
+        case .ask:    pendingSnippetAction = snippet
+        }
+    }
+
+    /// 「插入/运行」选择弹窗的结果：remember=true 时把选择写入设置（之后不再询问），再发送。
+    func resolveSnippetAction(_ snippet: Snippet, run: Bool, remember: Bool) {
+        pendingSnippetAction = nil
+        if remember { AppSettings.shared.snippetAction = run ? .run : .insert }
+        sendSnippet(snippet, run: run)
+    }
+
+    func cancelSnippetAction() { pendingSnippetAction = nil }
+
     /// 发送片段到当前终端：含 {{变量}} 则先弹填值框，否则直接发送。
     /// run=true 末尾补换行（直接执行）；run=false 仅打到提示符（用户确认后自行回车）。
     func sendSnippet(_ snippet: Snippet, run: Bool) {
@@ -355,20 +375,21 @@ final class AppModel: ObservableObject {
 
     func cancelSnippetRun() { pendingSnippetRun = nil }
 
-    /// 当前是否存在可发送片段的终端（供片段面板启用/禁用运行按钮；面板观察 TabsModel 故随标签变化刷新）。
-    var hasSnippetTarget: Bool { snippetTargetTerminal() != nil }
+    /// 当前是否存在可发送片段的终端标签（供片段面板显示运行按钮）。
+    /// 只看「标签」是否存在——由 TabsModel 驱动，面板观察它故能随开/关终端即时刷新；
+    /// 不依赖 terminals 字典里终端视图是否已实例化（该字典非 @Published，依赖它会导致
+    /// 「先进片段模块、再开终端」时按钮不刷新，须重进模块才出现）。
+    var hasSnippetTarget: Bool { snippetTargetTabId() != nil }
 
-    /// 解析片段的目标终端：优先当前活动标签（若是终端），否则取唯一打开的终端。
-    private func snippetTargetTerminal() -> LocalProcessTerminalView? {
-        if let id = activeTabId, tabs.first(where: { $0.id == id })?.kind == .terminal,
-           let tv = terminals[id] { return tv }
+    /// 片段的目标终端标签 id：优先当前活动标签（若是终端），否则取唯一打开的终端标签。
+    private func snippetTargetTabId() -> Int? {
+        if let id = activeTabId, tabs.first(where: { $0.id == id })?.kind == .terminal { return id }
         let termTabs = tabs.filter { $0.kind == .terminal }
-        if termTabs.count == 1, let tv = terminals[termTabs[0].id] { return tv }
-        return nil
+        return termTabs.count == 1 ? termTabs[0].id : nil
     }
 
     private func deliverSnippet(_ text: String, run: Bool) {
-        guard let tv = snippetTargetTerminal() else {
+        guard let id = snippetTargetTabId(), let tv = terminals[id] else {
             snippetNotice = "请先打开并切到一个终端，再运行片段。"
             return
         }

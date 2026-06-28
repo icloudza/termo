@@ -125,21 +125,21 @@ private struct SnippetRow: View {
             }
             Spacer(minLength: 0)
             if hover && canRun {
-                Button { model.sendSnippet(snippet, run: true) } label: {
+                Button { model.triggerSnippet(snippet) } label: {
                     Image(systemName: "play.fill").font(.system(size: 11)).foregroundStyle(Pal.mauve)
                         .frame(width: 22, height: 22)
                         .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).pointerCursor().help("运行到当前终端")
+                .buttonStyle(.plain).pointerCursor().help("使用片段")
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 7)
         .background(hover ? Pal.fill(0.06) : .clear, in: RoundedRectangle(cornerRadius: 7))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        // 单击不触发任何动作（避免误开编辑）；双击运行，编辑走右键菜单或悬停按钮。
-        .onTapGesture(count: 2) { if canRun { model.sendSnippet(snippet, run: true) } }
+        // 行本身不挂点击手势：之前的双击手势会和 ▶ 按钮的单击落在同一手势竞技场里互相等待，
+        // 导致「点 ▶ 没反应/延迟、询问弹窗迟迟不出」。运行统一走 ▶ 按钮与右键菜单，单击即时响应。
         .contextMenu {
             Button("运行到当前终端") { model.sendSnippet(snippet, run: true) }.disabled(!canRun)
             Button("插入到当前终端") { model.sendSnippet(snippet, run: false) }.disabled(!canRun)

@@ -522,6 +522,19 @@ private struct ConnectionDialogs: ViewModifier {
                 .animation(.easeOut(duration: 0.15), value: model.pendingAskAuth?.id)
                 .allowsHitTesting(model.pendingAskAuth != nil)
             }
+            // 片段「插入/运行」选择弹窗（默认动作为「每次询问」时）
+            .overlay {
+                ZStack {
+                    if let s = model.pendingSnippetAction {
+                        SnippetActionDialog(snippet: s,
+                                            onChoose: { model.resolveSnippetAction(s, run: $0, remember: $1) },
+                                            onCancel: { model.cancelSnippetAction() })
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: model.pendingSnippetAction?.id)
+                .allowsHitTesting(model.pendingSnippetAction != nil)
+            }
             // 含 {{变量}} 的片段运行/插入前的填值弹窗
             .overlay {
                 ZStack {

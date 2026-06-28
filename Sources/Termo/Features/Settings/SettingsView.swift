@@ -232,6 +232,14 @@ struct SettingsView: View {
                 ThemedToggle(isOn: $settings.closeConfirm)
             }
 
+            settingRow("代码片段运行方式", description: "点击片段时的默认行为；「每次询问」会弹出「插入/运行」选择且可记住") {
+                ThemedDropdown(
+                    options: SnippetAction.allCases.map { ($0, $0.label) },
+                    selection: $settings.snippetAction
+                )
+                .frame(width: 160)
+            }
+
             settingRow("字体", description: "终端显示使用的字体") {
                 ThemedDropdown(
                     options: [
