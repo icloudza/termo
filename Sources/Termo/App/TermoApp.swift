@@ -17,7 +17,9 @@ struct TermoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup {
+        // 单窗口场景（Window 而非 WindowGroup）：全进程只允许一个窗口实例，从根上杜绝
+        // 隐藏到托盘后经启动台/托盘「显示」/⌘N 等路径重复新建窗口；也不再出现「新建窗口」菜单项。
+        Window("Termo", id: "main") {
             ContentView()
                 // 三栏布局（活动栏 + 主机侧栏 + 工作区）与设置/新增主机弹窗(约 720 宽) 的合理下限
                 .frame(minWidth: 860, minHeight: 560)
@@ -32,6 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private weak var mainWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 先对齐 AppKit 外观，使窗口首帧即正确明暗，杜绝冷启动露出系统默认浅色窗口底的白闪。
+        NSApp.appearance = NSAppearance(named: ThemeManager.shared.isDark ? .darkAqua : .aqua)
         NSApp.setActivationPolicy(.regular)
         applyAppIcon()
         setupMainMenu()
@@ -65,6 +69,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         w?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         applyAppIcon()   // .accessory→.regular 重建 Dock 图标时系统会重解析，需重新断言，否则回落为通用「exec」占位图标
+    }
+
+    /// 点击 Dock/启动台图标重新打开：隐藏到托盘后窗口只是 orderOut（仍存在），此时无可见窗口，
+    /// WindowGroup 默认会新建一个 → 同进程出现两个相同窗口。这里复用已存在的窗口并返回 false 阻止新建。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if flag { return true }   // 已有可见窗口：交系统默认前置，不新建
+        // 无可见窗口：若隐藏中的主窗口仍在，复用它；否则放行默认新建。
+        if NSApp.windows.contains(where: { $0.canBecomeMain && $0.contentView != nil }) {
+            showMainWindow()
+            return false
+        }
+        return true
     }
 
     /// 关闭主窗口：
@@ -519,9 +535,16 @@ struct WindowConfigurator: NSViewRepresentable {
                     return
                 }
                 self.window = w
+                // 窗口底色设为品牌 base：首帧即深/浅品牌底，避免默认窗口底色造成冷启动闪白。
+                w.backgroundColor = ThemeManager.shared.windowBackground
+                w.isOpaque = true
                 w.titlebarAppearsTransparent = true
                 w.titleVisibility = .hidden
                 w.styleMask.insert(.fullSizeContentView)
+                // 冷启动不自动聚焦搜索框：否则 macOS 会给聚焦的文本框弹自动填充/输入法候选浮层，
+                // 启动瞬间闪现一帧白色圆角卡片。清掉初始第一响应者，用户点击搜索框仍可正常聚焦。
+                w.initialFirstResponder = nil
+                w.makeFirstResponder(nil)
                 // 不修改标题栏容器高度——保持原生窗口控制按钮的外观和交互
                 NotificationCenter.default.addObserver(self, selector: #selector(self.reposition), name: NSWindow.didResizeNotification, object: w)
                 NotificationCenter.default.addObserver(self, selector: #selector(self.reposition), name: NSWindow.didBecomeKeyNotification, object: w)

@@ -42,7 +42,6 @@
 		9D90BEE4EF81D4A9D9ECA935 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE86F5261BEE28EEEAD5629 /* SettingsView.swift */; };
 		A4AF9FB18C790019AD0DA150 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D42CCF77BBBD6DED25DDA975 /* AppModel.swift */; };
 		A773D479DB0F2E78E0D4354C /* NerdFontIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC6B79FAC1DC6C893F549D35 /* NerdFontIcons.swift */; };
-		A9380C297638AACBF512B110 /* CodeEditSymbols in Frameworks */ = {isa = PBXBuildFile; productRef = 8E7292B5ECB5CC8BB1E507AA /* CodeEditSymbols */; };
 		AC8B245CD416E83B5BAD6519 /* RemoteCodeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3582436FB595AFD591987D04 /* RemoteCodeEditor.swift */; };
 		B155B9106551ADDA31ACFBEB /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = AF6F6501654CF986924A8F64 /* AppIcon.icns */; };
 		B3D2E936139E2FD0EEA1053D /* HostKeyDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66009CD647C5DC9E867DBC6F /* HostKeyDialog.swift */; };
@@ -93,7 +92,6 @@
 		74B00A78906F02FDF56EBD41 /* FileOpDialogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileOpDialogs.swift; sourceTree = "<group>"; };
 		841D32427616B75CDA225BAB /* TabsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabsModel.swift; sourceTree = "<group>"; };
 		856A0A0639957E4600712D99 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		87F536C6166ACF46DF8223F0 /* CodeEditSymbols */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeEditSymbols; path = LocalPackages/CodeEditSymbols; sourceTree = SOURCE_ROOT; };
 		8A540DCD165796795721D0E6 /* FileExtract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileExtract.swift; sourceTree = "<group>"; };
 		8B98C4B8B210F38C372B2955 /* Termo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Termo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		95BB3A9A564341C8AAB6915E /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
@@ -134,7 +132,6 @@
 				50A266AC1A12B573BBAA2DF1 /* SwiftTerm in Frameworks */,
 				3F74E95EBEDF83AE11A4A723 /* CodeEditSourceEditor in Frameworks */,
 				E94ABF77377FDEB920AEB59F /* CodeEditTextView in Frameworks */,
-				A9380C297638AACBF512B110 /* CodeEditSymbols in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -361,7 +358,6 @@
 			isa = PBXGroup;
 			children = (
 				53052B0E988B7965222333EE /* CodeEditSourceEditor */,
-				87F536C6166ACF46DF8223F0 /* CodeEditSymbols */,
 				500D51A30903F7DBC8F96798 /* CodeEditTextView */,
 			);
 			name = Packages;
@@ -432,7 +428,6 @@
 				9AFD70D7F0CA6271D43F4764 /* SwiftTerm */,
 				C802BDCF5DFDD914442BF1C7 /* CodeEditSourceEditor */,
 				6732CE908A2DDCC1F7A18FEF /* CodeEditTextView */,
-				8E7292B5ECB5CC8BB1E507AA /* CodeEditSymbols */,
 			);
 			productName = Termo;
 			productReference = 8B98C4B8B210F38C372B2955 /* Termo.app */;
@@ -464,7 +459,6 @@
 			packageReferences = (
 				24FC386F270D786934C82453 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				166857F00507358A08AA55E5 /* XCLocalSwiftPackageReference "LocalPackages/CodeEditSourceEditor" */,
-				0AA09F216B62F27C071924A4 /* XCLocalSwiftPackageReference "LocalPackages/CodeEditSymbols" */,
 				276BA207347DA69F23DCA963 /* XCLocalSwiftPackageReference "LocalPackages/CodeEditTextView" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -555,6 +549,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -587,7 +582,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -601,7 +596,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 0.7.5;
+				MARKETING_VERSION = 0.7.52;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -636,6 +631,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_OPTIMIZATION = space;
 				CODE_SIGN_ENTITLEMENTS = Termo.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_HARDENED_RUNTIME = NO;
@@ -649,6 +645,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.cloudza.termo;
 				PRODUCT_NAME = Termo;
 				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
 			};
 			name = Release;
 		};
@@ -656,6 +653,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -688,7 +686,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -708,7 +706,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 0.7.5;
+				MARKETING_VERSION = 0.7.52;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -744,10 +742,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		0AA09F216B62F27C071924A4 /* XCLocalSwiftPackageReference "LocalPackages/CodeEditSymbols" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = LocalPackages/CodeEditSymbols;
-		};
 		166857F00507358A08AA55E5 /* XCLocalSwiftPackageReference "LocalPackages/CodeEditSourceEditor" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = LocalPackages/CodeEditSourceEditor;
@@ -773,10 +767,6 @@
 		6732CE908A2DDCC1F7A18FEF /* CodeEditTextView */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CodeEditTextView;
-		};
-		8E7292B5ECB5CC8BB1E507AA /* CodeEditSymbols */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeEditSymbols;
 		};
 		9AFD70D7F0CA6271D43F4764 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;

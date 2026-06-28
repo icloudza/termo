@@ -13,10 +13,11 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.7.5"
-    CURRENT_PROJECT_VERSION: "12"
+    MARKETING_VERSION: "0.7.52"
+    CURRENT_PROJECT_VERSION: "13"
     SWIFT_VERSION: "5.9"
     DEAD_CODE_STRIPPING: YES
+    ARCHS: arm64                  # 仅 Apple Silicon（放弃 Intel）：相比通用二进制约省一半体积
     # 本地运行用 ad-hoc 签名（与原 package-app.sh 一致，无需付费账号即可跑）。
     # 上架/公证时改为对应的 Developer ID 或 Apple Distribution 身份与 Team。
     CODE_SIGN_STYLE: Manual
@@ -28,11 +29,10 @@ packages:
     from: "1.13.0"
   CodeEditSourceEditor:
     path: LocalPackages/CodeEditSourceEditor
-  # 以下两个本地包按 identity 覆盖 CodeEditSourceEditor 传递引入的远程同名包（修过的 vendored 版本）。
+  # CodeEditTextView 由 App 直接 import，需单列；CodeEditSymbols 仅经 CodeEditSourceEditor
+  # 的相对 path 传递引入，不在此重复声明（避免 identity 冲突）。
   CodeEditTextView:
     path: LocalPackages/CodeEditTextView
-  CodeEditSymbols:
-    path: LocalPackages/CodeEditSymbols
 
 targets:
   Termo:
@@ -48,11 +48,8 @@ targets:
         product: SwiftTerm
       - package: CodeEditSourceEditor
         product: CodeEditSourceEditor
-      # 显式声明本地覆盖包，确保进入解析图并按 identity 生效
-      - package: CodeEditTextView
+      - package: CodeEditTextView      # App 直接 import；CodeEditSymbols 经此传递引入，无需显式声明
         product: CodeEditTextView
-      - package: CodeEditSymbols
-        product: CodeEditSymbols
     settings:
       base:
         INFOPLIST_FILE: Sources/Termo/Info.plist
@@ -64,3 +61,20 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO       # 上架/公证阶段再打开
         MACOSX_DEPLOYMENT_TARGET: "13.0"
         COMBINE_HIDPI_IMAGES: YES
+      configs:
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-Osize"          # 体积优先（对 IO/终端型应用性能影响可忽略）
+          ASSETCATALOG_COMPILER_OPTIMIZATION: space   # 资产目录按体积优化
+          # 去符号由 xcodebuild archive 的 install-time 处理（strip 主程序 + 分离 dSYM）；
+          # 见 scripts/package-app.sh。dwarf-with-dsym 为 Release 默认，保留以便崩溃符号化。
+
+# 共享 scheme：供 xcodebuild -scheme Termo 打包（scripts/package-app.sh）与 Xcode 运行/归档使用。
+schemes:
+  Termo:
+    build:
+      targets:
+        Termo: all
+    run:
+      config: Debug
+    archive:
+      config: Release

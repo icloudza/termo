@@ -26,6 +26,9 @@ struct ThemeColors {
     let termFg: UInt32
     let termCaret: UInt32
     let termSelection: UInt32
+
+    // 工作区底色的 hex（= base），供以 NSColor 给窗口设底、消除冷启动白闪。
+    let baseHex: UInt32
 }
 
 extension ThemeColors {
@@ -44,7 +47,8 @@ extension ThemeColors {
         yellow: Color(hex: 0xd7ba7d),
         red: Color(hex: 0xf14c4c),
         termBg: 0x1e1e1e, termFg: 0xcccccc,
-        termCaret: 0xaeafad, termSelection: 0x264f78
+        termCaret: 0xaeafad, termSelection: 0x264f78,
+        baseHex: 0x1e1e1e
     )
 
     // 清新浅色主题——整体较纯白降一档亮度以减少眩光（保持层次梯度 base>mantle>crust>surface0）
@@ -62,7 +66,8 @@ extension ThemeColors {
         yellow: Color(hex: 0xf59e0b),
         red: Color(hex: 0xef4444),
         termBg: 0xf5f6f9, termFg: 0x2e3440,   // 终端/编辑器底同步降亮，去掉纯白眩光
-        termCaret: 0x3b82f6, termSelection: 0xbfdbfe
+        termCaret: 0x3b82f6, termSelection: 0xbfdbfe,
+        baseHex: 0xf5f6f9
     )
 }
 
@@ -78,6 +83,9 @@ final class ThemeManager: ObservableObject {
 
     @Published private(set) var colors: ThemeColors = .dark
     @Published private(set) var isDark: Bool = true
+
+    /// 当前主题的窗口底色（NSColor），用于给 NSWindow 设 backgroundColor，使首帧即品牌深/浅底，消除冷启动白闪。
+    var windowBackground: NSColor { NSColor(hex: colors.baseHex) }
 
     private var systemObserver: NSObjectProtocol?
 
@@ -104,6 +112,9 @@ final class ThemeManager: ObservableObject {
             isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         }
         colors = isDark ? .dark : .light
+        // 同步 AppKit 外观：让系统默认窗口底色与各类系统控件首帧即正确明暗，配合 NSWindow.backgroundColor
+        // 消除冷启动白闪；同时避免强制深色时标题栏/菜单等仍为浅色造成的明暗错配。
+        NSApp?.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
     }
 }
 

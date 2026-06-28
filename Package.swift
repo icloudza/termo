@@ -7,16 +7,13 @@ let package = Package(
     platforms: [.macOS(.v13)],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0"),
-        // 本地 vendoring 覆盖 CodeEditTextView：修上游 0.12.1 的 inout 遮蔽 bug（行宽写不回→不换行无横滚）。
-        // 同名（identity=codeedittextview）的 path 依赖覆盖 CodeEditSourceEditor 传递引入的远程版本。
-        .package(path: "./LocalPackages/CodeEditTextView"),
-        // 本地 vendoring CodeEditSourceEditor：为汉化 Find/Replace 面板与右键菜单的写死英文。
-        // identity=codeeditsourceeditor 的 path 依赖取代远程 0.15.2。
+        // 本地 vendoring CodeEditSourceEditor：为汉化 Find/Replace 面板与右键菜单的写死英文（取代远程 0.15.2）。
+        // 它经相对 path 直接引同目录下的 vendored CodeEditTextView / CodeEditSymbols / CodeEditLanguages，
+        // 故此处不再单列后两者（避免 identity 冲突）。
         .package(path: "./LocalPackages/CodeEditSourceEditor"),
-        // 本地 vendoring 覆盖 CodeEditSymbols 0.2.3：上游 manifest 未把 Symbols.xcassets 声明为资源，
-        // 纯 swift build 因此缺 Bundle.module（Xcode 能自动处理 asset catalog，故只在命令行打包时暴露）。
-        // identity=codeeditsymbols 的 path 依赖取代远程版本，并补上资源声明。
-        .package(path: "./LocalPackages/CodeEditSymbols"),
+        // CodeEditTextView 由 App 直接 import（RemoteCodeEditor 用 layoutManager/textInsets），需作为直接依赖；
+        // 它就是 CodeEditSourceEditor 引的那个同一本地包（同 path 同 identity，不冲突）。
+        .package(path: "./LocalPackages/CodeEditTextView"),
     ],
     targets: [
         .executableTarget(
@@ -24,6 +21,7 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "CodeEditSourceEditor", package: "CodeEditSourceEditor"),
+                .product(name: "CodeEditTextView", package: "CodeEditTextView"),
             ],
             path: "Sources/Termo",
             // Info.plist 由 linker 嵌入；Assets.xcassets 仅供 Xcode App target 用 actool 编译，
