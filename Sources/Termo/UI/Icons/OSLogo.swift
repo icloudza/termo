@@ -10,7 +10,7 @@ enum OSLogo {
     /// 注册打包字体并返回其 PostScript 名(供 `.custom` 渲染);资源缺失/注册失败 → nil → 回退圆点。
     /// `static let` 保证只注册一次(在 [[TermoApp]] 启动时预热,首帧即可用)。
     static let fontName: String? = {
-        guard let url = Bundle.module.url(forResource: "font-logos", withExtension: "ttf"),
+        guard let url = Bundle.app.url(forResource: "font-logos", withExtension: "ttf"),
               let provider = CGDataProvider(url: url as CFURL),
               let cgFont = CGFont(provider) else { return nil }
         CTFontManagerRegisterGraphicsFont(cgFont, nil)   // .process 作用域:仅本进程可见

@@ -2,4 +2,11 @@
 .swiftpm/
 .DS_Store
 termo.app/
+Termo.app/
 .spec-workflow/
+
+# Xcode：生成的 .xcodeproj 本身提交（XcodeGen 输出确定性，diff 稳定），仅忽略个人/构建状态
+xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/

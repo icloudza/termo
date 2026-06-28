@@ -78,7 +78,7 @@ enum NerdFont {
     /// 注册 Resources 里文件名含 "nerd" 的字体并返回其 PostScript 名（供 `.custom` 渲染）；无则 nil。
     private static func registerBundledNerdFont() -> String? {
         for ext in ["ttf", "otf"] {
-            let urls = Bundle.module.urls(forResourcesWithExtension: ext, subdirectory: nil) ?? []
+            let urls = Bundle.app.urls(forResourcesWithExtension: ext, subdirectory: nil) ?? []
             for u in urls where u.lastPathComponent.lowercased().contains("nerd") {
                 guard let provider = CGDataProvider(url: u as CFURL), let cg = CGFont(provider) else { continue }
                 CTFontManagerRegisterGraphicsFont(cg, nil)

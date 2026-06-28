@@ -201,8 +201,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func applyAppIcon() {
-        let url = Bundle.module.url(forResource: "AppIcon", withExtension: "icns")
-            ?? Bundle.module.url(forResource: "AppIcon", withExtension: "png")
+        let url = Bundle.app.url(forResource: "AppIcon", withExtension: "icns")
+            ?? Bundle.app.url(forResource: "AppIcon", withExtension: "png")
         if let url, let img = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = img
         }

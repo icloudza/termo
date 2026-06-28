@@ -1,0 +1,66 @@
+# XcodeGen 声明式工程定义。改这里后运行 `xcodegen generate` 重新生成 Termo.xcodeproj。
+# 业务代码全部直接归属 Termo App target（单一模块，与原 SwiftPM 可执行目标同构）；
+# 第三方/vendored 依赖以 Swift Package 形式引入（SwiftTerm 远程 + 三个本地 CodeEdit 包）。
+name: Termo
+
+options:
+  bundleIdPrefix: com.cloudza
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true        # 子目录(App/Core/Features/UI/System)映射为分组
+  defaultConfig: Debug
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "0.7.5"
+    CURRENT_PROJECT_VERSION: "12"
+    SWIFT_VERSION: "5.9"
+    DEAD_CODE_STRIPPING: YES
+    # 本地运行用 ad-hoc 签名（与原 package-app.sh 一致，无需付费账号即可跑）。
+    # 上架/公证时改为对应的 Developer ID 或 Apple Distribution 身份与 Team。
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: "1.13.0"
+  CodeEditSourceEditor:
+    path: LocalPackages/CodeEditSourceEditor
+  # 以下两个本地包按 identity 覆盖 CodeEditSourceEditor 传递引入的远程同名包（修过的 vendored 版本）。
+  CodeEditTextView:
+    path: LocalPackages/CodeEditTextView
+  CodeEditSymbols:
+    path: LocalPackages/CodeEditSymbols
+
+targets:
+  Termo:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Termo
+        excludes:
+          - "Info.plist"          # 作为 INFOPLIST_FILE，不当资源拷贝
+          - "**/.DS_Store"
+    dependencies:
+      - package: SwiftTerm
+        product: SwiftTerm
+      - package: CodeEditSourceEditor
+        product: CodeEditSourceEditor
+      # 显式声明本地覆盖包，确保进入解析图并按 identity 生效
+      - package: CodeEditTextView
+        product: CodeEditTextView
+      - package: CodeEditSymbols
+        product: CodeEditSymbols
+    settings:
+      base:
+        INFOPLIST_FILE: Sources/Termo/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        PRODUCT_NAME: Termo
+        PRODUCT_BUNDLE_IDENTIFIER: com.cloudza.termo
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: Termo.entitlements
+        ENABLE_HARDENED_RUNTIME: NO       # 上架/公证阶段再打开
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        COMBINE_HIDPI_IMAGES: YES
