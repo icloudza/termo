@@ -80,8 +80,6 @@ enum HostFormSection: String, CaseIterable, Hashable {
 final class HostDraft: ObservableObject {
     // 基本信息
     @Published var group = ""
-    @Published var newGroup = ""
-    @Published var creatingGroup = false
     @Published var name = ""
     @Published var address = ""
     @Published var authMethod: AuthMethod = .ask   // 新增主机默认「每次询问」（连接时弹窗输入，不存凭证）
@@ -118,7 +116,7 @@ final class HostDraft: ObservableObject {
     }
 
     var resolvedGroup: String {
-        let g = creatingGroup ? newGroup.trimmingCharacters(in: .whitespaces) : group
+        let g = group.trimmingCharacters(in: .whitespaces)
         return g.isEmpty ? "未分组" : g
     }
 
@@ -126,7 +124,6 @@ final class HostDraft: ObservableObject {
     func load(from host: Host) {
         name = host.name
         group = host.group
-        creatingGroup = false
         notes = host.notes
         guard let s = host.ssh else { return }
         user = s.user

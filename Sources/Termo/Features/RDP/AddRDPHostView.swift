@@ -10,8 +10,6 @@ struct AddRDPHostView: View {
 
     @State private var name = ""
     @State private var group = ""
-    @State private var newGroup = ""
-    @State private var creatingGroup = false
     @State private var address = ""
     @State private var port = "3389"
     @State private var user = "Administrator"
@@ -32,7 +30,7 @@ struct AddRDPHostView: View {
     }
 
     private var resolvedGroup: String {
-        let g = creatingGroup ? newGroup.trimmingCharacters(in: .whitespaces) : group
+        let g = group.trimmingCharacters(in: .whitespaces)
         return g.isEmpty ? "未分组" : g
     }
 
@@ -85,6 +83,7 @@ struct AddRDPHostView: View {
         }
         .frame(width: 560, height: 580)
         .background(Pal.solidBase)
+        .background(NoInitialFocus())   // 打开时不默认把光标聚焦到「名称」
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .onAppear {
             guard !didLoad else { return }
@@ -190,33 +189,7 @@ struct AddRDPHostView: View {
 
     private var groupSelector: some View {
         labeled("分组") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    ForEach(model.groupNames, id: \.self) { g in
-                        chip(g, selected: !creatingGroup && group == g) {
-                            creatingGroup = false; group = g
-                        }
-                    }
-                    chip("＋ 新建分组", selected: creatingGroup) { creatingGroup = true }
-                    Spacer()
-                }
-                if creatingGroup {
-                    ThemedTextField(placeholder: "新分组名称", text: $newGroup)
-                }
-            }
+            SearchableSelect(options: model.groupNames, text: $group, placeholder: "搜索或新建分组…")
         }
-    }
-
-    private func chip(_ label: String, selected: Bool, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(selected ? .white : Pal.subtext)
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(selected ? Pal.mauve : Pal.fill(0.06), in: Capsule())
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
     }
 }

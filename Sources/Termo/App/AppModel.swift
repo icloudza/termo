@@ -50,6 +50,12 @@ final class AppModel: ObservableObject {
     @Published var showGenerateKey = false        // 显示「生成密钥」弹窗
     @Published var detailKey: SSHKey? = nil        // 非 nil 显示密钥详情弹窗
     @Published var keyOpError: String? = nil       // 密钥操作错误提示（生成/导入失败）
+    // 代码片段（Snippets）
+    @Published var snippets: [Snippet] = []
+    @Published var showCreateSnippet = false               // 显示「新建片段」弹窗
+    @Published var editingSnippet: Snippet? = nil          // 非 nil 显示片段编辑/详情弹窗
+    @Published var pendingSnippetRun: SnippetRunRequest? = nil  // 非 nil 显示变量填值弹窗
+    @Published var snippetNotice: String? = nil            // 片段操作提示（如无可用终端）
     @Published var pendingAskAuth: Host? = nil     // 「每次询问」主机的密码弹窗（连接前）
     private var pendingAskContinuation: (() -> Void)?   // 密码确认后要执行的动作（终端/文件/转发等）
     private var connectingContinuation: (() -> Void)?   // 「正在连接」验证弹窗成功后要执行的原动作
@@ -134,6 +140,9 @@ final class AppModel: ObservableObject {
         guard let idx = hosts.firstIndex(where: { $0.id == id }) else { return }
         let conn = draft.buildConnection()
         let old = hosts[idx]
+        // 连接相关配置（ssh：ip/端口/用户/密码/认证方式/密钥/编码/算法/代理/超时等）是否变化。
+        // 只改名称/备注/分组时为 false → 不重探可达性、不刷新监控连接，避免无谓的状态闪烁与重连。
+        let connectionChanged = old.ssh != conn
         hosts[idx] = Host(
             id: id,
             name: draft.name.trimmingCharacters(in: .whitespaces),
@@ -145,8 +154,15 @@ final class AppModel: ObservableObject {
             ssh: conn,
             notes: draft.notes.trimmingCharacters(in: .whitespaces)
         )
+        // 保留运行时探测结果：延迟徽标沿用旧值；系统信息缓存仅在连接变化时作废（迫使概览重探），
+        // 只改名称/备注/分组时原样保留 → 概览不再触发 SSH 重新探测，主机图标不闪「探测中」。
+        hosts[idx].latencyMs = old.latencyMs
+        hosts[idx].specs = connectionChanged ? nil : old.specs
         HostStore.saveHosts(hosts)
-        checkReachability(hosts[idx])
+        if connectionChanged {
+            checkReachability(hosts[idx])
+            hostMonitors[id]?.updateConnection(conn)   // 活动监控按新配置重连；无活动监控则无操作
+        }
     }
 
     /// 新增一台 RDP（Windows 远程桌面）主机。
@@ -281,6 +297,82 @@ final class AppModel: ObservableObject {
     func copyPublicKey(_ key: SSHKey) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(key.publicKey, forType: .string)
+    }
+
+    // ---------- 代码片段（Snippets）----------
+    /// 已有片段分组名（去重、保序），供分组 select 取已有项。
+    var snippetGroupNames: [String] {
+        var seen: [String] = []
+        for s in snippets {
+            let g = s.group.trimmingCharacters(in: .whitespaces)
+            if !g.isEmpty && !seen.contains(g) { seen.append(g) }
+        }
+        return seen
+    }
+
+    func addSnippet(name: String, content: String, group: String) {
+        snippets.append(Snippet(name: name.isEmpty ? "未命名片段" : name, content: content, group: group))
+        SnippetStore.save(snippets)
+    }
+
+    func updateSnippet(_ id: String, name: String, content: String, group: String) {
+        guard let i = snippets.firstIndex(where: { $0.id == id }) else { return }
+        snippets[i].name = name.isEmpty ? snippets[i].name : name
+        snippets[i].content = content
+        snippets[i].group = group
+        snippets[i].updatedAt = Date()
+        SnippetStore.save(snippets)
+    }
+
+    func deleteSnippet(_ snippet: Snippet) {
+        snippets.removeAll { $0.id == snippet.id }
+        SnippetStore.save(snippets)
+        if editingSnippet?.id == snippet.id { editingSnippet = nil }
+    }
+
+    /// 复制片段正文到剪贴板。
+    func copySnippet(_ snippet: Snippet) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(snippet.content, forType: .string)
+    }
+
+    /// 发送片段到当前终端：含 {{变量}} 则先弹填值框，否则直接发送。
+    /// run=true 末尾补换行（直接执行）；run=false 仅打到提示符（用户确认后自行回车）。
+    func sendSnippet(_ snippet: Snippet, run: Bool) {
+        let vars = Snippet.variableNames(in: snippet.content)
+        if vars.isEmpty {
+            deliverSnippet(snippet.content, run: run)
+        } else {
+            pendingSnippetRun = SnippetRunRequest(snippet: snippet, variables: vars, run: run)
+        }
+    }
+
+    func submitSnippetRun(_ values: [String: String]) {
+        guard let req = pendingSnippetRun else { return }
+        pendingSnippetRun = nil
+        deliverSnippet(Snippet.substitute(req.snippet.content, values: values), run: req.run)
+    }
+
+    func cancelSnippetRun() { pendingSnippetRun = nil }
+
+    /// 当前是否存在可发送片段的终端（供片段面板启用/禁用运行按钮；面板观察 TabsModel 故随标签变化刷新）。
+    var hasSnippetTarget: Bool { snippetTargetTerminal() != nil }
+
+    /// 解析片段的目标终端：优先当前活动标签（若是终端），否则取唯一打开的终端。
+    private func snippetTargetTerminal() -> LocalProcessTerminalView? {
+        if let id = activeTabId, tabs.first(where: { $0.id == id })?.kind == .terminal,
+           let tv = terminals[id] { return tv }
+        let termTabs = tabs.filter { $0.kind == .terminal }
+        if termTabs.count == 1, let tv = terminals[termTabs[0].id] { return tv }
+        return nil
+    }
+
+    private func deliverSnippet(_ text: String, run: Bool) {
+        guard let tv = snippetTargetTerminal() else {
+            snippetNotice = "请先打开并切到一个终端，再运行片段。"
+            return
+        }
+        tv.send(txt: run ? text + "\n" : text)
     }
 
     // ---------- 会话历史 ----------
@@ -848,6 +940,7 @@ final class AppModel: ObservableObject {
         sessions = HostStore.loadSessions()
         forwards = HostStore.loadForwards()
         sshKeys = KeyStore.load()
+        snippets = SnippetStore.load()
         HostKeyVerifier.resetSession()   // 清空「仅本次信任」的会话临时 known_hosts
         // 启动即对所有主机做一次轻量在线检测
         defer { refreshAllStatuses() }

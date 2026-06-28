@@ -309,43 +309,9 @@ struct ContentView: View {
             //（SwiftUI overlay+transition+ignoresSafeArea 的已知缺陷，下同）。
             .allowsHitTesting(model.pendingCloseTabId != nil || model.pendingMultiClose != nil || model.pendingTabRename != nil)
         }
-        .overlay {
-            ZStack {
-                if let h = model.connectingHost {
-                    ConnectingDialog(host: h,
-                                     successHint: model.connectingActionHint,
-                                     verify: { await model.verifyHostKey(h) },
-                                     onConnected: { model.finishConnecting() },
-                                     onCancel: { model.cancelConnecting() })
-                        .transition(.opacity)
-                }
-            }
-            .animation(.easeOut(duration: 0.25), value: model.connectingHost?.id)
-            .allowsHitTesting(model.connectingHost != nil)
-        }
-        // 指纹验证弹窗叠在连接弹窗之上（未知主机首次连接时需用户核对）
-        .overlay {
-            ZStack {
-                if let pending = model.pendingHostKey {
-                    HostKeyDialog(pending: pending).transition(.opacity)
-                }
-            }
-            .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
-            .allowsHitTesting(model.pendingHostKey != nil)
-        }
-        // 「每次询问」主机连接前的一次性密码弹窗（在连接弹窗之前出现）
-        .overlay {
-            ZStack {
-                if let h = model.pendingAskAuth {
-                    AskPasswordDialog(host: h,
-                                      onConfirm: { model.submitAskAuth($0) },
-                                      onCancel: { model.cancelAskAuth() })
-                        .transition(.opacity)
-                }
-            }
-            .animation(.easeOut(duration: 0.15), value: model.pendingAskAuth?.id)
-            .allowsHitTesting(model.pendingAskAuth != nil)
-        }
+        // 连接相关弹窗（连接进度 / 指纹验证 / 每次询问密码 / 片段变量填值）统一抽到一个 ViewModifier，
+        // 避免 body 的 overlay 链过长触发「编译器类型检查超时」（同 AppSheets 的拆分思路）。
+        .modifier(ConnectionDialogs(model: model))
         .overlay { fileOpOverlays }
         .overlay {
             // 下载不弹窗时的弧线飞入动画：满窗叠层、不吃点击；事件结束即移除（按 id 防被旧动画误清）。
@@ -512,6 +478,66 @@ struct ContentView: View {
 
 /// 把全部 sheet 与 alert 收进一个 ViewModifier：避免 ContentView.body 单表达式过长，
 /// 触发「编译器无法在合理时间内类型检查」。
+/// 连接相关弹窗叠层（从 ContentView.body 拆出，缩短 overlay 链以避免类型检查超时）。
+/// 应用顺序即叠放顺序：连接进度 → 指纹验证 → 每次询问密码 → 片段变量填值（后者在最上）。
+private struct ConnectionDialogs: ViewModifier {
+    @ObservedObject var model: AppModel
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                ZStack {
+                    if let h = model.connectingHost {
+                        ConnectingDialog(host: h,
+                                         successHint: model.connectingActionHint,
+                                         verify: { await model.verifyHostKey(h) },
+                                         onConnected: { model.finishConnecting() },
+                                         onCancel: { model.cancelConnecting() })
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.25), value: model.connectingHost?.id)
+                .allowsHitTesting(model.connectingHost != nil)
+            }
+            // 指纹验证弹窗叠在连接弹窗之上（未知主机首次连接时需用户核对）
+            .overlay {
+                ZStack {
+                    if let pending = model.pendingHostKey {
+                        HostKeyDialog(pending: pending).transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: model.pendingHostKey?.id)
+                .allowsHitTesting(model.pendingHostKey != nil)
+            }
+            // 「每次询问」主机连接前的一次性密码弹窗（在连接弹窗之前出现）
+            .overlay {
+                ZStack {
+                    if let h = model.pendingAskAuth {
+                        AskPasswordDialog(host: h,
+                                          onConfirm: { model.submitAskAuth($0) },
+                                          onCancel: { model.cancelAskAuth() })
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: model.pendingAskAuth?.id)
+                .allowsHitTesting(model.pendingAskAuth != nil)
+            }
+            // 含 {{变量}} 的片段运行/插入前的填值弹窗
+            .overlay {
+                ZStack {
+                    if let req = model.pendingSnippetRun {
+                        SnippetRunDialog(request: req,
+                                         onConfirm: { model.submitSnippetRun($0) },
+                                         onCancel: { model.cancelSnippetRun() })
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: model.pendingSnippetRun?.id)
+                .allowsHitTesting(model.pendingSnippetRun != nil)
+            }
+    }
+}
+
 private struct AppSheets: ViewModifier {
     @ObservedObject var model: AppModel
 
@@ -525,6 +551,8 @@ private struct AppSheets: ViewModifier {
             .sheet(item: $model.forwardPanelHost) { host in PortForwardView(model: model, host: host) }
             .sheet(isPresented: $model.showGenerateKey) { GenerateKeyView(model: model) }
             .sheet(item: $model.detailKey) { key in KeyDetailView(model: model, key: key) }
+            .sheet(isPresented: $model.showCreateSnippet) { SnippetEditView(model: model) }
+            .sheet(item: $model.editingSnippet) { snip in SnippetEditView(model: model, editing: snip) }
             .alert("操作失败", isPresented: Binding(
                 get: { model.keyOpError != nil },
                 set: { if !$0 { model.keyOpError = nil } }
@@ -532,6 +560,14 @@ private struct AppSheets: ViewModifier {
                 Button("好", role: .cancel) { model.keyOpError = nil }
             } message: {
                 Text(model.keyOpError ?? "")
+            }
+            .alert("提示", isPresented: Binding(
+                get: { model.snippetNotice != nil },
+                set: { if !$0 { model.snippetNotice = nil } }
+            )) {
+                Button("好", role: .cancel) { model.snippetNotice = nil }
+            } message: {
+                Text(model.snippetNotice ?? "")
             }
     }
 }

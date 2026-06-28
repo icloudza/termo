@@ -13,8 +13,9 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.7.6.1"
-    CURRENT_PROJECT_VERSION: "18"
+    # 版本号唯一源是 Sources/Termo/Info.plist 的 CFBundleShortVersionString / CFBundleVersion
+    # （运行期由 AppInfo 从主包读取，打包脚本从构建产物 Info.plist 读取）。这里不再重复声明
+    # MARKETING_VERSION，避免与 Info.plist 不一致；升版本只改 Info.plist 一处即可。
     SWIFT_VERSION: "5.9"
     DEAD_CODE_STRIPPING: YES
     ARCHS: arm64                  # 仅 Apple Silicon（放弃 Intel）：相比通用二进制约省一半体积

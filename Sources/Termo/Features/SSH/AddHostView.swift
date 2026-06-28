@@ -33,6 +33,7 @@ struct AddHostView: View {
         }
         .frame(width: 680, height: 560)
         .background(Pal.solidBase)
+        .background(NoInitialFocus())   // 打开时不默认把光标聚焦到「名称」
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .onAppear {
             guard !didLoad else { return }
@@ -342,35 +343,7 @@ struct AddHostView: View {
 
     private var groupSelector: some View {
         labeled("服务器分组") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    ForEach(model.groupNames, id: \.self) { g in
-                        chip(g, selected: !draft.creatingGroup && draft.group == g) {
-                            draft.creatingGroup = false; draft.group = g
-                        }
-                    }
-                    chip("＋ 新建分组", selected: draft.creatingGroup) {
-                        draft.creatingGroup = true
-                    }
-                    Spacer()
-                }
-                if draft.creatingGroup {
-                    ThemedTextField(placeholder: "新分组名称", text: $draft.newGroup)
-                }
-            }
+            SearchableSelect(options: model.groupNames, text: $draft.group, placeholder: "搜索或新建分组…")
         }
-    }
-
-    private func chip(_ label: String, selected: Bool, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(selected ? .white : Pal.subtext)
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(selected ? Pal.mauve : Pal.fill(0.06), in: Capsule())
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
     }
 }

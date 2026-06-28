@@ -49,6 +49,11 @@ struct Sidebar: View {
                     }
                     .buttonStyle(.plain)
                     .pointerCursor()
+                } else if model.section == .snippets {
+                    Button { model.showCreateSnippet = true } label: {
+                        Image(systemName: "plus").font(.system(size: 14)).foregroundStyle(Pal.mauve)
+                    }
+                    .buttonStyle(.plain).pointerCursor().help("新建片段")
                 }
             }
             .padding(.horizontal, 14)
@@ -57,7 +62,7 @@ struct Sidebar: View {
 
             if model.section == .hosts {
                 Spacer().frame(height: 10)
-                searchBox
+                searchBox()
                 if filteredHosts.isEmpty {
                     hostEmptyState
                 } else {
@@ -67,12 +72,16 @@ struct Sidebar: View {
                 filesPanel
             } else if model.section == .rdp {
                 Spacer().frame(height: 10)
-                searchBox
+                searchBox()
                 rdpPanel
             } else if model.section == .sshKeys {
                 Spacer().frame(height: 10)
-                searchBox
+                searchBox("搜索密钥…")
                 KeysPanel(model: model)
+            } else if model.section == .snippets {
+                Spacer().frame(height: 10)
+                searchBox("搜索片段…")
+                SnippetsPanel(model: model, tabs: tabs)
             } else {
                 Spacer()
                 Text("\(sectionTitle)模块开发中")
@@ -101,10 +110,10 @@ struct Sidebar: View {
         }
     }
 
-    private var searchBox: some View {
+    private func searchBox(_ placeholder: String = "搜索主机…") -> some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Pal.overlay)
-            TextField("搜索主机…", text: $model.query)
+            TextField(placeholder, text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Pal.text)

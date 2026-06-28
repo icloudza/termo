@@ -647,9 +647,15 @@ private final class ChangeBarView: NSView {
             // 一眼看出改了哪里。改动段由协调器对改动行做「公共前后缀」求差得出（read→readAAA 只框 AAA）；
             // rectsFor 给出字符范围在 textView 坐标系的矩形，convert 转入本浮层坐标系后绘制。
             if p > 0.01, let tv = controller?.textView, let lm = tv.layoutManager {
+                // 防越界：hover 捕获的范围在动画期间可能因后台 diff 重算/编辑而过期（文本变短）。
+                // 过期范围直接喂 rectsFor 会触发 rangeOfComposedCharacterSequence 的 NSRangeException
+                // ——表现为「粘贴含表情符号的长文本后用胶囊 diff 卡死继而闪退」。与当前文档范围求交后再画。
+                let doc = tv.documentRange
                 barColor.withAlphaComponent(0.30 * p).setFill()
                 for r in hoverRanges {
-                    for rect in lm.rectsFor(range: r) {
+                    let safe = NSIntersectionRange(r, doc)
+                    guard safe.length > 0 else { continue }
+                    for rect in lm.rectsFor(range: safe) {
                         NSBezierPath(rect: convert(rect, from: tv)).fill()
                     }
                 }

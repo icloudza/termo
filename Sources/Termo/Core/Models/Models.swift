@@ -64,7 +64,7 @@ struct SessionEvent: Codable, Identifiable {
 }
 
 /// 一台主机的 SSH 连接配置，用于构建真实的 ssh 命令。
-struct SSHConnection: Codable {
+struct SSHConnection: Codable, Equatable {
     // 密码不进 JSON（存 Keychain），其余字段全部持久化
     enum CodingKeys: String, CodingKey {
         case user, host, port, authMethod, keyPath, keyId, encoding, hostKeyAlgos, ciphers, kexAlgos

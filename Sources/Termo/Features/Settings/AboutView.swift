@@ -15,7 +15,7 @@ struct AboutContent: View {
                     .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Termo").font(.system(size: 18, weight: .semibold)).foregroundStyle(Pal.text)
-                    Text(Self.versionLine)
+                    Text(AppInfo.versionLine)
                         .font(.system(size: 12)).foregroundStyle(Pal.subtext)
                 }
             }
@@ -28,16 +28,6 @@ struct AboutContent: View {
         }
         .padding(20)
         .background(Pal.fill(0.03), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    /// 版本行：读嵌入 Info.plist 的 CFBundleShortVersionString + CFBundleVersion；
-    /// 取不到（嵌入未生效）则回退到「开发版」。以后改版本只动 Info.plist 一处。
-    static var versionLine: String {
-        guard let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else {
-            return "版本 0.7.6.1 (开发版)"
-        }
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        return build.map { "版本 \(v) (build \($0))" } ?? "版本 \(v)"
     }
 
     private func infoLine(_ label: String, value: String) -> some View {

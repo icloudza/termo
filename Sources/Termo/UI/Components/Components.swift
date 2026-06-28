@@ -214,15 +214,22 @@ struct ThemedDropdown<T: Hashable>: View {
 private struct DropdownOption: View {
     let label: String
     let selected: Bool
+    var leadingSymbol: String? = nil      // 非 nil 时在标签前画一个强调色小图标（如「新建」的 plus）
     let action: () -> Void
     @State private var hover = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
+                if let leadingSymbol {
+                    Image(systemName: leadingSymbol)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Pal.mauve)
+                }
                 Text(label)
                     .font(.system(size: 13))
-                    .foregroundStyle(selected ? Pal.mauve : Pal.text)
+                    .foregroundStyle(leadingSymbol != nil ? Pal.mauve : (selected ? Pal.mauve : Pal.text))
+                    .lineLimit(1)
                 Spacer()
                 if selected {
                     Image(systemName: "checkmark")
@@ -241,6 +248,129 @@ private struct DropdownOption: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .onHover { hover = $0 }
+    }
+}
+
+/// 可搜索的自定义下拉选择（combobox）：弹层顶部带搜索框，输入即过滤；
+/// 输入了现有项里没有的值时给出「新建」入口。绑定到一个字符串（最终值），
+/// 既能从已有项里选，也能直接键入新值。视觉与 [[ThemedDropdown]] 一致。
+/// 用于「服务器/RDP/代码片段」的分组选择——分组一多，原来的横排 chip 就挤了。
+struct SearchableSelect: View {
+    let options: [String]
+    @Binding var text: String
+    var placeholder: String = "搜索或输入新分组…"
+    var emptyLabel: String = "未分组"      // text 为空时按钮显示的占位文案
+    var allowsCreate: Bool = true
+
+    @State private var open = false
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+    @ObservedObject private var theme = ThemeManager.shared
+
+    private var trimmedQuery: String { query.trimmingCharacters(in: .whitespaces) }
+
+    private var filtered: [String] {
+        let q = trimmedQuery.lowercased()
+        guard !q.isEmpty else { return options }
+        return options.filter { $0.lowercased().contains(q) }
+    }
+
+    private var canCreate: Bool {
+        allowsCreate && !trimmedQuery.isEmpty
+            && !options.contains { $0.caseInsensitiveCompare(trimmedQuery) == .orderedSame }
+    }
+
+    var body: some View {
+        Button { toggle() } label: {
+            HStack(spacing: 8) {
+                Text(text.isEmpty ? emptyLabel : text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(text.isEmpty ? Pal.overlay : Pal.text)
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Pal.overlay)
+                    .rotationEffect(.degrees(open ? 180 : 0))
+            }
+            .padding(.horizontal, 11).padding(.vertical, 8)
+            .background(theme.isDark ? Pal.fill(0.05) : Color.white, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .stroke(open ? Pal.mauve : Pal.fill(0.12), lineWidth: open ? 1.5 : 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .animation(.easeOut(duration: 0.12), value: open)
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            VStack(spacing: 6) {
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Pal.overlay)
+                    TextField(placeholder, text: $query)
+                        .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Pal.text)
+                        .focused($searchFocused)
+                        .onSubmit { commitQuery() }
+                }
+                .padding(.horizontal, 9).padding(.vertical, 7)
+                .background(theme.isDark ? Pal.fill(0.06) : Color.white, in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Pal.fill(0.12), lineWidth: 1))
+
+                ScrollView {
+                    VStack(spacing: 1) {
+                        if canCreate {
+                            DropdownOption(label: "新建「\(trimmedQuery)」", selected: false, leadingSymbol: "plus") {
+                                select(trimmedQuery)
+                            }
+                        }
+                        ForEach(filtered, id: \.self) { opt in
+                            DropdownOption(label: opt, selected: opt == text) { select(opt) }
+                        }
+                        if filtered.isEmpty && !canCreate {
+                            Text("无匹配项").font(.system(size: 12)).foregroundStyle(Pal.overlay)
+                                .frame(maxWidth: .infinity).padding(.vertical, 8)
+                        }
+                    }
+                }
+                .frame(maxHeight: 220)
+            }
+            .padding(8)
+            .frame(width: 240)
+            .background(Pal.solidMantle)
+        }
+    }
+
+    private func toggle() {
+        open.toggle()
+        if open { query = ""; DispatchQueue.main.async { searchFocused = true } }
+    }
+
+    private func select(_ v: String) { text = v; open = false }
+
+    /// 回车提交：精确匹配已有项则选中，否则在允许时按新建处理。
+    private func commitQuery() {
+        if let exact = options.first(where: { $0.caseInsensitiveCompare(trimmedQuery) == .orderedSame }) {
+            select(exact)
+        } else if canCreate {
+            select(trimmedQuery)
+        }
+    }
+}
+
+/// 放进 sheet 背景即可：阻止打开时自动把光标聚焦到第一个文本框。
+/// 关键在「时机」——必须在窗口成为 key 之前就把初始第一响应者指向一个**不接受焦点**的占位视图，
+/// 这样 AppKit 自动选首个文本框那一步直接落空，不会出现「先聚焦再取消」的闪烁。
+/// 用户点击字段仍可正常聚焦，只是不在弹出瞬间默认抢焦。
+struct NoInitialFocus: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { FocusSink() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class FocusSink: NSView {
+        override var acceptsFirstResponder: Bool { false }
+        // 视图刚挂到窗口时（早于窗口成为 key）即接管初始第一响应者，抢在自动聚焦之前。
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.initialFirstResponder = self
+        }
     }
 }
 
