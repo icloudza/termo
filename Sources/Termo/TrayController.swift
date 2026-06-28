@@ -5,7 +5,7 @@ import Combine
 /// 让端口转发等常驻后台任务在主窗口隐藏后仍可被看到与管理（隐藏到托盘时见 AppDelegate）。
 @MainActor
 final class TrayController: NSObject, NSMenuDelegate {
-    /// 供退出弹窗等处直接重建状态栏图标（不绕 AppDelegate 引用）。AppDelegate 持有强引用，此处弱引用即可。
+    /// 单例弱引用，供需要时在 AppDelegate 之外访问托盘控制器。AppDelegate 持有强引用，此处弱引用即可。
     static weak var shared: TrayController?
 
     private var statusItem: NSStatusItem?
@@ -32,36 +32,12 @@ final class TrayController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// 切到 .accessory 后确保图标仍显示。
-    /// macOS 15：切 .accessory 会把已有 NSStatusItem 丢弃，仅 isVisible=true 无法找回 → 必须重建；
-    /// 借助 autosaveName，重建后系统会把图标还原到用户原来的位置，不会跑到默认位置。
-    /// macOS 14 及更早：图标不会被丢弃，只需重新点亮可见性（不重建，避免闪烁/丢位置）。
-    func rebuild() {
-        guard statusItem != nil else { install(); return }
-        if #available(macOS 15.0, *) {
-            recreate()
-        } else {
-            reassertVisible()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.reassertVisible() }
-        }
-    }
-
-    /// 重新点亮已存在的状态栏图标（不新建，保留其位置）；顺带按当前后台状态刷新图标（含小圆点）。
-    private func reassertVisible() {
-        statusItem?.isVisible = true
-        updateImage()
-    }
-
-    /// 移除旧图标并重建（仅 macOS 15 切 .accessory 后用）。autosaveName 使位置得以还原，不丢用户调整。
-    private func recreate() {
-        if let old = statusItem { NSStatusBar.system.removeStatusItem(old) }
-        statusItem = nil
-        install()
-    }
-
-    /// 创建状态栏图标。已存在则只确保可见。autosaveName 让系统持久化其位置（跨重建/重启还原）。
+    /// 创建状态栏图标（仅一次，常驻整个 App 生命周期，绝不移除/重建/隐藏）。
+    /// 关键设计：状态项与激活策略（.regular↔.accessory）及窗口生命周期完全解耦——隐藏到托盘时
+    /// 只 orderOut 内容窗口、放过 NSStatusBarWindow（见 AppDelegate.hideToTray），故图标始终在线；
+    /// 从不调用 removeStatusItem（它会清掉 autosaveName 的位置槽 ⟹ 位置漂移），故用户拖动的位置天然保留。
+    /// autosaveName 仅用于跨重启持久化位置。
     private func install() {
-        if statusItem != nil { reassertVisible(); return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.autosaveName = "TermoBackgroundStatusItem"   // 持久化位置：重建/重启后还原到用户拖动的位置
         item.button?.toolTip = "Termo"

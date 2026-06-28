@@ -47,8 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func attachMainWindow() {
         guard mainWindow == nil else { return }
-        // 主窗口 = 非面板、有内容视图的那个（关于窗口/Tooltip 面板此刻尚未创建）。
-        if let w = NSApp.windows.first(where: { !($0 is NSPanel) && $0.contentView != nil }) {
+        // 主窗口 = 可成为主窗口、有内容视图的那个；canBecomeMain 排除托盘 NSStatusBarWindow 与面板，
+        // 避免误把状态栏图标窗口当成主窗口（关于窗口/Tooltip 面板此刻尚未创建）。
+        if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.contentView != nil }) {
             mainWindow = w
             w.delegate = self
         }
@@ -56,9 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 从托盘恢复：切回常规激活策略（恢复 Dock 图标与主菜单），前置并激活主窗口。
     /// 现场重新解析窗口（orderOut 后窗口仍在 NSApp.windows 列表中），不依赖可能过期的 mainWindow。
+    /// 托盘图标常驻、从不被 orderOut，故无需在此唤回（参见 hideToTray 的窗口过滤说明）。
     private func showMainWindow() {
         NSApp.setActivationPolicy(.regular)
-        let w = mainWindow ?? NSApp.windows.first { !($0 is NSPanel) && $0.contentView != nil }
+        let w = mainWindow ?? NSApp.windows.first { $0.canBecomeMain && $0.contentView != nil }
         if mainWindow == nil, let w { mainWindow = w; w.delegate = self }
         w?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -78,14 +80,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return false
     }
 
-    /// 隐藏到菜单栏：隐藏所有可见内容窗口、切附件模式、点亮托盘图标。后台任务继续运行。
-    /// 标 @MainActor：内部调用 @MainActor 的 tray.rebuild()；调用方（windowShouldClose / @MainActor Task）均在主线程。
+    /// 隐藏到菜单栏：隐藏所有可见内容窗口、切附件模式。后台任务继续运行，托盘图标常驻不动。
+    /// 关键：仅 orderOut `canBecomeMain` 的窗口（主窗口/关于窗口），**放过托盘图标的宿主窗口
+    /// NSStatusBarWindow**（其 canBecomeMain==false）。此前用 `!(w is NSPanel) && contentView != nil`
+    /// 过滤会连带把 NSStatusBarWindow 也 orderOut——macOS 15 不会自动救回，导致托盘图标消失。
+    /// 既然图标窗口从不被隐藏、状态项也从不重建，位置与可见性天然保留，无需任何唤回/重建。
     @MainActor private func hideToTray() {
-        for w in NSApp.windows where w.isVisible && !(w is NSPanel) && w.contentView != nil {
+        for w in NSApp.windows where w.isVisible && w.canBecomeMain {
             w.orderOut(nil)
         }
         NSApp.setActivationPolicy(.accessory)
-        tray?.rebuild()   // 切 .accessory 后重新点亮托盘图标的可见性（不重建，避免闪烁/丢位置）
     }
 
     /// 关窗 / 菜单退出（⌘Q）入口。本方法为自定义（非协议方法，故不自动 @MainActor），访问 @MainActor 的
@@ -340,12 +344,12 @@ struct ContentView: View {
                             model.pendingQuitConfirm = false
                             model.pendingQuitForce = false
                             AppSettings.shared.closeToTray = true
-                            // 直接隐藏当前所有可见内容窗口（不绕 AppDelegate 引用，杜绝取不到/过期）。
-                            for w in NSApp.windows where w.isVisible && !(w is NSPanel) && w.contentView != nil {
+                            // 仅隐藏可成为主窗口的内容窗口；放过托盘 NSStatusBarWindow（canBecomeMain==false），
+                            // 否则 macOS 15 会丢托盘图标。详见 AppDelegate.hideToTray 的过滤说明。
+                            for w in NSApp.windows where w.isVisible && w.canBecomeMain {
                                 w.orderOut(nil)
                             }
                             NSApp.setActivationPolicy(.accessory)
-                            TrayController.shared?.rebuild()   // 切 .accessory 后重新点亮托盘图标（不重建，避免闪烁/丢位置）
                         },
                         onConfirm: {
                             model.pendingQuitConfirm = false
