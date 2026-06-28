@@ -25,6 +25,8 @@ struct TermoApp: App {
                 .frame(minWidth: 860, minHeight: 560)
         }
         .windowStyle(.hiddenTitleBar)
+        // 首次打开的默认尺寸（仅初始值，最小限制不变；用户拖动后由系统记忆）：给三栏 + 工作区更宽裕的空间。
+        .defaultSize(width: 1200, height: 800)
     }
 }
 
