@@ -24,9 +24,11 @@ final class RDPSession: ObservableObject {
         self.config = host.rdp ?? RDPConnection()
     }
 
-    /// 后续阶段：启动 TermoRDPSession 后台线程并连接。当前为占位（无副作用）。
+    /// 后续阶段：启动 TermoRDPSession 后台线程并连接。当前为接缝：自检 FreeRDP 桥已链接。
     func connect() {
-        // TODO(阶段 C)：接入 FreeRDP 桥，phase = .connecting → .connected / .failed
+        // 阶段 C 接缝：引用 ObjC 桥（确保 FreeRDP 静态库被链接、Swift↔ObjC 桥接成立）。
+        // 下一步替换为：实例化 TermoRDPSession、设 delegate、起事件循环线程，phase=.connecting→.connected/.failed。
+        NSLog("[rdp] FreeRDP %@ linked OK", TermoRDPSession.freerdpVersion())
     }
 
     /// 断开并释放底层会话。当前仅切换状态占位。

@@ -1,0 +1,73 @@
+/**
+ * FreeRDP: A Remote Desktop Protocol Implementation
+ * Geometry tracking Virtual Channel Extension
+ *
+ * Copyright 2017 David Fort <contact@hardening-consulting.com>
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef FREERDP_CHANNEL_GEOMETRY_H
+#define FREERDP_CHANNEL_GEOMETRY_H
+
+#include <winpr/wtypes.h>
+#include <freerdp/types.h>
+
+/** The command line name of the channel
+ *
+ *  \since version 3.0.0
+ */
+#define GEOMETRY_CHANNEL_NAME "geometry"
+#define GEOMETRY_DVC_CHANNEL_NAME "Microsoft::Windows::RDS::Geometry::v08.01"
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+	enum
+	{
+		GEOMETRY_UPDATE = 1,
+		GEOMETRY_CLEAR = 2
+	};
+
+	enum
+	{
+		RDH_RECTANGLE = 1
+	};
+
+	typedef struct
+	{
+		RDP_RECT boundingRect;
+		UINT32 nRectCount;
+		RDP_RECT* rects;
+	} FREERDP_RGNDATA;
+
+	typedef struct
+	{
+		UINT32 version;
+		UINT64 mappingId;
+		UINT32 updateType;
+		UINT64 topLevelId;
+		INT32 left, top, right, bottom;
+		INT32 topLevelLeft, topLevelTop, topLevelRight, topLevelBottom;
+		UINT32 geometryType;
+
+		FREERDP_RGNDATA geometry;
+	} MAPPED_GEOMETRY_PACKET;
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* FREERDP_CHANNEL_GEOMETRY_H */

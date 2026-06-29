@@ -52,9 +52,22 @@ targets:
         product: CodeEditSourceEditor
       - package: CodeEditTextView      # App 直接 import；CodeEditSymbols 经此传递引入，无需显式声明
         product: CodeEditTextView
+      # RDP：内嵌 FreeRDP 静态库 xcframework（只链接不嵌入）+ 其依赖的系统框架/库。
+      - framework: Vendor/CFreeRDP.xcframework
+        embed: false
+      - sdk: Security.framework
+      - sdk: CoreFoundation.framework
     settings:
       base:
         INFOPLIST_FILE: Termo/Info.plist
+        # RDP ObjC 桥：经桥接头暴露给 Swift；FreeRDP/WinPR 头经版本化子目录搜索。
+        SWIFT_OBJC_BRIDGING_HEADER: Termo/Features/RDP/Bridge/Termo-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/freerdp3
+          - $(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/winpr3
+        OTHER_LDFLAGS:
+          - -lz          # FreeRDP/WinPR/OpenSSL 依赖 zlib（系统动态库）
+          - -lresolv     # WinPR DNS/解析依赖
         GENERATE_INFOPLIST_FILE: NO
         PRODUCT_NAME: Termo
         PRODUCT_BUNDLE_IDENTIFIER: com.cloudza.termo
