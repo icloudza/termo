@@ -43,6 +43,7 @@
 		766D139DE85662003CB933E0 /* AddHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 333A99410F1C608823899399 /* AddHostView.swift */; };
 		7715578FC742A02AA06A2A93 /* KeyTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB120BE0A8466FDD6051FDD /* KeyTools.swift */; };
 		791DFE9DEAD1061E2296BB15 /* Tooltip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4DA8CC82A64EB068CBD823 /* Tooltip.swift */; };
+		792D1D256F62DF76A80E7AE7 /* RDPSurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9615D01CEC651F36383569C /* RDPSurfaceView.swift */; };
 		82564CB03E98959D9890E2AF /* TerminalSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 507FF5447F03353EF481A8B0 /* TerminalSurface.swift */; };
 		83B88931B627C0C5A7971B1C /* TermoRDPCore.c in Sources */ = {isa = PBXBuildFile; fileRef = 38CAEBB14826B8AFD27B19C6 /* TermoRDPCore.c */; };
 		8EDFD4A742997CCB799687E5 /* FileTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800B3BEE581D0FE8185ABEE1 /* FileTree.swift */; };
@@ -146,6 +147,7 @@
 		D172F44C6B1D699CB9362786 /* SSHKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKey.swift; sourceTree = "<group>"; };
 		D30E8F85BB20C7A21F6D7899 /* ActivityBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityBar.swift; sourceTree = "<group>"; };
 		D5336686AD7D595B6A0F188A /* KeySheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeySheets.swift; sourceTree = "<group>"; };
+		D9615D01CEC651F36383569C /* RDPSurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPSurfaceView.swift; sourceTree = "<group>"; };
 		DCED3CB381B1EBDA09D6F705 /* HostOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostOverview.swift; sourceTree = "<group>"; };
 		DF8DC617FA5929DB9BC01D25 /* FileUpload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileUpload.swift; sourceTree = "<group>"; };
 		E24CAA38E66B6D16CA193D8B /* FileIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileIcons.swift; sourceTree = "<group>"; };
@@ -444,6 +446,7 @@
 				3FF3346630AADCC906545E0F /* AddRDPHostView.swift */,
 				30E1CDC3F60325B41E91E2B0 /* RDPSession.swift */,
 				AAC2312DCEA8551862769851 /* RDPSessionView.swift */,
+				D9615D01CEC651F36383569C /* RDPSurfaceView.swift */,
 			);
 			path = RDP;
 			sourceTree = "<group>";
@@ -614,6 +617,7 @@
 				9EBF1625176E56AEFCEDB5A0 /* PortForwardView.swift in Sources */,
 				64558053418AA9F708CEC29A /* RDPSession.swift in Sources */,
 				1AE8A97AFF2392F3BCEDDF3A /* RDPSessionView.swift in Sources */,
+				792D1D256F62DF76A80E7AE7 /* RDPSurfaceView.swift in Sources */,
 				960955F58E819AA84229B9FC /* RemoteCodeEditor.swift in Sources */,
 				CCCE7023A8BF9DF0D12F5A1C /* RemoteFS.swift in Sources */,
 				4E8BB08836DC765A3793C7BB /* SFTPClient.swift in Sources */,

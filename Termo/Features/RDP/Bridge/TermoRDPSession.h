@@ -2,15 +2,21 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// RDP 会话事件回调。阶段 C 起逐步填充：帧缓冲更新、连接态变化、证书确认等。
+@class TermoRDPSession;
+
+/// RDP 会话事件回调（均已在主线程派发）。
+/// state 取值对应 TermoRDPCore 的 TermoRDPState：0=连接中 1=已连接 2=已断开 3=失败。
 @protocol TermoRDPSessionDelegate <NSObject>
 @optional
-- (void)rdpSessionDidConnect:(id)session;
-- (void)rdpSession:(id)session didFailWithMessage:(NSString *)message;
+- (void)rdpSession:(TermoRDPSession *)session didChangeState:(NSInteger)state message:(nullable NSString *)message;
+- (void)rdpSession:(TermoRDPSession *)session
+    didReceiveFrame:(NSData *)bgra
+              width:(int)width
+             height:(int)height
+             stride:(int)stride;
 @end
 
-/// FreeRDP 会话的 ObjC 桥：把 FreeRDP 的 C API / 回调 / 事件循环收窄成 Swift 可用的对象接口。
-/// 阶段 C 起实现真正的 connect（freerdp_connect + 后台事件循环 + 帧回调）；当前为接缝 + 链接自检。
+/// FreeRDP 会话的 ObjC 桥：经纯 C 层 TermoRDPCore 驱动连接/事件循环/帧回调，对 Swift 暴露 KVO/delegate 接口。
 @interface TermoRDPSession : NSObject
 
 @property (nonatomic, weak) id<TermoRDPSessionDelegate> delegate;
@@ -18,12 +24,20 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithHost:(NSString *)host
                         port:(int)port
                     username:(NSString *)username
-                    password:(NSString *)password;
+                    password:(NSString *)password
+                      domain:(NSString *)domain
+                       width:(int)width
+                      height:(int)height;
 
 - (void)connect;
 - (void)disconnect;
 
-/// 链接自检：返回内嵌 FreeRDP 的版本串，证明已正确链接到 CFreeRDP 静态库。
+// 鼠标输入（x/y 为远端桌面像素坐标）。
+- (void)sendMouseMoveX:(int)x y:(int)y;
+- (void)sendMouseButton:(int)button down:(BOOL)down x:(int)x y:(int)y;  // button 0=左 1=右 2=中
+- (void)sendMouseWheel:(int)delta x:(int)x y:(int)y;
+
+/// 链接自检：返回内嵌 FreeRDP 版本串。
 + (NSString *)freerdpVersion;
 
 @end
