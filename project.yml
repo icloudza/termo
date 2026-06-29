@@ -13,16 +13,17 @@ options:
 
 settings:
   base:
-    # 版本号唯一源是 Sources/Termo/Info.plist 的 CFBundleShortVersionString / CFBundleVersion
+    # 版本号唯一源是 Termo/Info.plist 的 CFBundleShortVersionString / CFBundleVersion
     # （运行期由 AppInfo 从主包读取，打包脚本从构建产物 Info.plist 读取）。这里不再重复声明
     # MARKETING_VERSION，避免与 Info.plist 不一致；升版本只改 Info.plist 一处即可。
     SWIFT_VERSION: "5.9"
     DEAD_CODE_STRIPPING: YES
     ARCHS: arm64                  # 仅 Apple Silicon（放弃 Intel）：相比通用二进制约省一半体积
-    # 本地运行用 ad-hoc 签名（与原 package-app.sh 一致，无需付费账号即可跑）。
-    # 上架/公证时改为对应的 Developer ID 或 Apple Distribution 身份与 Team。
-    CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: "-"
+    # 开发签名：自动管理，由 Xcode 用本账号的 Apple Development 证书签名 + 自动管描述文件。
+    # 分发证书（直发 Developer ID Application / 上架 Apple Distribution）待创建后再按发布方式覆盖；
+    # package-app.sh 归档时仍以参数覆盖为 ad-hoc，公证管线接入时再改那里。
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: KTP97H9YFF
 
 packages:
   SwiftTerm:
@@ -40,7 +41,7 @@ targets:
     type: application
     platform: macOS
     sources:
-      - path: Sources/Termo
+      - path: Termo
         excludes:
           - "Info.plist"          # 作为 INFOPLIST_FILE，不当资源拷贝
           - "**/.DS_Store"
@@ -53,7 +54,7 @@ targets:
         product: CodeEditTextView
     settings:
       base:
-        INFOPLIST_FILE: Sources/Termo/Info.plist
+        INFOPLIST_FILE: Termo/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         PRODUCT_NAME: Termo
         PRODUCT_BUNDLE_IDENTIFIER: com.cloudza.termo

@@ -2,7 +2,7 @@ import Foundation
 
 /// 应用版本信息的统一入口。
 ///
-/// 版本号的**唯一源**是 Sources/Termo/Info.plist 的 CFBundleShortVersionString / CFBundleVersion；
+/// 版本号的**唯一源**是 Termo/Info.plist 的 CFBundleShortVersionString / CFBundleVersion；
 /// 运行期由本类从主包读取，打包脚本从构建产物的 Info.plist 读取。升版本只需改 Info.plist 一处。
 enum AppInfo {
     /// 市场版本号，如 "0.7.6.1"。
