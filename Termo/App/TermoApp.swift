@@ -498,6 +498,19 @@ private struct ConnectionDialogs: ViewModifier {
                 .animation(.easeOut(duration: 0.2), value: model.connectingRDP != nil)
                 .allowsHitTesting(model.connectingRDP != nil)
             }
+            // RDP 连接成功后的打开方式选择（内嵌 / 新窗口），仅在设置为「每次询问」时出现。
+            .overlay {
+                ZStack {
+                    if let s = model.pendingRDPOpen {
+                        RDPOpenDialog(hostName: s.host.name,
+                                      onChoose: { model.resolveRDPOpen(s, window: $0, remember: $1) },
+                                      onCancel: { model.cancelRDPOpen() })
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: model.pendingRDPOpen != nil)
+                .allowsHitTesting(model.pendingRDPOpen != nil)
+            }
             .overlay {
                 ZStack {
                     if let h = model.connectingHost {

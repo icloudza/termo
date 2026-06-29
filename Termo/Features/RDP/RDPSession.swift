@@ -53,7 +53,9 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
     @Published private(set) var image: CGImage? = nil   // 最新一帧（主线程更新）
     @Published var certPrompt: RDPCertPrompt? = nil      // 非 nil 时叠加证书信任弹窗
     @Published private(set) var logs: [RDPLogLine] = []  // 连接日志（连接面板展示）
+    @Published private(set) var ready: Bool = false      // 首帧沉降后置真：通知连接弹窗可进入（避免进入瞬间闪半成品桌面）
     private var lastCanvas: CGSize? = nil                // 最近一次连接画布尺寸（重试复用）
+    private var firstFrameScheduled = false              // 已为首帧安排沉降，防重复调度
 
     private var session: TermoRDPSession?
 
@@ -69,6 +71,8 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
         guard session == nil else { return }
         guard let t = Self.targetPixelSize(canvas) else { return }
         lastCanvas = canvas
+        ready = false
+        firstFrameScheduled = false
         phase = .connecting
         let s = TermoRDPSession(host: config.host, port: Int32(config.port),
                                 username: config.user, password: config.password,
@@ -147,6 +151,14 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
     func rdpSession(_ session: TermoRDPSession, didReceiveFrame pixels: Data,
                     width: Int32, height: Int32, stride: Int32, bpp: Int32) {
         image = Self.makeImage(pixels, Int(width), Int(height), Int(stride), Int(bpp))
+        // 首帧后短暂沉降，让服务器把整桌面逐块画完再通知「可进入」，避免进入瞬间闪黑屏/残缺画面。
+        if !firstFrameScheduled {
+            firstFrameScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self, case .connected = self.phase, self.image != nil else { return }
+                self.ready = true
+            }
+        }
     }
 
     /// 证书信任校验（桥已派发到主线程）。已永久信任且指纹一致 → 静默放行；否则弹窗让用户决定。
@@ -205,6 +217,8 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
         session = nil
         image = nil
         logs = []
+        ready = false
+        firstFrameScheduled = false
         phase = .pending
         if let c = lastCanvas { connect(canvas: c) }
     }

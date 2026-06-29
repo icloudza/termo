@@ -27,8 +27,9 @@ struct HostOverview: View {
 
                 if isRDP {
                     // RDP 主机：只提供「远程桌面」与「编辑」，无 SSH 的终端/文件/转发/监控。
+                    // 已有连接（标签或新窗口）时「远程桌面」显示运行中 + 呼吸点，点击寻回而非新建。
                     HStack(spacing: 10) {
-                        action("display", "远程桌面", primary: true) { model.openHostRDP(host) }
+                        rdpAction(running: model.rdpHosts.contains(host.id)) { model.openHostRDP(host) }
                         action("pencil", "编辑") { model.editingRDPHost = host }
                     }
                     .padding(.bottom, 26)
@@ -212,6 +213,32 @@ struct HostOverview: View {
             .background(bg, in: RoundedRectangle(cornerRadius: 6))
     }
 
+    /// RDP「远程桌面」卡：已有连接时标签转绿显示「运行中」并在右上角呼吸点，点击寻回既有连接。
+    @ViewBuilder
+    private func rdpAction(running: Bool, _ act: @escaping () -> Void) -> some View {
+        Button(action: act) {
+            VStack(spacing: 8) {
+                Image(systemName: "display").font(.system(size: 21))
+                    .foregroundStyle(Pal.mauve)
+                    .frame(height: 24)
+                Text(running ? "远程桌面 · 运行中" : "远程桌面")
+                    .font(.system(size: 12))
+                    .foregroundStyle(running ? Pal.green : Pal.text)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Pal.mauve.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Pal.mauve.opacity(0.25), lineWidth: 1))
+            .overlay(alignment: .topTrailing) {
+                if running { BreathingDot().padding(8) }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+    }
+
     @ViewBuilder
     private func action(_ symbol: String, _ label: String, primary: Bool = false, badge: Bool = false,
                         loading: Bool = false, _ act: @escaping () -> Void) -> some View {
@@ -252,6 +279,23 @@ struct HostOverview: View {
         .pointerCursor()
     }
 
+}
+
+/// 呼吸状态点：绿色实心点 + 向外扩散渐隐的光环，表示「运行中」。
+private struct BreathingDot: View {
+    @State private var pulse = false
+    var body: some View {
+        ZStack {
+            Circle().fill(Pal.green.opacity(0.5))
+                .frame(width: 8, height: 8)
+                .scaleEffect(pulse ? 2.2 : 1)
+                .opacity(pulse ? 0 : 0.6)
+            Circle().fill(Pal.green).frame(width: 7, height: 7)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulse = true }
+        }
+    }
 }
 
 /// 主机概览的实时监控面板（macOS 原生风格）：CPU 每核热力方块、内存、GPU 卡片阵列、多磁盘、网络与运行时长。

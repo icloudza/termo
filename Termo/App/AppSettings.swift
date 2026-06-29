@@ -20,6 +20,18 @@ enum SnippetAction: String, CaseIterable, Hashable {
     }
 }
 
+/// RDP 远程桌面连接成功后的打开方式：每次询问 / 内嵌标签 / 新窗口（全屏）。
+enum RDPOpenMode: String, CaseIterable, Hashable {
+    case ask, embedded, window
+    var label: String {
+        switch self {
+        case .ask: return "每次询问"
+        case .embedded: return "内嵌标签"
+        case .window: return "新窗口（全屏）"
+        }
+    }
+}
+
 /// 全局应用设置，UserDefaults 持久化。
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
@@ -108,6 +120,11 @@ final class AppSettings: ObservableObject {
         didSet { d.set(snippetAction.rawValue, forKey: "snippetAction") }
     }
 
+    // RDP 连接成功后的打开方式；默认「每次询问」：弹「内嵌/新窗口」选择，可勾选记住后不再询问。
+    @Published var rdpOpenMode: RDPOpenMode {
+        didSet { d.set(rdpOpenMode.rawValue, forKey: "rdpOpenMode") }
+    }
+
     private init() {
         startupBehavior = StartupBehavior(rawValue: d.string(forKey: "startupBehavior") ?? "") ?? .welcome
         defaultShell = DefaultShell(rawValue: d.string(forKey: "defaultShell") ?? "") ?? .auto
@@ -128,6 +145,7 @@ final class AppSettings: ObservableObject {
         confirmHostDelete = d.object(forKey: "confirmHostDelete") as? Bool ?? true
         monitorNoticeHidden = d.object(forKey: "monitorNoticeHidden") as? Bool ?? false
         snippetAction = SnippetAction(rawValue: d.string(forKey: "snippetAction") ?? "") ?? .ask
+        rdpOpenMode = RDPOpenMode(rawValue: d.string(forKey: "rdpOpenMode") ?? "") ?? .ask
     }
 
     /// 实际下载目录：设置为空则用系统下载文件夹。

@@ -32,7 +32,8 @@ struct RDPSessionView: View {
                 session.requestResize(canvas: new)  // 拖停后合并发一次远端 resize
             }
         }
-        .onDisappear { session.disconnect() }
+        // 不在 onDisappear 断开：切换标签会移出本视图，但会话由 model 持有需后台保活（同终端 PTY）。
+        // 真正的断开在标签关闭（AppModel 清理 rdpSessions）与新窗口关闭（windowWillClose）时进行。
     }
 
     private func connectIfReady(_ size: CGSize) {
@@ -62,9 +63,47 @@ struct RDPConnectingDialog: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: session.certPrompt?.id)
-        // 首帧到达（image 由 nil 变非 nil）即连接成功 → 开标签。
-        .onChange(of: session.image == nil) { isNil in
-            if !isNil { onConnected() }
+        // 等首帧沉降完成（整桌面画好）再开标签/窗口，进入更顺、不闪半成品画面。
+        .onChange(of: session.ready) { isReady in
+            if isReady { onConnected() }
+        }
+    }
+}
+
+/// 连接成功后的打开方式选择弹窗：内嵌标签 还是 新窗口（全屏），可勾选记住（写入设置默认）。
+struct RDPOpenDialog: View {
+    let hostName: String
+    let onChoose: (_ window: Bool, _ remember: Bool) -> Void
+    let onCancel: () -> Void
+    @State private var remember = false
+    @ObservedObject private var theme = ThemeManager.shared
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.35).ignoresSafeArea().onTapGesture(perform: onCancel)
+            VStack(alignment: .leading, spacing: 14) {
+                Text("打开远程桌面").font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
+                Text("「\(hostName)」要如何打开？")
+                    .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    ThemedCheckbox(isOn: remember) { remember.toggle() }
+                    Text("记住我的选择（可在设置中修改）")
+                        .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                        .onTapGesture { remember.toggle() }
+                }
+                HStack(spacing: 10) {
+                    SecondaryButton(title: "取消", action: onCancel)
+                    Spacer()
+                    SecondaryButton(title: "新窗口") { onChoose(true, remember) }
+                    PrimaryButton(title: "内嵌标签") { onChoose(false, remember) }
+                }
+            }
+            .padding(20)
+            .frame(width: 400)
+            .background(Pal.solidBase, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Pal.fill(0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(theme.isDark ? 0.4 : 0.16), radius: 20, y: 8)
         }
     }
 }

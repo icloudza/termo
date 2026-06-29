@@ -17,6 +17,54 @@ struct PendingHostKey: Identifiable {
 private let reachQueue = DispatchQueue(label: "termo.reach", attributes: .concurrent)
 private let reachLimit = DispatchSemaphore(value: 6)
 
+/// 承载「新窗口」打开的 RDP 远程桌面：独立 NSWindow + RDPSessionView，默认进入全屏。
+/// 强持有会话（经 contentView 的 rootView），由 AppModel 持有本 controller；窗口关闭即断开并回调释放。
+final class RDPWindowController: NSWindowController, NSWindowDelegate {
+    let session: RDPSession
+    var onClose: (() -> Void)?
+
+    /// 该窗口承载的主机 id（用于「单主机一连接」查重与聚焦）。
+    var hostId: String { session.host.id }
+
+    /// 寻回窗口：取消最小化并置前。
+    func focus() {
+        guard let w = window else { return }
+        if w.isMiniaturized { w.deminiaturize(nil) }
+        w.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    init(session: RDPSession) {
+        self.session = session
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                              backing: .buffered, defer: false)
+        window.title = session.host.name
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        window.contentView = NSHostingView(rootView: RDPSessionView(session: session))
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+        window.delegate = self
+        window.center()
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    func showFullScreen() {
+        window?.makeKeyAndOrderFront(nil)
+        // 延后一拍再切全屏：紧接 makeKeyAndOrderFront 调用 toggleFullScreen 可能被忽略。
+        DispatchQueue.main.async { [weak self] in
+            guard let w = self?.window, !w.styleMask.contains(.fullScreen) else { return }
+            w.toggleFullScreen(nil)
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        session.disconnect()
+        onClose?()
+    }
+}
+
 
 
 @MainActor
@@ -65,6 +113,9 @@ final class AppModel: ObservableObject {
     @Published var pendingHostKey: PendingHostKey? = nil   // 首次连接待验证的主机指纹
     @Published var connectingHost: Host? = nil   // 正在连接的主机（展示连接进度弹窗）
     @Published var connectingRDP: RDPSession? = nil   // 连接中的 RDP 会话：标签未开，弹窗覆盖当前视图，连接成功才开标签
+    @Published var pendingRDPOpen: RDPSession? = nil   // 连接成功、等待用户选择打开方式（内嵌/新窗口）的会话
+    @Published private(set) var rdpHosts: Set<String> = []   // 已有 RDP 连接（内嵌标签或新窗口）的主机 id 集合，供概览页显示「运行中」
+    private var rdpWindowControllers: [RDPWindowController] = []   // 持有「新窗口」打开的 RDP 窗口（连同其会话），关闭即移除
 
     // 文件栏右键操作弹窗（删除确认 / 重命名 / 权限 / 刷新冲突 / 信息提示）
     @Published var pendingFileDelete: FileOpContext? = nil
@@ -1459,30 +1510,89 @@ final class AppModel: ObservableObject {
     /// 打开（或切到）一台 RDP 主机的远程桌面标签。
     func openHostRDP(_ host: Host) {
         guard host.isRDP else { return }
+        // 单主机仅允许一个连接（RDP 不支持同主机并发会话，会互斥顶线）：已有连接则寻回，不新建。
         if let existing = tabs.first(where: { $0.kind == .rdp && $0.hostId == host.id }) {
             activeTabId = existing.id
             return
         }
+        if let w = rdpWindowController(for: host.id) {
+            w.focus()
+            return
+        }
+        // 已在连接中/待选打开方式：忽略重复发起。
+        if connectingRDP?.host.id == host.id || pendingRDPOpen?.host.id == host.id { return }
         // 先弹连接窗口（覆盖当前概览/列表，不直接进入黑色标签页），连接成功才开标签。
         let session = RDPSession(host: host)
         connectingRDP = session
         session.connect(canvas: estimatedRDPCanvas())
     }
 
-    /// RDP 连接弹窗成功 → 开标签并把已连接的 session 交给它（不重连），关闭弹窗。
+    /// 某主机的「新窗口」RDP 连接（若存在）。
+    private func rdpWindowController(for hostId: String) -> RDPWindowController? {
+        rdpWindowControllers.first { $0.hostId == hostId }
+    }
+
+    /// 重算「已有 RDP 连接的主机」集合（内嵌标签 + 新窗口），驱动概览页「运行中」显示。
+    private func refreshRDPHosts() {
+        var s = Set<String>()
+        for t in tabs where t.kind == .rdp { if let h = t.hostId { s.insert(h) } }
+        for w in rdpWindowControllers { s.insert(w.hostId) }
+        if rdpHosts != s { rdpHosts = s }
+    }
+
+    /// RDP 连接弹窗成功 → 按设置的打开方式分流：内嵌标签 / 新窗口 / 每次询问。关闭连接弹窗。
     func finishRDPConnecting() {
         guard let session = connectingRDP else { return }
         connectingRDP = nil
-        let host = session.host
-        let id = addTab(.rdp, title: host.name, hostId: host.id)
-        rdpSessions[id] = session
-        recordSession(hostId: host.id, kind: .rdp, detail: "远程桌面")
+        switch AppSettings.shared.rdpOpenMode {
+        case .embedded: openRDPEmbedded(session)
+        case .window:   openRDPWindow(session)
+        case .ask:      pendingRDPOpen = session
+        }
     }
 
     /// 取消/关闭 RDP 连接弹窗：断开并释放未入标签的会话。
     func cancelRDPConnecting() {
         connectingRDP?.disconnect()
         connectingRDP = nil
+    }
+
+    /// 内嵌打开：把已连接的 session 交给一个新 RDP 标签（不重连）。
+    func openRDPEmbedded(_ session: RDPSession) {
+        let host = session.host
+        let id = addTab(.rdp, title: host.name, hostId: host.id)
+        rdpSessions[id] = session
+        recordSession(hostId: host.id, kind: .rdp, detail: "远程桌面")
+        refreshRDPHosts()
+    }
+
+    /// 新窗口打开：把会话放进一个独立窗口并默认进入全屏；窗口由 controller 持有（连同会话），关闭即断开。
+    func openRDPWindow(_ session: RDPSession) {
+        let c = RDPWindowController(session: session)
+        c.onClose = { [weak self, weak c] in
+            Task { @MainActor in
+                guard let self, let c else { return }
+                self.rdpWindowControllers.removeAll { $0 === c }
+                self.refreshRDPHosts()
+            }
+        }
+        rdpWindowControllers.append(c)
+        recordSession(hostId: session.host.id, kind: .rdp, detail: "远程桌面（窗口）")
+        refreshRDPHosts()
+        c.showFullScreen()
+    }
+
+    /// 「每次询问」选择结果：window=true 新窗口（全屏），否则内嵌标签；remember 写入设置作为默认。
+    func resolveRDPOpen(_ session: RDPSession, window: Bool, remember: Bool) {
+        pendingRDPOpen = nil
+        if remember { AppSettings.shared.rdpOpenMode = window ? .window : .embedded }
+        if window { openRDPWindow(session) } else { openRDPEmbedded(session) }
+    }
+
+    /// 取消「每次询问」：断开并释放尚未落地的会话。
+    func cancelRDPOpen() {
+        pendingRDPOpen?.disconnect()
+        pendingRDPOpen = nil
     }
 
     /// 标签未开时连接所用的估算画布（≈工作区尺寸）；标签出现后 RDPSessionView 会按真实尺寸 requestResize 校正。
@@ -2261,6 +2371,7 @@ final class AppModel: ObservableObject {
         editorHosts.removeValue(forKey: id)   // 释放托管的编辑器实例
         rdpSessions[id]?.disconnect()
         rdpSessions.removeValue(forKey: id)
+        refreshRDPHosts()   // 关闭 RDP 标签后更新「运行中」状态
         tabCwd.removeValue(forKey: id)
         if activeTabId == id {
             activeTabId = tabs.isEmpty ? nil : tabs[min(idx, tabs.count - 1)].id

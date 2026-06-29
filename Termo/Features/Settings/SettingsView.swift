@@ -146,6 +146,14 @@ struct SettingsView: View {
             settingRow("删除主机前确认", description: "删除主机时弹出确认弹窗，避免误删") {
                 ThemedToggle(isOn: $settings.confirmHostDelete)
             }
+
+            settingRow("远程桌面打开方式", description: "RDP 连接成功后内嵌为标签还是在新窗口（全屏）打开；「每次询问」会弹出选择且可记住") {
+                ThemedDropdown(
+                    options: RDPOpenMode.allCases.map { ($0, $0.label) },
+                    selection: $settings.rdpOpenMode
+                )
+                .frame(width: 160)
+            }
         }
     }
 
