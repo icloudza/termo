@@ -38,6 +38,21 @@ struct SegmentedControl<T: Hashable>: View {
 }
 
 /// 主题自适应的输入框（聚焦时高亮强调色边框）。
+extension View {
+    /// 去掉 macOS 原生输入框聚焦时的系统蓝光环（focus ring）。焦点反馈统一改用自定义描边，符合「禁止原生外观」。
+    func noNativeFocusRing() -> some View {
+        focusEffectDisabled()   // 最低系统 macOS 14，此 API 恒可用
+    }
+}
+
+extension Binding where Value == String {
+    /// 单行输入的去换行代理绑定：粘贴含 \n/\r 的内容时即时剥掉换行，
+    /// 防止单行输入框（密码/名称等）被多行内容撑高。多行输入（ThemedTextEditor）不用此绑定。
+    var singleLine: Binding<String> {
+        Binding(get: { wrappedValue }, set: { wrappedValue = $0.filter { !$0.isNewline } })
+    }
+}
+
 struct ThemedTextField: View {
     let placeholder: String
     @Binding var text: String
@@ -47,8 +62,10 @@ struct ThemedTextField: View {
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
-        TextField(placeholder, text: $text)
+        TextField(placeholder, text: $text.singleLine)
             .textFieldStyle(.plain)
+            .lineLimit(1)
+            .noNativeFocusRing()
             .font(.system(size: 13))
             .foregroundStyle(Pal.text)
             .focused($focused)
@@ -86,6 +103,7 @@ struct ThemedTextEditor: View {
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(Pal.text)
                 .focused($focused)
+                .noNativeFocusRing()
                 .scrollContentBackground(.hidden)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
@@ -115,16 +133,18 @@ struct ThemedSecureField: View {
         HStack(spacing: 6) {
             // 两个字段都常驻、仅切 opacity；切换显示/隐藏时不重建视图，焦点不丢失
             ZStack {
-                SecureField(placeholder, text: $text)
+                SecureField(placeholder, text: $text.singleLine)
                     .focused($focusedField, equals: .secure)
                     .opacity(reveal ? 0 : 1)
                     .allowsHitTesting(!reveal)
-                TextField(placeholder, text: $text)
+                TextField(placeholder, text: $text.singleLine)
                     .focused($focusedField, equals: .plain)
                     .opacity(reveal ? 1 : 0)
                     .allowsHitTesting(reveal)
             }
             .textFieldStyle(.plain)
+            .lineLimit(1)
+            .noNativeFocusRing()
             .font(.system(size: 13))
             .foregroundStyle(Pal.text)
 
@@ -306,8 +326,10 @@ struct SearchableSelect: View {
             VStack(spacing: 6) {
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Pal.overlay)
-                    TextField(placeholder, text: $query)
+                    TextField(placeholder, text: $query.singleLine)
                         .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Pal.text)
+                        .lineLimit(1)
+                        .noNativeFocusRing()
                         .focused($searchFocused)
                         .onSubmit { commitQuery() }
                 }
