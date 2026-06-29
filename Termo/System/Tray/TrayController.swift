@@ -69,12 +69,12 @@ final class TrayController: NSObject, NSMenuDelegate {
     /// 启动 `_` 的蓝绿呼吸（约 20fps，周期 ~1.8s）；仅有任务时运行，幂等。
     private func startAnimating() {
         guard animTimer == nil else { return }
-        animTick()   // 立即出一帧，避免首帧延迟
         let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.animTick() }
         }
         RunLoop.main.add(t, forMode: .common)   // .common：菜单/拖动等模式下仍走动画
         animTimer = t
+        animTick()   // 立即出一帧，避免首帧延迟（须在 animTimer 赋值后，否则被下方 guard 拦掉）
     }
 
     private func stopAnimating() {
@@ -83,6 +83,12 @@ final class TrayController: NSObject, NSMenuDelegate {
     }
 
     private func animTick() {
+        // 防卡绿根因①（竞态）：stopAnimating 只 invalidate timer，但其回调里已 enqueue 的 Task 仍会执行一次；
+        // 不拦的话它会在 updateImage 把图标设回静态蓝之后再覆盖成蓝绿插值帧 → 停在绿色。invalidate 后 animTimer=nil，据此早退。
+        guard animTimer != nil else { return }
+        // 防卡绿根因②（漏发布）：任务结束的 count 变化偶尔没经 AppModel publish（子对象 phase 翻转不冒泡），
+        // 托盘收不到刷新通知而一直转。动画期间每帧自校验真相源，归零即停并复位为静态蓝，最多滞后一帧(~50ms)。
+        if AppModel.shared.activeBackgroundCount == 0 { updateImage(); return }
         animPhase += 0.18                          // 步进：周期约 2π/0.18×0.05s ≈ 1.75s
         let f = CGFloat((sin(animPhase) + 1) / 2)  // 0…1 平滑往返
         statusItem?.button?.image = Self.logoImage(barColor: Self.lerp(Self.barBlue, Self.barGreen, f))
