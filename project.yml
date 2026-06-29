@@ -6,7 +6,7 @@ name: Termo
 options:
   bundleIdPrefix: com.cloudza
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "14.0"
   createIntermediateGroups: true        # 子目录(App/Core/Features/UI/System)映射为分组
   defaultConfig: Debug
   groupSortPosition: top
@@ -61,7 +61,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: Termo.entitlements
         ENABLE_HARDENED_RUNTIME: NO       # 上架/公证阶段再打开
-        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
         COMBINE_HIDPI_IMAGES: YES
       configs:
         Release:
