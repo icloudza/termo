@@ -26,6 +26,26 @@
 #include <freerdp/channels/disp.h>    // DISP_DVC_CHANNEL_NAME / DISPLAY_CONTROL_MONITOR_LAYOUT
 #include <winpr/synch.h>
 
+#include <openssl/provider.h>        // OSSL_PROVIDER_add_builtin / OSSL_PROVIDER_load
+
+// ── OpenSSL legacy provider（NTLM 所需的 MD4 / RC4 / DES）─────────────────────
+// OpenSSL 3 把 MD4/RC4/DES 移到了 legacy provider；本工程静态内嵌 OpenSSL，legacy provider
+// 不会被自动加载，导致 WinPR 的 NTLM 取不到 MD4（日志：no md4 support / SEC_E_INTERNAL_ERROR）
+// → NLA 认证失败、连接断开。这里把随静态库（liblegacy.a）链接进来的 provider 入口注册为 builtin
+// 并显式加载（default 一并加载兜底）。必须在任何 NTLM 加密之前（即 freerdp_connect 之前）完成。
+extern OSSL_provider_init_fn ossl_legacy_provider_init;   // 由静态 liblegacy.a 导出
+
+static void termo_openssl_register_legacy(void) {
+    OSSL_PROVIDER_add_builtin(NULL, "legacy", ossl_legacy_provider_init);
+    OSSL_PROVIDER_load(NULL, "legacy");
+    OSSL_PROVIDER_load(NULL, "default");
+}
+
+static void termo_ensure_openssl_legacy(void) {
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, termo_openssl_register_legacy);
+}
+
 // 自定义上下文：首字段必须是 rdpContext，便于在回调里 (TermoContext*)context 取回 owner。
 typedef struct {
     rdpContext context;
@@ -45,6 +65,16 @@ struct TermoRDPHandle {
 
 static void termo_emit_state(TermoRDPHandle *h, TermoRDPState s, const char *msg) {
     if (h && h->cb.on_state) h->cb.on_state(h->cb.userdata, s, msg);
+}
+
+// 连接日志：转发给上层「实时日志」面板。level 0=信息 1=警告 2=错误。
+static void termo_log(TermoRDPHandle *h, int level, const char *text) {
+    if (h && h->cb.on_log && text) h->cb.on_log(h->cb.userdata, level, text);
+}
+
+// 从 freerdp 实例取回 owner 句柄（各回调里复用）。
+static TermoRDPHandle *termo_owner(freerdp *instance) {
+    return (instance && instance->context) ? ((TermoContext *)instance->context)->owner : NULL;
 }
 
 // ── 绘制回调 ────────────────────────────────────────────────────────────────
@@ -102,6 +132,7 @@ static UINT termo_disp_caps(DispClientContext *disp, UINT32 maxNumMonitors,
     TermoRDPHandle *h = disp ? (TermoRDPHandle *)disp->custom : NULL;
     if (h) {
         h->dynresize_ready = 1;
+        termo_log(h, 0, "显示控制通道就绪（支持动态分辨率）");
         if (h->want_w && h->want_h) termo_disp_send_layout(h, h->want_w, h->want_h);
     }
     return CHANNEL_RC_OK;
@@ -146,6 +177,7 @@ static BOOL termo_load_channels(freerdp *instance) {
 static BOOL termo_pre_connect(freerdp *instance) {
     rdpContext *context = instance->context;
     rdpSettings *s = context->settings;
+    termo_log(termo_owner(instance), 0, "初始化连接参数…");
     if (!freerdp_settings_set_bool(s, FreeRDP_CertificateCallbackPreferPEM, TRUE)) return FALSE;
     PubSub_SubscribeChannelConnected(context->pubSub, termo_on_channel_connected);
     return TRUE;
@@ -157,7 +189,9 @@ static BOOL termo_post_connect(freerdp *instance) {
     context->update->BeginPaint = termo_begin_paint;
     context->update->EndPaint = termo_end_paint;
     context->update->DesktopResize = termo_desktop_resize;
-    termo_emit_state(((TermoContext *)context)->owner, TermoRDPStateConnected, NULL);
+    TermoRDPHandle *h = ((TermoContext *)context)->owner;
+    termo_log(h, 0, "图形子系统已就绪，连接成功");
+    termo_emit_state(h, TermoRDPStateConnected, NULL);
     return TRUE;
 }
 
@@ -165,16 +199,41 @@ static void termo_post_disconnect(freerdp *instance) {
     if (!instance || !instance->context) return;
     TermoRDPHandle *h = ((TermoContext *)instance->context)->owner;
     gdi_free(instance);
+    termo_log(h, 0, "连接已断开");
     termo_emit_state(h, TermoRDPStateDisconnected, NULL);
 }
 
-// 证书校验：阶段 E 接入确认 UI；当前接受本次连接（返回 1）。
+// 证书校验：把决定权交给上层（弹窗询问用户 + 自管信任库）。上层回调允许阻塞——本回调在
+// 后台事件循环线程，主线程弹 UI、用户点完才返回。无回调时回退「仅本次接受」（返回 2）。
+// 统一不写 FreeRDP known_hosts：永久信任由上层 RDPCertTrustStore 持久化，FreeRDP 每次都问、
+// 上层据库静默放行或弹窗，信任来源单一可控（亦不会日后触发 changed 拒绝路径）。
 static DWORD termo_verify_certificate_ex(freerdp *instance, const char *host, UINT16 port,
                                          const char *common_name, const char *subject,
                                          const char *issuer, const char *fingerprint, DWORD flags) {
-    (void)instance; (void)host; (void)port; (void)common_name;
-    (void)subject; (void)issuer; (void)fingerprint; (void)flags;
-    return 1;
+    (void)flags;
+    TermoRDPHandle *h = ((TermoContext *)instance->context)->owner;
+    termo_log(h, 0, "正在验证服务器证书…");
+    if (h && h->cb.verify_certificate)
+        return (DWORD)h->cb.verify_certificate(h->cb.userdata, host, (int)port, common_name,
+                                               subject, issuer, fingerprint, 0, NULL, NULL, NULL);
+    return 2;
+}
+
+// 已存指纹与本次不一致时走此回调（自签名服务器重装/证书轮换/NAT 端口复用都会触发）。
+// 因本工程不写 FreeRDP known_hosts，FreeRDP 自身的 changed 路径通常不会触发（指纹比对在上层做）；
+// 仍注册并把 old_* 透传上层做防御兜底，让「证书已更改」也能弹更强警告。
+static DWORD termo_verify_changed_certificate_ex(freerdp *instance, const char *host, UINT16 port,
+                                                 const char *common_name, const char *subject,
+                                                 const char *issuer, const char *fingerprint,
+                                                 const char *old_subject, const char *old_issuer,
+                                                 const char *old_fingerprint, DWORD flags) {
+    (void)flags;
+    TermoRDPHandle *h = ((TermoContext *)instance->context)->owner;
+    if (h && h->cb.verify_certificate)
+        return (DWORD)h->cb.verify_certificate(h->cb.userdata, host, (int)port, common_name,
+                                               subject, issuer, fingerprint, 1,
+                                               old_subject, old_issuer, old_fingerprint);
+    return 2;
 }
 
 // ── 事件循环线程（参照 tf_freerdp.c 的 tf_client_thread_proc）────────────────
@@ -182,7 +241,9 @@ static void *termo_thread_proc(void *arg) {
     TermoRDPHandle *h = (TermoRDPHandle *)arg;
     freerdp *instance = h->instance;
 
+    termo_log(h, 0, "正在协商安全层并建立连接…");
     if (!freerdp_connect(instance)) {
+        termo_log(h, 2, "连接失败（认证失败或服务器不可达）");
         termo_emit_state(h, TermoRDPStateFailed, "连接失败");
         return NULL;
     }
@@ -219,6 +280,8 @@ int termo_rdp_connect(TermoRDPHandle *h, const char *host, int port,
                       const char *domain, int width, int height) {
     if (!h || !host || h->instance) return 1;
 
+    termo_ensure_openssl_legacy();   // 在 NLA/NTLM 用到 MD4 之前，确保 legacy provider 已加载
+
     freerdp *instance = freerdp_new();
     if (!instance) return 2;
     instance->ContextSize = sizeof(TermoContext);
@@ -227,6 +290,7 @@ int termo_rdp_connect(TermoRDPHandle *h, const char *host, int port,
     instance->PostConnect = termo_post_connect;
     instance->PostDisconnect = termo_post_disconnect;
     instance->VerifyCertificateEx = termo_verify_certificate_ex;
+    instance->VerifyChangedCertificateEx = termo_verify_changed_certificate_ex;
 
     if (!freerdp_context_new(instance)) {
         freerdp_free(instance);
@@ -256,6 +320,9 @@ int termo_rdp_connect(TermoRDPHandle *h, const char *host, int port,
     const char *disp_args[] = { "disp" };
     freerdp_client_add_dynamic_channel(s, 1, disp_args);
 
+    char line[192];
+    snprintf(line, sizeof(line), "开始连接 %s@%s:%d", (username && *username) ? username : "(无)", host, port);
+    termo_log(h, 0, line);
     termo_emit_state(h, TermoRDPStateConnecting, NULL);
     if (pthread_create(&h->thread, NULL, termo_thread_proc, h) != 0) return 4;
     h->thread_started = 1;

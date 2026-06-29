@@ -19,21 +19,33 @@ struct HostOverview: View {
                         }
                     }
                 }
-                Text("\(host.addr) · 端口 \(host.port)")
+                Text(isRDP ? "\(host.ipOrHost) · 端口 \(host.rdp?.port ?? 3389)"
+                           : "\(host.addr) · 端口 \(host.port)")
                     .font(.system(size: 13)).foregroundStyle(Pal.subtext)
                     .privacyBlur(model.privacyMode)
                     .padding(.top, 6).padding(.bottom, 16)
 
-                specsRow
+                if isRDP {
+                    // RDP 主机：只提供「远程桌面」与「编辑」，无 SSH 的终端/文件/转发/监控。
+                    HStack(spacing: 10) {
+                        action("display", "远程桌面", primary: true) { model.openHostRDP(host) }
+                        action("pencil", "编辑") { model.editingRDPHost = host }
+                    }
+                    .padding(.bottom, 26)
+                } else {
+                    specsRow
 
-                HStack(spacing: 10) {
-                    action("terminal", "终端", primary: true) { model.openHostTerminal(host) }
-                        .contextMenu { Button("新建终端") { model.openHostTerminal(host, forceNew: true) } }
-                    action("folder", "文件 (SFTP)", loading: model.openingFilesHostId == host.id) { model.openHostFiles(host) }
-                    action("arrow.left.arrow.right", "端口转发", badge: model.hasRunningForward(hostId: host.id)) { model.openForwardPanel(host) }
-                    action("pencil", "编辑") { model.beginEditHost(host) }
+                    HStack(spacing: 10) {
+                        action("terminal", "终端", primary: true) { model.openHostTerminal(host) }
+                            .contextMenu { Button("新建终端") { model.openHostTerminal(host, forceNew: true) } }
+                        action("folder", "文件 (SFTP)", loading: model.openingFilesHostId == host.id) { model.openHostFiles(host) }
+                        action("arrow.left.arrow.right", "端口转发", badge: model.hasRunningForward(hostId: host.id)) { model.openForwardPanel(host) }
+                        action("pencil", "编辑") { model.beginEditHost(host) }
+                    }
+                    .padding(.bottom, 26)
                 }
-                .padding(.bottom, 26)
+
+                if isRDP { rdpInfoSection }
 
                 if !host.notes.isEmpty {
                     Text("备注").font(.system(size: 12)).foregroundStyle(Pal.overlay).padding(.bottom, 8)
@@ -56,19 +68,24 @@ struct HostOverview: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // 监控只在概览可见时跑：切到此 tab 开始采集，切走（视图移出）几秒后自动停流，保持轻量。
+        // RDP 主机无 SSH 监控，整套探测/采集生命周期跳过。
         .onAppear {
+            guard !isRDP else { return }
             model.probeHostIfNeeded(liveHost)
             model.overviewAppeared(liveHost)
         }
         // 「每次询问」主机：取得本会话密码后（needsAuth 由 true→false），开始采集。
         .onChange(of: needsAuth) { stillNeeds in
-            if !stillNeeds {
+            if !isRDP, !stillNeeds {
                 model.probeHostIfNeeded(liveHost)
                 model.overviewAppeared(liveHost)
             }
         }
-        .onDisappear { model.overviewDisappeared(host.id) }
+        .onDisappear { if !isRDP { model.overviewDisappeared(host.id) } }
     }
+
+    /// 是否为 RDP（远程桌面）主机：决定概览页展示哪套操作、是否走 SSH 监控生命周期。
+    private var isRDP: Bool { host.isRDP }
 
     /// 实时主机：host 是 Workspace 传入的快照，输密码等变化要从 model 取最新值（HostOverview 已 @ObservedObject model）。
     private var liveHost: Host { model.host(host.id) ?? host }
@@ -104,6 +121,53 @@ struct HostOverview: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Pal.fill(0.04), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    /// RDP 主机的「连接信息」卡：静态展示连接配置（地址/账号/分辨率/安全层等），充实概览页内容，不涉及监控。
+    @ViewBuilder
+    private var rdpInfoSection: some View {
+        if let r = host.rdp {
+            let items: [(String, String, Bool)] = {
+                var a: [(String, String, Bool)] = []                 // (标签, 值, 是否随脱敏模糊)
+                if !host.os.isEmpty { a.append(("系统", host.os, false)) }
+                a.append(("地址", r.host, true))
+                a.append(("端口", String(r.port), false))
+                a.append(("用户名", r.user, true))
+                if !r.domain.isEmpty { a.append(("域", r.domain, false)) }
+                a.append(("默认分辨率", "\(r.width) × \(r.height)", false))
+                a.append(("色深", "\(r.colorDepth) 位", false))
+                a.append(("安全层", r.security.label, false))
+                if !host.group.isEmpty { a.append(("分组", host.group, false)) }
+                return a
+            }()
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle").font(.system(size: 10, weight: .semibold))
+                    Text("连接信息").font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundStyle(Pal.overlay)
+
+                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading),
+                                    GridItem(.flexible(), alignment: .leading)],
+                          alignment: .leading, spacing: 16) {
+                    ForEach(items, id: \.0) { label, value, blur in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(label).font(.system(size: 11)).foregroundStyle(Pal.overlay)
+                            Text(value).font(.system(size: 13, weight: .medium)).foregroundStyle(Pal.text)
+                                .textSelection(.enabled)
+                                .lineLimit(1).truncationMode(.middle)
+                                .privacyBlur(blur && model.privacyMode)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Pal.fill(0.045), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Pal.fill(0.09), lineWidth: 0.5))
+            }
+            .padding(.bottom, 24)
         }
     }
 

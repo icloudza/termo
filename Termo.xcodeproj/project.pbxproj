@@ -11,6 +11,7 @@
 		02FCF144BE815CB1427D5C6D /* HostOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCED3CB381B1EBDA09D6F705 /* HostOverview.swift */; };
 		0405FB6989ADD59280F4C50B /* NerdFontIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62CC3928D2886D20B479A59 /* NerdFontIcons.swift */; };
 		0677DAF91BE14EB43D261021 /* SidebarDivider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2F27F8718F6415C790115F /* SidebarDivider.swift */; };
+		0E96188D36EC928349BD587C /* RDPCertDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47CD8A8DDB495432E034CA69 /* RDPCertDialog.swift */; };
 		0F66A021071A0C65CCF4B324 /* FileBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CD647B69FEE9C928419CC9A /* FileBrowser.swift */; };
 		12692E67AF93F18760DBDDE0 /* TabsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FDA3935AE9F0BBE6372D2C1 /* TabsModel.swift */; };
 		16D136F3D24B59CA45769116 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 960BB4F03437160E388C0A01 /* AboutView.swift */; };
@@ -22,6 +23,7 @@
 		365595FD2E4D546CEF9E2FF1 /* CFreeRDP.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = E965A40BEE2746466C5F6D9E /* CFreeRDP.xcframework */; };
 		37C74361FD8D20E86BDE2F44 /* FileViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 984C300A771B216F5C348E38 /* FileViewer.swift */; };
 		3801418ADE5720C9809D4098 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2CAFBC8380A693E6ED2162D0 /* Assets.xcassets */; };
+		3ADE7CFFF1DB19E46DF5BA30 /* RDPCertTrustStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D5CEEB5CB2A48E9B52465C0 /* RDPCertTrustStore.swift */; };
 		3CB26182AE9092AB27045790 /* LayoutModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C026D59ED91361778B6B4B83 /* LayoutModel.swift */; };
 		3F74E95EBEDF83AE11A4A723 /* CodeEditSourceEditor in Frameworks */ = {isa = PBXBuildFile; productRef = C802BDCF5DFDD914442BF1C7 /* CodeEditSourceEditor */; };
 		425BC5173D1D386193DF0FF2 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD4781A2CF9579DE21490ED7 /* AppModel.swift */; };
@@ -105,6 +107,7 @@
 		40368D0C3B6906325B722EE0 /* SFTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SFTPClient.swift; sourceTree = "<group>"; };
 		40EBEA7EA273FB2B1C459A5B /* SnippetSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetSheets.swift; sourceTree = "<group>"; };
 		45C201B4ACC5CB6B8514EAEC /* Notifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifier.swift; sourceTree = "<group>"; };
+		47CD8A8DDB495432E034CA69 /* RDPCertDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPCertDialog.swift; sourceTree = "<group>"; };
 		500D51A30903F7DBC8F96798 /* CodeEditTextView */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeEditTextView; path = LocalPackages/CodeEditTextView; sourceTree = SOURCE_ROOT; };
 		501545F29B4E1519B62B1BC7 /* HostDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostDraft.swift; sourceTree = "<group>"; };
 		507FF5447F03353EF481A8B0 /* TerminalSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSurface.swift; sourceTree = "<group>"; };
@@ -128,6 +131,7 @@
 		922A429B171BE608DC237A98 /* FileOps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileOps.swift; sourceTree = "<group>"; };
 		960BB4F03437160E388C0A01 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
 		984C300A771B216F5C348E38 /* FileViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewer.swift; sourceTree = "<group>"; };
+		9D5CEEB5CB2A48E9B52465C0 /* RDPCertTrustStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPCertTrustStore.swift; sourceTree = "<group>"; };
 		9DE0DE66B1418BAB8B1F0F73 /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
 		A67AE3D18D0C1243CFB8D557 /* font-logos.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "font-logos.ttf"; sourceTree = "<group>"; };
 		AAC2312DCEA8551862769851 /* RDPSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPSessionView.swift; sourceTree = "<group>"; };
@@ -240,6 +244,7 @@
 			children = (
 				650DB60AA2A221003E5EAA5A /* KeyStore.swift */,
 				1C321CE8CC691865AB47896F /* Persistence.swift */,
+				9D5CEEB5CB2A48E9B52465C0 /* RDPCertTrustStore.swift */,
 				AE623D081B326C025E0118B3 /* SnippetStore.swift */,
 			);
 			path = Persistence;
@@ -444,6 +449,7 @@
 			children = (
 				3B0CDB5D5CC23E1C60246C78 /* Bridge */,
 				3FF3346630AADCC906545E0F /* AddRDPHostView.swift */,
+				47CD8A8DDB495432E034CA69 /* RDPCertDialog.swift */,
 				30E1CDC3F60325B41E91E2B0 /* RDPSession.swift */,
 				AAC2312DCEA8551862769851 /* RDPSessionView.swift */,
 				D9615D01CEC651F36383569C /* RDPSurfaceView.swift */,
@@ -615,6 +621,8 @@
 				DC82E921312D10CFF921F97B /* Persistence.swift in Sources */,
 				563B0D4BCEE69D24F6157952 /* PortForward.swift in Sources */,
 				9EBF1625176E56AEFCEDB5A0 /* PortForwardView.swift in Sources */,
+				0E96188D36EC928349BD587C /* RDPCertDialog.swift in Sources */,
+				3ADE7CFFF1DB19E46DF5BA30 /* RDPCertTrustStore.swift in Sources */,
 				64558053418AA9F708CEC29A /* RDPSession.swift in Sources */,
 				1AE8A97AFF2392F3BCEDDF3A /* RDPSessionView.swift in Sources */,
 				792D1D256F62DF76A80E7AE7 /* RDPSurfaceView.swift in Sources */,
@@ -721,6 +729,7 @@
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers",
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/freerdp3",
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/winpr3",
 				);
@@ -755,6 +764,7 @@
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers",
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/freerdp3",
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/winpr3",
 				);

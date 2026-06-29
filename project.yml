@@ -63,6 +63,7 @@ targets:
         # RDP ObjC 桥：经桥接头暴露给 Swift；FreeRDP/WinPR 头经版本化子目录搜索。
         SWIFT_OBJC_BRIDGING_HEADER: Termo/Features/RDP/Bridge/Termo-Bridging-Header.h
         HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers          # openssl/（legacy provider 注册）
           - $(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/freerdp3
           - $(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/winpr3
         OTHER_LDFLAGS:

@@ -15,6 +15,25 @@ NS_ASSUME_NONNULL_BEGIN
              height:(int)height
              stride:(int)stride
                 bpp:(int)bpp;
+
+/// 连接日志（已派发到主线程，供连接面板「实时日志」展示）。level：0=信息 1=警告 2=错误。
+- (void)rdpSession:(TermoRDPSession *)session didLog:(NSString *)text level:(NSInteger)level;
+
+/// 证书信任校验（已派发到主线程）。changed=YES 表示与已信任指纹不一致（old* 为旧证书信息）。
+/// 实现方在用户决定后调用 completion 回传：0=拒绝、1=永久信任、2=仅本次。可异步调用 completion
+/// （底层后台线程会阻塞等待）；不实现本方法时底层默认「仅本次接受」。
+- (void)rdpSession:(TermoRDPSession *)session
+    verifyCertificateForHost:(NSString *)host
+                        port:(int)port
+                  commonName:(nullable NSString *)commonName
+                     subject:(nullable NSString *)subject
+                      issuer:(nullable NSString *)issuer
+                 fingerprint:(nullable NSString *)fingerprint
+                     changed:(BOOL)changed
+                  oldSubject:(nullable NSString *)oldSubject
+                   oldIssuer:(nullable NSString *)oldIssuer
+              oldFingerprint:(nullable NSString *)oldFingerprint
+                  completion:(void (^)(NSInteger decision))completion;
 @end
 
 /// FreeRDP 会话的 ObjC 桥：经纯 C 层 TermoRDPCore 驱动连接/事件循环/帧回调，对 Swift 暴露 KVO/delegate 接口。

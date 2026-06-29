@@ -9,6 +9,7 @@ enum SettingsTab: String, CaseIterable, Hashable {
     case terminal = "终端"
     case transfer = "传输"
     case monitor = "监控"
+    case security = "安全"
     case keys = "快捷键"
     case about = "关于"
 
@@ -18,6 +19,7 @@ enum SettingsTab: String, CaseIterable, Hashable {
         case .terminal: return "terminal"
         case .transfer: return "arrow.up.arrow.down"
         case .monitor: return "speedometer"
+        case .security: return "lock.shield"
         case .keys: return "command"
         case .about: return "info.circle"
         }

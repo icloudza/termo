@@ -27,6 +27,16 @@ typedef struct {
     void (*on_frame)(void *userdata, const uint8_t *pixels, int width, int height, int stride, int bpp);
     /// 状态变化；message 可为 NULL。
     void (*on_state)(void *userdata, TermoRDPState state, const char *message);
+    /// 连接日志（各生命周期点上报，供连接面板「实时日志」展示）。level：0=信息 1=警告 2=错误。
+    void (*on_log)(void *userdata, int level, const char *text);
+    /// 证书信任校验（从后台事件循环线程**同步**调用，允许阻塞等待用户决定）。
+    /// changed=0 首见证书、1 与已存指纹不一致（old_* 提供旧证书信息，否则为 NULL）。
+    /// 返回：0=拒绝连接、1=接受并永久信任、2=仅本次接受。回调为 NULL 时底层默认 2（仅本次）。
+    int (*verify_certificate)(void *userdata, const char *host, int port,
+                              const char *common_name, const char *subject,
+                              const char *issuer, const char *fingerprint, int changed,
+                              const char *old_subject, const char *old_issuer,
+                              const char *old_fingerprint);
 } TermoRDPCallbacks;
 
 /// 不透明会话句柄。

@@ -344,7 +344,7 @@ struct RDPHostRow: View {
 
     var body: some View {
         Button {
-            model.openHostRDP(host)
+            model.openHost(host)   // 与 SSH 主机一致：先进概览页，由概览里的「远程桌面」再发起连接
         } label: {
             HStack(spacing: 9) {
                 HostLeadingIcon(host: host)

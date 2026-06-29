@@ -2,6 +2,38 @@ import AppKit
 import CoreGraphics
 import SwiftUI
 
+/// 用户对证书弹窗的选择：拒绝连接 / 仅本次接受 / 始终信任此电脑。
+enum RDPCertDecision { case reject, once, trust }
+
+/// 待用户确认的证书信任请求（首连或证书变更时弹窗用）。respond 回传用户选择。
+struct RDPCertPrompt: Identifiable {
+    let id = UUID()
+    let host: String
+    let port: Int
+    let fingerprint: String
+    let subject: String?
+    let issuer: String?
+    let changed: Bool            // true=与已信任指纹不一致，弹更强警告
+    let oldFingerprint: String?
+    let respond: (RDPCertDecision) -> Void
+}
+
+/// 连接日志一行（连接面板「实时日志」用）。level：0=信息 1=警告 2=错误。
+struct RDPLogLine: Identifiable {
+    let id = UUID()
+    let time: String
+    let message: String
+    let level: Int
+}
+
+/// 连接进度步骤（由会话 phase 推导，不解析日志字符串，避免脆弱）。
+struct RDPConnectStep: Identifiable {
+    enum State { case pending, running, success, failure }
+    let id = UUID()
+    let title: String
+    var state: State
+}
+
 /// 一个 RDP 远程桌面会话的宿主状态。
 ///
 /// 经 ObjC 桥 `TermoRDPSession` → 纯 C 层 `TermoRDPCore` 驱动 FreeRDP：后台事件循环线程跑
@@ -19,6 +51,9 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
     let config: RDPConnection
     @Published private(set) var phase: Phase = .pending
     @Published private(set) var image: CGImage? = nil   // 最新一帧（主线程更新）
+    @Published var certPrompt: RDPCertPrompt? = nil      // 非 nil 时叠加证书信任弹窗
+    @Published private(set) var logs: [RDPLogLine] = []  // 连接日志（连接面板展示）
+    private var lastCanvas: CGSize? = nil                // 最近一次连接画布尺寸（重试复用）
 
     private var session: TermoRDPSession?
 
@@ -33,6 +68,7 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
     func connect(canvas: CGSize) {
         guard session == nil else { return }
         guard let t = Self.targetPixelSize(canvas) else { return }
+        lastCanvas = canvas
         phase = .connecting
         let s = TermoRDPSession(host: config.host, port: Int32(config.port),
                                 username: config.user, password: config.password,
@@ -111,6 +147,91 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
     func rdpSession(_ session: TermoRDPSession, didReceiveFrame pixels: Data,
                     width: Int32, height: Int32, stride: Int32, bpp: Int32) {
         image = Self.makeImage(pixels, Int(width), Int(height), Int(stride), Int(bpp))
+    }
+
+    /// 证书信任校验（桥已派发到主线程）。已永久信任且指纹一致 → 静默放行；否则弹窗让用户决定。
+    /// completion：0=拒绝、1=永久信任、2=仅本次。本工程不用 FreeRDP known_hosts，永久信任写本地库后仍回 2。
+    /// 显式 selector：这个超长签名的 @objc 自动推断不可靠，不匹配会导致桥层 respondsToSelector 失败、
+    /// 静默走「未实现→默认放行」兜底（表现为弹窗不出现却直接连上）。固定 selector 以保证桥层能调到本方法。
+    @objc(rdpSession:verifyCertificateForHost:port:commonName:subject:issuer:fingerprint:changed:oldSubject:oldIssuer:oldFingerprint:completion:)
+    func rdpSession(_ session: TermoRDPSession, verifyCertificateForHost host: String, port: Int32,
+                    commonName: String?, subject: String?, issuer: String?, fingerprint: String?,
+                    changed: Bool, oldSubject: String?, oldIssuer: String?, oldFingerprint: String?,
+                    completion: @escaping (Int) -> Void) {
+        let fp = fingerprint ?? ""
+        let p = Int(port)
+        if RDPCertTrustStore.shared.isTrusted(host: host, port: p, fingerprint: fp) {
+            appendLog("服务器证书已信任，继续连接")
+            completion(2); return   // 已信任，无需打扰
+        }
+        appendLog(changed ? "服务器证书已更改，等待用户确认…" : "未信任的服务器证书，等待用户确认…", level: 1)
+        certPrompt = RDPCertPrompt(host: host, port: p, fingerprint: fp,
+                                   subject: subject, issuer: issuer,
+                                   changed: changed, oldFingerprint: oldFingerprint) { [weak self] decision in
+            self?.certPrompt = nil
+            switch decision {
+            case .reject:
+                self?.appendLog("用户已拒绝证书，连接取消", level: 2)
+                completion(0)
+            case .once:
+                self?.appendLog("用户接受证书（仅本次），继续连接")
+                completion(2)
+            case .trust:
+                self?.appendLog("用户选择始终信任此电脑，继续连接")
+                RDPCertTrustStore.shared.trust(host: host, port: p, fingerprint: fp,
+                                               subject: subject, issuer: issuer)
+                completion(2)
+            }
+        }
+    }
+
+    /// 连接日志（桥已派发到主线程）。显式 selector，规避可选协议方法 @objc 自动推断不稳。
+    @objc(rdpSession:didLog:level:)
+    func rdpSession(_ session: TermoRDPSession, didLog text: String, level: Int) {
+        appendLog(text, level: level)
+    }
+
+    private static let logTimeFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
+    }()
+
+    /// 追加一行连接日志（主线程）。
+    func appendLog(_ message: String, level: Int = 0) {
+        logs.append(RDPLogLine(time: Self.logTimeFormatter.string(from: Date()), message: message, level: level))
+    }
+
+    /// 重试连接：释放旧底层会话（join 其线程）、清空帧与日志，按上次画布尺寸重连。
+    func retry() {
+        session = nil
+        image = nil
+        logs = []
+        phase = .pending
+        if let c = lastCanvas { connect(canvas: c) }
+    }
+
+    // MARK: - 连接面板（步骤 + 状态，均由 phase 推导）
+
+    /// 连接步骤与状态。三步覆盖关键阶段；细节由实时日志补充。
+    var connectSteps: [RDPConnectStep] {
+        let titles = ["初始化配置", "建立安全连接", "连接成功"]
+        let states: [RDPConnectStep.State]
+        switch phase {
+        case .pending:      states = [.running, .pending, .pending]
+        case .connecting:   states = [.success, .running, .pending]
+        case .connected:    states = [.success, .success, .success]
+        case .failed:       states = [.success, .failure, .pending]
+        case .disconnected: states = [.success, .failure, .pending]
+        }
+        return zip(titles, states).map { RDPConnectStep(title: $0, state: $1) }
+    }
+
+    var connectStatusText: String {
+        switch phase {
+        case .pending, .connecting: return "连接中…"
+        case .connected:            return "连接成功"
+        case .failed:               return "连接失败"
+        case .disconnected:         return "已断开"
+        }
     }
 
     /// gdi 帧缓冲 → CGImage。按实际每像素字节数选位序/位深（对齐官方 Mac/iOS 客户端 mac_create_bitmap_context）：

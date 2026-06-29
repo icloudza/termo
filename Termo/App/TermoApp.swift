@@ -485,6 +485,19 @@ private struct ConnectionDialogs: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // RDP 连接弹窗：覆盖当前概览/列表，连接成功才开标签；含连接进度与证书信任框。
+            .overlay {
+                ZStack {
+                    if let s = model.connectingRDP {
+                        RDPConnectingDialog(session: s,
+                                            onConnected: { model.finishRDPConnecting() },
+                                            onCancel: { model.cancelRDPConnecting() })
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.2), value: model.connectingRDP != nil)
+                .allowsHitTesting(model.connectingRDP != nil)
+            }
             .overlay {
                 ZStack {
                     if let h = model.connectingHost {

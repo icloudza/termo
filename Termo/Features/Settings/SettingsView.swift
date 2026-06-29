@@ -5,6 +5,7 @@ struct SettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var theme = ThemeManager.shared
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var certStore = RDPCertTrustStore.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -101,6 +102,7 @@ struct SettingsView: View {
                     case .terminal: terminalSettings
                     case .transfer: transferSettings
                     case .monitor: monitorSettings
+                    case .security: securitySettings
                     case .keys: keysSettings
                     case .about: aboutSettings
                     }
@@ -202,6 +204,60 @@ struct SettingsView: View {
                 ThemedToggle(isOn: $settings.monitorNoticeHidden)
             }
         }
+    }
+
+    // MARK: - 安全
+
+    private var securitySettings: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            sectionHeader("安全")
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("已信任的远程桌面证书")
+                    .font(.system(size: 13)).foregroundStyle(Pal.text)
+                Text("连接 RDP 主机时勾选「始终信任此电脑」后记录于此。撤销后该主机下次连接会重新询问。")
+                    .font(.system(size: 11)).foregroundStyle(Pal.overlay)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if certStore.entries.isEmpty {
+                    Text("暂无已信任的证书")
+                        .font(.system(size: 12)).foregroundStyle(Pal.overlay)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 28)
+                        .background(Pal.fill(0.04), in: RoundedRectangle(cornerRadius: 10))
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(certStore.entries) { cert in
+                            trustedCertRow(cert)
+                            if cert.id != certStore.entries.last?.id {
+                                Divider().overlay(Pal.fill(0.06))
+                            }
+                        }
+                    }
+                    .background(Pal.fill(0.04), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Pal.fill(0.06), lineWidth: 1))
+                }
+            }
+        }
+    }
+
+    private func trustedCertRow(_ cert: RDPTrustedCert) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 14)).foregroundStyle(Pal.mauve)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(cert.host):\(cert.port)")
+                    .font(.system(size: 13, design: .monospaced)).foregroundStyle(Pal.text)
+                Text(cert.fingerprint.isEmpty ? "（无指纹）" : cert.fingerprint)
+                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(Pal.overlay)
+                    .lineLimit(1).truncationMode(.middle)
+                    .tooltip(cert.fingerprint)
+            }
+            Spacer()
+            SecondaryButton(title: "撤销") { certStore.revoke(cert.id) }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
     private func chooseDownloadDir() {

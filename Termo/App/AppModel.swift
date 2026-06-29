@@ -64,6 +64,7 @@ final class AppModel: ObservableObject {
     private var askVerifiedHosts: Set<String> = []      // 「每次询问」本会话已成功验证过密码的主机（之后文件/转发直连，不再弹连接弹窗）
     @Published var pendingHostKey: PendingHostKey? = nil   // 首次连接待验证的主机指纹
     @Published var connectingHost: Host? = nil   // 正在连接的主机（展示连接进度弹窗）
+    @Published var connectingRDP: RDPSession? = nil   // 连接中的 RDP 会话：标签未开，弹窗覆盖当前视图，连接成功才开标签
 
     // 文件栏右键操作弹窗（删除确认 / 重命名 / 权限 / 刷新冲突 / 信息提示）
     @Published var pendingFileDelete: FileOpContext? = nil
@@ -1462,9 +1463,34 @@ final class AppModel: ObservableObject {
             activeTabId = existing.id
             return
         }
+        // 先弹连接窗口（覆盖当前概览/列表，不直接进入黑色标签页），连接成功才开标签。
+        let session = RDPSession(host: host)
+        connectingRDP = session
+        session.connect(canvas: estimatedRDPCanvas())
+    }
+
+    /// RDP 连接弹窗成功 → 开标签并把已连接的 session 交给它（不重连），关闭弹窗。
+    func finishRDPConnecting() {
+        guard let session = connectingRDP else { return }
+        connectingRDP = nil
+        let host = session.host
         let id = addTab(.rdp, title: host.name, hostId: host.id)
-        rdpSessions[id] = RDPSession(host: host)
+        rdpSessions[id] = session
         recordSession(hostId: host.id, kind: .rdp, detail: "远程桌面")
+    }
+
+    /// 取消/关闭 RDP 连接弹窗：断开并释放未入标签的会话。
+    func cancelRDPConnecting() {
+        connectingRDP?.disconnect()
+        connectingRDP = nil
+    }
+
+    /// 标签未开时连接所用的估算画布（≈工作区尺寸）；标签出现后 RDPSessionView 会按真实尺寸 requestResize 校正。
+    private func estimatedRDPCanvas() -> CGSize {
+        if let s = NSApp.keyWindow?.contentView?.bounds.size, s.width > 400, s.height > 300 {
+            return CGSize(width: max(640, s.width - 320), height: max(480, s.height - 8))
+        }
+        return CGSize(width: 1280, height: 800)
     }
 
     /// 某 RDP 标签的会话状态（缺失则按需创建，保证视图总能拿到）。

@@ -1,11 +1,11 @@
 #ifndef FREERDP_BUILD_CONFIG_H
 #define FREERDP_BUILD_CONFIG_H
 
-#define FREERDP_DATA_PATH "/Users/cloudza/Development/Xcode/Termo/.freerdp-build/stage/share/freerdp3"
+#define FREERDP_DATA_PATH "/Users/lxc/Development/Swift/Termo/.freerdp-build/stage/share/freerdp3"
 #define FREERDP_KEYMAP_PATH ""
 #define FREERDP_PLUGIN_PATH "lib/freerdp3"
 
-#define FREERDP_INSTALL_PREFIX "/Users/cloudza/Development/Xcode/Termo/.freerdp-build/stage"
+#define FREERDP_INSTALL_PREFIX "/Users/lxc/Development/Swift/Termo/.freerdp-build/stage"
 
 #define FREERDP_LIBRARY_PATH "lib"
 
