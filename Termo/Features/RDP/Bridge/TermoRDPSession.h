@@ -10,10 +10,11 @@ NS_ASSUME_NONNULL_BEGIN
 @optional
 - (void)rdpSession:(TermoRDPSession *)session didChangeState:(NSInteger)state message:(nullable NSString *)message;
 - (void)rdpSession:(TermoRDPSession *)session
-    didReceiveFrame:(NSData *)bgra
+    didReceiveFrame:(NSData *)pixels
               width:(int)width
              height:(int)height
-             stride:(int)stride;
+             stride:(int)stride
+                bpp:(int)bpp;
 @end
 
 /// FreeRDP 会话的 ObjC 桥：经纯 C 层 TermoRDPCore 驱动连接/事件循环/帧回调，对 Swift 暴露 KVO/delegate 接口。
@@ -36,6 +37,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)sendMouseMoveX:(int)x y:(int)y;
 - (void)sendMouseButton:(int)button down:(BOOL)down x:(int)x y:(int)y;  // button 0=左 1=右 2=中
 - (void)sendMouseWheel:(int)delta x:(int)x y:(int)y;
+
+/// 动态分辨率：请求远端桌面改为 width×height。
+- (void)resizeToWidth:(int)width height:(int)height;
 
 /// 链接自检：返回内嵌 FreeRDP 版本串。
 + (NSString *)freerdpVersion;

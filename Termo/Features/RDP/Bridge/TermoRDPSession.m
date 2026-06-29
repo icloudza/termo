@@ -2,7 +2,7 @@
 #import "TermoRDPCore.h"   // 纯 C 层；本文件不 include 任何 FreeRDP 头，避免类型宇宙冲突
 
 static void termo_bridge_on_state(void *userdata, TermoRDPState state, const char *message);
-static void termo_bridge_on_frame(void *userdata, const uint8_t *bgra, int width, int height, int stride);
+static void termo_bridge_on_frame(void *userdata, const uint8_t *pixels, int width, int height, int stride, int bpp);
 
 @implementation TermoRDPSession {
     NSString *_host;
@@ -64,6 +64,9 @@ static void termo_bridge_on_frame(void *userdata, const uint8_t *bgra, int width
 - (void)sendMouseWheel:(int)delta x:(int)x y:(int)y {
     if (_handle) termo_rdp_mouse_wheel(_handle, delta, x, y);
 }
+- (void)resizeToWidth:(int)width height:(int)height {
+    if (_handle) termo_rdp_resize(_handle, width, height);
+}
 
 - (void)dealloc {
     if (_handle) {
@@ -88,12 +91,12 @@ static void termo_bridge_on_state(void *userdata, TermoRDPState state, const cha
     });
 }
 
-static void termo_bridge_on_frame(void *userdata, const uint8_t *bgra, int width, int height, int stride) {
+static void termo_bridge_on_frame(void *userdata, const uint8_t *pixels, int width, int height, int stride, int bpp) {
     TermoRDPSession *session = (__bridge TermoRDPSession *)userdata;
     // 拷贝整帧（FreeRDP 缓冲回调返回后即可能变化），跨线程交给主线程渲染。
-    NSData *data = [NSData dataWithBytes:bgra length:(NSUInteger)height * (NSUInteger)stride];
+    NSData *data = [NSData dataWithBytes:pixels length:(NSUInteger)height * (NSUInteger)stride];
     dispatch_async(dispatch_get_main_queue(), ^{
-        if ([session.delegate respondsToSelector:@selector(rdpSession:didReceiveFrame:width:height:stride:)])
-            [session.delegate rdpSession:session didReceiveFrame:data width:width height:height stride:stride];
+        if ([session.delegate respondsToSelector:@selector(rdpSession:didReceiveFrame:width:height:stride:bpp:)])
+            [session.delegate rdpSession:session didReceiveFrame:data width:width height:height stride:stride bpp:bpp];
     });
 }

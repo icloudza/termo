@@ -27,14 +27,17 @@ struct RDPSessionView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // 首次拿到窗口尺寸即按其分辨率连接（幂等，只连一次），使画面填满窗口、无黑边。
             .onAppear { connectIfReady(geo.size) }
-            .onChange(of: geo.size) { _, new in connectIfReady(new) }
+            .onChange(of: geo.size) { _, new in
+                connectIfReady(new)                 // 首次：按尺寸连接
+                session.requestResize(canvas: new)  // 之后：拖停后合并发一次远端 resize
+            }
         }
         .onDisappear { session.disconnect() }
     }
 
     private func connectIfReady(_ size: CGSize) {
         guard size.width > 200, size.height > 200 else { return }
-        session.connect(desktopWidth: Int(size.width), desktopHeight: Int(size.height))
+        session.connect(canvas: size)
     }
 
     /// 已连接且已出帧时不盖状态面板。

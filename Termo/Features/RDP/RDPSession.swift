@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import SwiftUI
 
@@ -27,20 +28,35 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
         super.init()
     }
 
-    /// 发起连接（幂等：已在连接/已连接则忽略）。desktopWidth/Height 为远端桌面分辨率，
-    /// 由视图按窗口实际尺寸传入，使画面 1:1 填满窗口、无黑边、清晰；非法尺寸回退到配置值。
-    func connect(desktopWidth: Int, desktopHeight: Int) {
+    /// 发起连接（幂等：已在连接/已连接则忽略）。按画布（窗口内容区，points）换算远端桌面像素分辨率，
+    /// 使画面 1:1 填满窗口、无黑边、清晰。
+    func connect(canvas: CGSize) {
         guard session == nil else { return }
-        let w = desktopWidth >= 640 ? (desktopWidth & ~1) : config.width   // 偶数、最小 640
-        let h = desktopHeight >= 480 ? (desktopHeight & ~1) : config.height
+        guard let t = Self.targetPixelSize(canvas) else { return }
         phase = .connecting
         let s = TermoRDPSession(host: config.host, port: Int32(config.port),
                                 username: config.user, password: config.password,
                                 domain: config.domain,
-                                width: Int32(w), height: Int32(h))
+                                width: Int32(t.w), height: Int32(t.h))
         s.delegate = self
         session = s
+        lastSent = t
         s.connect()
+    }
+
+    /// 画布尺寸（points）→ 远端桌面像素尺寸：
+    /// 按 Retina backing 缩放取真实像素 → 1:1 清晰；保宽高比缩到 [640×480, 2560×1600] 内（只缩不放）→
+    /// 远端宽高比恒等于画布、scaledToFit 满铺无黑边；宽高向下对齐 8。
+    static func targetPixelSize(_ canvas: CGSize) -> (w: Int, h: Int)? {
+        guard canvas.width >= 100, canvas.height >= 100 else { return nil }
+        let scale = Double(NSScreen.main?.backingScaleFactor ?? 2)
+        var w = Double(canvas.width) * scale
+        var h = Double(canvas.height) * scale
+        let r = min(1.0, 2560.0 / w, 1600.0 / h)   // 超限则保比例整体缩小
+        w *= r; h *= r
+        let wi = max(640, Int(w.rounded(.down))) / 8 * 8
+        let hi = max(480, Int(h.rounded(.down))) / 8 * 8
+        return (wi, hi)
     }
 
     /// 请求断开；底层线程结束后经 didChangeState(.disconnected) 收尾，会话对象在本对象释放时 free。
@@ -49,14 +65,37 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
     }
 
     // MARK: - 鼠标输入（x/y 为远端桌面像素坐标）
+    // 仅在已连接时下发；否则 FreeRDP 会对断开后的输入狂刷 "input functions called after the session terminated"。
+    private var isConnected: Bool { if case .connected = phase { return true }; return false }
     func sendMouseMove(_ x: Int, _ y: Int) {
+        guard isConnected else { return }
         session?.sendMouseMoveX(Int32(x), y: Int32(y))
     }
     func sendMouseButton(_ button: Int, down: Bool, x: Int, y: Int) {
+        guard isConnected else { return }
         session?.sendMouseButton(Int32(button), down: down, x: Int32(x), y: Int32(y))
     }
     func sendMouseWheel(_ delta: Int, x: Int, y: Int) {
+        guard isConnected else { return }
         session?.sendMouseWheel(Int32(delta), x: Int32(x), y: Int32(y))
+    }
+
+    // MARK: - 动态分辨率（窗口缩放自适应）
+    private var resizeWork: DispatchWorkItem?
+    private var lastSent: (w: Int, h: Int)?
+    /// 窗口尺寸变化时调用。拖动期间只本地缩放（SwiftUI scaledToFit），停止后合并成一次远端 resize：
+    /// 防抖 0.5s + 最小变化 32px（避免把中间布局过程当最终尺寸、狂发 DisplayControl）。
+    /// 通道/能力未就绪时底层会缓存目标尺寸，待 DisplayControlCaps 到达自动补发。
+    func requestResize(canvas: CGSize) {
+        guard case .connected = phase, let t = Self.targetPixelSize(canvas) else { return }
+        if let l = lastSent, abs(l.w - t.w) < 32, abs(l.h - t.h) < 32 { return }
+        resizeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.session?.resize(toWidth: Int32(t.w), height: Int32(t.h))
+            self?.lastSent = t
+        }
+        resizeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     // MARK: - TermoRDPSessionDelegate（桥已派发到主线程）
@@ -69,20 +108,24 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
         }
     }
 
-    func rdpSession(_ session: TermoRDPSession, didReceiveFrame bgra: Data,
-                    width: Int32, height: Int32, stride: Int32) {
-        image = Self.makeImage(bgra, Int(width), Int(height), Int(stride))
+    func rdpSession(_ session: TermoRDPSession, didReceiveFrame pixels: Data,
+                    width: Int32, height: Int32, stride: Int32, bpp: Int32) {
+        image = Self.makeImage(pixels, Int(width), Int(height), Int(stride), Int(bpp))
     }
 
-    /// BGRA32 缓冲 → CGImage。FreeRDP PIXEL_FORMAT_BGRA32 内存序为 B,G,R,A；
-    /// byteOrder32Little + noneSkipFirst 按 XRGB 解读、忽略 alpha（避免 alpha=0 时整帧透明）。
-    private static func makeImage(_ data: Data, _ w: Int, _ h: Int, _ stride: Int) -> CGImage? {
-        guard w > 0, h > 0, data.count >= h * stride else { return nil }
-        let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue
-                                | CGBitmapInfo.byteOrder32Little.rawValue)
+    /// gdi 帧缓冲 → CGImage。按实际每像素字节数选位序/位深（对齐官方 Mac/iOS 客户端 mac_create_bitmap_context）：
+    /// - bpp==2（RGB16/RGB565）：bitsPerComponent=5、bitsPerPixel=16、byteOrder16Little
+    /// - 否则（BGRX32）：bitsPerComponent=8、bitsPerPixel=32、byteOrder32Little
+    /// 二者均 noneSkipFirst：忽略最高位/alpha，避免整帧透明。服务器降级到 RGB16 且 resize 后尤需走 16bpp 分支，
+    /// 否则用 32bpp 步幅解读 16bpp 数据会把每行拆成两行 → 画面撕裂成双桌面。
+    private static func makeImage(_ data: Data, _ w: Int, _ h: Int, _ stride: Int, _ bpp: Int) -> CGImage? {
+        guard w > 0, h > 0, stride > 0, data.count >= h * stride else { return nil }
+        let order: CGBitmapInfo = bpp == 2 ? .byteOrder16Little : .byteOrder32Little
+        let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue | order.rawValue)
         guard let provider = CGDataProvider(data: data as CFData) else { return nil }
-        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: stride,
-                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info, provider: provider,
-                       decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        return CGImage(width: w, height: h,
+                       bitsPerComponent: bpp == 2 ? 5 : 8, bitsPerPixel: bpp == 2 ? 16 : 32,
+                       bytesPerRow: stride, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info,
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
     }
 }
