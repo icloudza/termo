@@ -1181,7 +1181,8 @@ final class AppModel: ObservableObject {
     }
 
     private func makeTerminal(ssh: SSHConnection? = nil, hostId: String? = nil, tabId: Int) -> LocalProcessTerminalView {
-        let tv = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 480))
+        // PacedTerminalView：重写粘贴为分片限速 + 括号粘贴，根治粘贴长命令被远端 tty 灌爆而截断/错行。
+        let tv = PacedTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 480))
         tv.font = currentTerminalFont()
         applyTheme(to: tv)
         applyTerminalConfig(to: tv)

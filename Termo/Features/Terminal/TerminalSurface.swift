@@ -191,3 +191,47 @@ extension LocalProcessTerminalView: TerminalActions {
         terminal.resetToInitialState()
     }
 }
+
+/// 终端视图子类：重写粘贴，根治「粘贴长命令/脚本被截断、错行无法运行」这一终端通病。
+/// SwiftTerm 原生 paste 把整块一次性灌进 PTY；远端 tty 的输入队列（MAX_INPUT / 行规范 MAX_CANON，约 1–4KB）
+/// 会被瞬间灌爆 —— 远端 shell 逐行消费跟不上进来的字节速率，于是丢字节、行坍塌（即你看到的粘贴乱掉）。
+/// 三招根治：① 换行归一；② 括号粘贴包裹（远端开启 2004 时整块当字面量、不逐行抢跑）；③ 分片 + 片间限速，给远端留出消费时间。
+final class PacedTerminalView: LocalProcessTerminalView {
+    private static let chunkSize = 1024          // 单片字节数：稳在常见 tty 输入缓冲之下
+    private static let interChunkDelay = 0.012   // 片间延时(s)：~1KB/12ms ≈ 85KB/s，够快又不灌爆
+
+    override func paste(_ sender: Any) {
+        guard let raw = NSPasteboard.general.string(forType: .string), !raw.isEmpty else { return }
+        // 换行归一：\r\n / 残留 \r → \n。否则 cooked 模式下 ICRNL 把 CR 也当回车，CR+LF 会触发双重提交（多跑一次空命令）。
+        let text = raw.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let content = Array(text.utf8)
+
+        // 把内容切成片；括号粘贴的 start/end 标记**贴附**到首片头、末片尾——
+        // 标记与相邻内容同处一次 send，绝不单独发、绝不被切片切开 ⟹ 顺序天然正确，不会泄漏成可见字符（如末尾 ESC[201~ 残字）。
+        var chunks: [[UInt8]] = []
+        var i = 0
+        while i < content.count {
+            let end = min(i + Self.chunkSize, content.count)
+            chunks.append(Array(content[i..<end]))
+            i = end
+        }
+        if chunks.isEmpty { chunks.append([]) }   // 内容理论非空，保险
+
+        if getTerminal().bracketedPasteMode {
+            chunks[0].insert(contentsOf: EscapeSequences.bracketedPasteStart, at: 0)
+            chunks[chunks.count - 1].append(contentsOf: EscapeSequences.bracketedPasteEnd)
+        }
+        sendChunks(chunks, from: 0)
+    }
+
+    /// 逐片限速发送：每片 chunkSize 字节，片间隔 interChunkDelay；主线程链式调度，保持提交顺序、不阻塞 UI。
+    /// 小粘贴（单片）即时发完、无延迟；仅大块才进入限速节奏。
+    private func sendChunks(_ chunks: [[UInt8]], from i: Int) {
+        guard i < chunks.count else { return }
+        send(data: chunks[i][...])
+        guard i + 1 < chunks.count else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.interChunkDelay) { [weak self] in
+            self?.sendChunks(chunks, from: i + 1)
+        }
+    }
+}
