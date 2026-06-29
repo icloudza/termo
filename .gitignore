@@ -12,3 +12,6 @@ xcuserdata/
 DerivedData/
 .xcbuild/
 dist/
+
+# FreeRDP 构建中间产物（见 scripts/build-freerdp.sh；产物 Vendor/CFreeRDP.xcframework 可选提交）
+.freerdp-build/
