@@ -14,6 +14,7 @@ set -euo pipefail
 SCHEME="Termo"
 APP_NAME="Termo"
 VOLNAME="Termo"
+TEAM_ID="KTP97H9YFF"                  # 付费团队「Huidong Liu」(lxc.rudy@qq.com)，Developer ID 签名/公证用
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -54,10 +55,31 @@ ok "Xcode：$(basename "$(dirname "$(dirname "$DEVELOPER_DIR")")")"
 ok "create-dmg：$(command -v create-dmg)"
 info "构建日志：$LOG"
 
+# ── 签名身份决议 ────────────────────────────────────────────────────────────
+# 钥匙串有 Developer ID Application 证书 → 正式签名（加固运行时 + 安全时间戳，可公证分发）；
+# 没有 → 回退 ad-hoc（仅本地自测；分发到其它 Mac 会被 Gatekeeper 拦）。
+# 末尾 `|| true`：无证书时 grep 返回非 0，在 pipefail 下会让赋值失败、触发 set -e；兜住它。
+DEVID="$(security find-identity -v -p codesigning 2>/dev/null \
+        | grep -o 'Developer ID Application: [^"]*' | head -1 || true)"
+NOTARY_PROFILE="${NOTARY_PROFILE:-termo-notary}"   # notarytool 钥匙串凭证名（见文末 RELEASE 说明）
+NOTARIZED=false
+if [ -n "$DEVID" ]; then
+    ok "签名身份：$DEVID"
+else
+    warn "无 Developer ID Application 证书 → 本次 ad-hoc（仅自测）"
+fi
+
 # ── 归档 ────────────────────────────────────────────────────────────────────
 section "归档（Release / arm64 / 去符号）"
 step "xcodebuild archive…"
 rm -rf "$ARCHIVE"
+# Developer ID：正式签名 + 加固运行时 + 时间戳（公证前置条件）；否则 ad-hoc。
+if [ -n "$DEVID" ]; then
+    SIGN=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$DEVID" DEVELOPMENT_TEAM="$TEAM_ID" \
+          ENABLE_HARDENED_RUNTIME=YES OTHER_CODE_SIGN_FLAGS="--timestamp")
+else
+    SIGN=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="")
+fi
 run_quiet xcodebuild archive \
     -project "$ROOT/$APP_NAME.xcodeproj" \
     -scheme "$SCHEME" \
@@ -65,7 +87,7 @@ run_quiet xcodebuild archive \
     -destination 'generic/platform=macOS' \
     -archivePath "$ARCHIVE" \
     -derivedDataPath "$WORK/dd" \
-    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="-"
+    "${SIGN[@]}"
 PRODUCT="$ARCHIVE/Products/Applications/$APP_NAME.app"
 [ -d "$PRODUCT" ] || die "未找到归档产物：$PRODUCT"
 ok "归档完成"
@@ -89,6 +111,25 @@ if ls "$ARCHIVE/dSYMs/"*.dSYM >/dev/null 2>&1; then
     ok "dSYM → ${DSYM#$ROOT/}"
 else
     warn "未找到 dSYM（崩溃将无法符号化）"
+fi
+
+# ── 公证 App（仅 Developer ID 签名时）────────────────────────────────────────
+# 顺序：先公证 + 装订 App，再据此做 DMG（DMG 内即为已装订 App），最后单独公证 DMG。
+if [ -n "$DEVID" ]; then
+    section "公证 App（notarytool）"
+    if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+        step "提交 App 公证（--wait，初次可能数分钟）…"
+        ZIP="$WORK/app.zip"; rm -f "$ZIP"
+        ditto -c -k --keepParent "$APP" "$ZIP"
+        run_quiet xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+        xcrun stapler staple "$APP" >>"$LOG" 2>&1 \
+            && { ok "App 公证 + 装订完成"; NOTARIZED=true; } \
+            || die "App 装订失败（公证可能被拒，详见 $LOG）"
+    else
+        warn "未配置 notarytool 凭证（profile：$NOTARY_PROFILE）→ 跳过公证，仅 Developer ID 签名"
+        warn "先建凭证（一次）：xcrun notarytool store-credentials $NOTARY_PROFILE \\"
+        warn "      --apple-id <你的AppleID> --team-id $TEAM_ID --password <App 专用密码>"
+    fi
 fi
 
 # ── DMG ─────────────────────────────────────────────────────────────────────
@@ -117,10 +158,24 @@ create-dmg \
 [ -f "$DMG" ] || die "DMG 未生成（详见 $LOG）"
 ok "DMG → ${DMG#$ROOT/}"
 
+# ── 公证 DMG（App 已公证时）──────────────────────────────────────────────────
+if [ "$NOTARIZED" = true ]; then
+    section "公证 DMG"
+    step "提交 DMG 公证（--wait）…"
+    run_quiet xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$DMG" >>"$LOG" 2>&1 && ok "DMG 公证 + 装订完成" || die "DMG 装订失败（详见 $LOG）"
+fi
+
 # ── 验收 ────────────────────────────────────────────────────────────────────
 section "验收"
 BIN="$APP/Contents/MacOS/$APP_NAME"
-codesign --verify --verbose "$APP" >>"$LOG" 2>&1 && ok "签名校验通过（ad-hoc）" || warn "签名校验未通过"
+codesign --verify --deep --strict --verbose=2 "$APP" >>"$LOG" 2>&1 \
+    && ok "签名校验通过（$([ -n "$DEVID" ] && echo "Developer ID" || echo "ad-hoc")）" \
+    || warn "签名校验未通过"
+if [ "$NOTARIZED" = true ]; then
+    spctl --assess --type execute -vv "$APP" >>"$LOG" 2>&1 \
+        && ok "Gatekeeper 验收通过（已公证 + 装订）" || warn "Gatekeeper 验收未通过（详见 $LOG）"
+fi
 WARNS=$(grep -c ": warning:" "$LOG" 2>/dev/null | tr -d ' ' || echo 0)
 ELAPSED=$(( $(date +%s) - START ))
 
@@ -129,6 +184,7 @@ printf '  版本     : %s (build %s)\n' "$VERSION" "$BUILDNO"
 printf '  App 体积 : %s\n' "$(du -sh "$APP" | cut -f1)"
 printf '  DMG 体积 : %s\n' "$(du -sh "$DMG" | cut -f1)"
 printf '  架构     : %s\n' "$(lipo -archs "$BIN" 2>/dev/null)"
+printf '  签名     : %s\n' "$([ -n "$DEVID" ] && { [ "$NOTARIZED" = true ] && echo 'Developer ID + 已公证（可分发）' || echo 'Developer ID（未公证）'; } || echo 'ad-hoc（仅自测）')"
 printf '  符号数   : %s %s(已 strip 应很少)%s\n' "$(nm -a "$BIN" 2>/dev/null | wc -l | tr -d ' ')" "$DIM" "$RST"
 printf '  包内 dSYM: %s %s(应为 0)%s\n' "$(find "$APP" -name '*.dSYM' | wc -l | tr -d ' ')" "$DIM" "$RST"
 printf '  编译警告 : %s\n' "$WARNS"
@@ -136,9 +192,21 @@ printf '  耗时     : %ss\n' "$ELAPSED"
 printf '  输出目录 : %s\n' "${DIST#$ROOT/}/"
 printf '%s✓ 完成%s\n' "$BOLD$GRN" "$RST"
 
-# ── RELEASE（待付费开发者账号 + 证书后启用）─────────────────────────────────
-# Developer ID 公证分发，在导出后追加：
-#   1) 归档/导出改用 Developer ID 证书 + ENABLE_HARDENED_RUNTIME=YES
-#   2) ditto -c -k --keepParent "$APP" "$WORK/app.zip"
-#   3) xcrun notarytool submit "$WORK/app.zip" --keychain-profile <profile> --wait
-#   4) xcrun stapler staple "$APP" && 重新做 DMG，再对 DMG 公证 + stapler staple "$DMG"
+# ── RELEASE（Developer ID 公证分发）──────────────────────────────────────────
+# 签名 + 公证已在上方自动接入：钥匙串有 Developer ID Application 证书即正式签名，
+# 配好 notarytool 凭证即自动公证 + 装订（App 与 DMG 各一次）。启用只需两步（各一次性）：
+#
+#   1) 创建证书：Xcode ▸ Settings ▸ Accounts ▸ 选团队 ▸ Manage Certificates
+#      ▸ ＋ ▸ Developer ID Application（仅「账户持有人」可建；你是持有人）。
+#
+#   2) 存公证凭证（任选其一）：
+#      a) App 专用密码（简单）：appleid.apple.com ▸ 登录与安全 ▸ App 专用密码，然后：
+#         xcrun notarytool store-credentials $NOTARY_PROFILE \
+#             --apple-id <你的AppleID> --team-id KTP97H9YFF --password <App专用密码>
+#      b) App Store Connect API Key（更适合自动化）：用 --key/--key-id/--issuer 存。
+#
+# 之后照常运行本脚本即可产出「Developer ID + 已公证」可分发 DMG；自定义凭证名：
+#   NOTARY_PROFILE=my-profile ./scripts/package-app.sh
+#
+# 上架 Mac App Store 是另一套流程（Apple Distribution 证书 + -exportArchive App Store
+# 方式 + Transporter 上传 + App Sandbox），不复用本直发脚本。
