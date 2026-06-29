@@ -9,9 +9,7 @@
 # 依赖（本机）：cmake、ninja(可选)、git、Homebrew 的 openssl@3（提供静态 libssl.a/libcrypto.a）
 #   brew install cmake openssl@3
 #
-# ⚠️ 说明：FreeRDP 的 CMake 选项随版本有出入；这是经过推敲的 v1，首跑大概率要按报错微调
-#   （尤其各 WITH_* 开关名）。跑出错就把 .freerdp-build/cmake.log 末尾贴回来，我们据实调。
-#   只在你本机图形/开发环境跑，我（助手）不跑。
+# 注：FreeRDP 的 CMake 选项随版本有出入；若失败多为某个 WITH_* 开关名变更，详见 .freerdp-build/cmake.log。
 #
 set -euo pipefail
 
@@ -80,7 +78,7 @@ rm -rf "$BUILD" "$STAGE"
 #  · BUILD_SHARED_LIBS=OFF        静态库
 #  · WITH_SAMPLE/SERVER/CLIENT_*  关掉示例 App 与服务端（只要库）
 #  · WITH_FFMPEG/SWSCALE/...=OFF  避开 LGPL/GPL/专利编解码，保持纯 Apache+OpenSSL
-#  · WITH_X11/WAYLAND/SDL/MAC=OFF 不要任何平台 UI 客户端（我们自研渲染）
+#  · WITH_X11/WAYLAND/SDL/MAC=OFF 不要任何平台 UI 客户端（渲染由 App 自研）
 #  · 外设/音频/智能卡全关，先求最小可连通核心
 run_quiet cmake -S "$SRC" -B "$BUILD" -G "Unix Makefiles" \
     -DCMAKE_BUILD_TYPE=Release \
@@ -120,7 +118,7 @@ run_quiet cmake -S "$SRC" -B "$BUILD" -G "Unix Makefiles" \
     -DWITH_OPENSSL=ON \
     -DOPENSSL_ROOT_DIR="$OPENSSL_PREFIX" \
     -DOPENSSL_USE_STATIC_LIBS=ON \
-    || die "cmake 配置失败（详见 ${LOG}）。多为某个 WITH_* 选项名随版本变更——把日志末尾贴回来。"
+    || die "cmake 配置失败（详见 ${LOG}）；多为某个 WITH_* 选项名随版本变更。"
 ok "配置完成"
 
 # ── 编译 + 安装 ─────────────────────────────────────────────────────────────
@@ -162,10 +160,3 @@ LIBIN="$(find "$OUT" -name '*.a' | head -1)"
 info "架构：$(lipo -archs "$LIBIN" 2>/dev/null)"
 info "含 freerdp_new 符号：$(nm "$LIBIN" 2>/dev/null | grep -c 'freerdp_new' || echo 0)（应 ≥1）"
 printf '%s✓ 完成%s  产物：%s\n' "$BOLD$GRN" "$RST" "${OUT#$ROOT/}"
-cat <<NEXT
-
-下一步（我来接）：把 xcframework 接进 XcodeGen（project.yml 加 framework + HEADER_SEARCH_PATHS 指向
-$( [ -d "$STAGE/include/freerdp3" ] && echo 'include/freerdp3、include/winpr3' || echo 'include/freerdp、include/winpr' )
-+ 系统库 -lz -lresolv 与 Security/CoreFoundation 框架），再写 ObjC 桥 TermoRDPSession。把本次的
-$LOG 末尾（成功或失败）贴给我即可。
-NEXT
