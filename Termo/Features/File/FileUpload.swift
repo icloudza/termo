@@ -88,6 +88,11 @@ final class UploadTask: ObservableObject {
     /// 用户已点「继续」但当前无空闲名额，处于「等待协调器放行」状态（phase 仍为 .paused）。
     @Published private(set) var awaitingSlot = false
 
+    /// 本任务是否有失败的文件（供托盘红灯等失败提示）。
+    var hasFailure: Bool {
+        items.contains { if case .failed = $0.state { return true } else { return false } }
+    }
+
     /// 逐文件目标互斥锁（由协调器 AppModel 注入）：传输每个文件前后获取/释放，
     /// 仅当两任务真要同时写同一目标文件时才串行，避免 .part 临时文件互相覆盖；其余文件照常并发。
     var acquirePathLock: ((String) async -> Void)? = nil

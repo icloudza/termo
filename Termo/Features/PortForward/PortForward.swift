@@ -144,6 +144,15 @@ final class ForwardManager: ObservableObject {
 
     func status(_ id: UUID) -> RuleStatus { statuses[id] ?? .stopped }
 
+    /// 是否有「致命失败」的隧道（端口占用/认证失败/转发被拒等，已撤销自动重试）。供托盘红灯。
+    /// 只算不再重试的 —— 排除掉线后正在退避重连的瞬时 .failed，避免红灯频闪。
+    var hasFatalFailure: Bool {
+        statuses.contains { id, status in
+            if case .failed = status { return !intended.contains(id) }
+            return false
+        }
+    }
+
     /// 是否有用户期望保持运行的隧道（供看门狗判断是否需要 tick）。
     var hasIntended: Bool { !intended.isEmpty }
 

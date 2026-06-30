@@ -12,13 +12,18 @@ final class TrayController: NSObject, NSMenuDelegate {
     private let onShow: () -> Void
     private let onQuit: () -> Void
     private var bgCancellable: AnyCancellable?
-    private var lastRunning = false   // 当前图标是否为「有后台任务」态（`_` 蓝绿呼吸），用于去重避免无谓重绘
+    /// 灯的三态：空闲（静态蓝）/ 运行中（蓝绿呼吸）/ 有失败（红色呼吸）。红 > 运行 > 空闲。
+    private enum LightMode { case idle, running, failure }
+    private var lastMode: LightMode = .idle   // 去重避免无谓重绘
     private var animTimer: Timer?
     private var animPhase: Double = 0
 
-    // `_` 的两端颜色：品牌蓝 ↔ 运行绿，有任务时在两者间正弦平滑往返。
-    private static let barBlue  = NSColor(srgbRed: 0.25, green: 0.62, blue: 1.0,  alpha: 1)
-    private static let barGreen = NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1)
+    // `_` 的呼吸两端色（两端都取高明度，靠色相往返出动感，避免某端发暗发脏）：
+    // 运行态 品牌蓝↔运行绿；失败态 亮红↔暖橙红（脉冲告警感，不发黑）。
+    private static let barBlue   = NSColor(srgbRed: 0.25, green: 0.62, blue: 1.00, alpha: 1)
+    private static let barGreen  = NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1)
+    private static let barRed    = NSColor(srgbRed: 1.00, green: 0.27, blue: 0.24, alpha: 1)
+    private static let barRedAlt = NSColor(srgbRed: 1.00, green: 0.55, blue: 0.32, alpha: 1)
 
     init(onShow: @escaping () -> Void, onQuit: @escaping () -> Void) {
         self.onShow = onShow
@@ -26,9 +31,9 @@ final class TrayController: NSObject, NSMenuDelegate {
         super.init()
         install()
         Self.shared = self
-        // 后台任务起止时（AppModel 在这些时刻 publish）刷新 `_` 的颜色；进度逐帧变化不经 AppModel，无重绘风暴。
+        // 后台任务起止/失败时（AppModel 在这些时刻 publish）刷新 `_` 的颜色；进度逐帧变化不经 AppModel，无重绘风暴。
         bgCancellable = AppModel.shared.objectWillChange.sink { [weak self] in
-            DispatchQueue.main.async { self?.refreshRunningIfNeeded() }
+            DispatchQueue.main.async { self?.refreshIfNeeded() }
         }
     }
 
@@ -49,24 +54,32 @@ final class TrayController: NSObject, NSMenuDelegate {
         updateImage()
     }
 
-    /// 后台任务起止时刷新 `_` 的颜色（仅在有/无切换时重绘）。
-    private func refreshRunningIfNeeded() {
-        if (AppModel.shared.activeBackgroundCount > 0) != lastRunning { updateImage() }
+    /// 当前应处的灯态：失败优先（红） > 运行中（蓝绿） > 空闲（静态蓝）。
+    private func currentMode() -> LightMode {
+        if AppModel.shared.hasBackgroundFailure { return .failure }
+        if AppModel.shared.activeBackgroundCount > 0 { return .running }
+        return .idle
     }
 
-    /// 按当前后台状态设置图标：有进行中任务 → `_` 在蓝绿间正弦平滑往返；否则静态品牌蓝。
+    /// 后台状态变化时刷新 `_`（仅在灯态切换时重绘）。
+    private func refreshIfNeeded() {
+        if currentMode() != lastMode { updateImage() }
+    }
+
+    /// 按当前灯态设置图标：失败/运行 → 呼吸动画；空闲 → 静态品牌蓝。
     private func updateImage() {
-        let running = AppModel.shared.activeBackgroundCount > 0
-        lastRunning = running
-        if running {
-            startAnimating()
-        } else {
+        let mode = currentMode()
+        lastMode = mode
+        switch mode {
+        case .idle:
             stopAnimating()
             statusItem?.button?.image = Self.logoImage(barColor: Self.barBlue)
+        case .running, .failure:
+            startAnimating()
         }
     }
 
-    /// 启动 `_` 的蓝绿呼吸（约 20fps，周期 ~1.8s）；仅有任务时运行，幂等。
+    /// 启动 `_` 的呼吸（约 20fps，周期 ~1.8s）；仅有任务/失败时运行，幂等。
     private func startAnimating() {
         guard animTimer == nil else { return }
         let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
@@ -83,15 +96,20 @@ final class TrayController: NSObject, NSMenuDelegate {
     }
 
     private func animTick() {
-        // 防卡绿根因①（竞态）：stopAnimating 只 invalidate timer，但其回调里已 enqueue 的 Task 仍会执行一次；
-        // 不拦的话它会在 updateImage 把图标设回静态蓝之后再覆盖成蓝绿插值帧 → 停在绿色。invalidate 后 animTimer=nil，据此早退。
+        // 防卡色根因①（竞态）：stopAnimating 只 invalidate timer，但其回调里已 enqueue 的 Task 仍会执行一次；
+        // 不拦的话它会在 updateImage 把图标设回静态蓝之后再覆盖成插值帧 → 停在中间色。invalidate 后 animTimer=nil，据此早退。
         guard animTimer != nil else { return }
-        // 防卡绿根因②（漏发布）：任务结束的 count 变化偶尔没经 AppModel publish（子对象 phase 翻转不冒泡），
-        // 托盘收不到刷新通知而一直转。动画期间每帧自校验真相源，归零即停并复位为静态蓝，最多滞后一帧(~50ms)。
-        if AppModel.shared.activeBackgroundCount == 0 { updateImage(); return }
+        // 防卡色根因②（漏发布）：任务结束/失败清除偶尔没经 AppModel publish（子对象 phase 翻转不冒泡），
+        // 托盘收不到刷新通知而一直转。动画期间每帧自校验真相源：转空闲即停并复位静态蓝；失败↔运行切换则换色。
+        let mode = currentMode()
+        if mode == .idle { updateImage(); return }
+        if mode != lastMode { lastMode = mode }    // 运行↔失败 在动画中平滑切色，同步去重态
         animPhase += 0.18                          // 步进：周期约 2π/0.18×0.05s ≈ 1.75s
         let f = CGFloat((sin(animPhase) + 1) / 2)  // 0…1 平滑往返
-        statusItem?.button?.image = Self.logoImage(barColor: Self.lerp(Self.barBlue, Self.barGreen, f))
+        let color = mode == .failure
+            ? Self.lerp(Self.barRed, Self.barRedAlt, f)    // 失败：亮红↔暖橙红脉冲告警
+            : Self.lerp(Self.barBlue, Self.barGreen, f)    // 运行：品牌蓝↔运行绿
+        statusItem?.button?.image = Self.logoImage(barColor: color)
     }
 
     /// 在 sRGB 分量间线性插值两色。

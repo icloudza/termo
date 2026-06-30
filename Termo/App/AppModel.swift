@@ -636,6 +636,15 @@ final class AppModel: ObservableObject {
         return n
     }
 
+    /// 是否存在未处理的后台失败：传输有失败文件 / 解压失败 / 端口转发致命失败。供托盘红色呼吸灯。
+    /// 失败记录停留在后台中控里直到用户清理或重试 → 红灯随之熄灭（自然的「已知晓」时机）。
+    var hasBackgroundFailure: Bool {
+        if transfers.contains(where: { $0.hasFailure }) { return true }
+        if case .failed = extractTask?.phase { return true }
+        if forwardManagers.values.contains(where: { $0.hasFatalFailure }) { return true }
+        return false
+    }
+
     /// 是否有运行中的端口转发隧道（任意主机）。常驻后台任务，用图标中心的绿色呼吸点表示，不计入数字角标。
     var hasRunningForward: Bool {
         forwards.contains { forwardManagers[$0.hostId]?.status($0.id).isRunning == true }
