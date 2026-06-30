@@ -1,0 +1,156 @@
+name: Release (Developer ID + Sparkle)
+
+# 推送 v* 标签即自动发版：构建 → Developer ID 签名 → 公证装订 → 打 zip/dmg →
+# Sparkle EdDSA 签名 + 生成 appcast → 创建 GitHub Release → 发布 appcast 到 GitHub Pages。
+# Dev ID（GitHub）渠道全自动；Mac App Store 渠道另走手动 Transporter 上传（见 docs/RELEASE.md）。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # 创建 Release、推送 gh-pages
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-14   # Apple Silicon，与 ARCHS=arm64 一致
+    env:
+      SPARKLE_VERSION: "2.9.3"
+      TEAM_ID: KTP97H9YFF
+      NOTARY_PROFILE: termo-notary
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 选择 Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: 安装构建工具
+        run: brew install xcodegen create-dmg
+
+      # ── 防呆：占位公钥未替换则中止（否则发出去的更新无法被校验）──
+      - name: 校验 Sparkle 公钥已填入 Info.plist
+        run: |
+          if grep -q "__SPARKLE_PUBLIC_ED_KEY_PLACEHOLDER__" Termo/Info.plist; then
+            echo "::error::Termo/Info.plist 的 SUPublicEDKey 仍是占位串。请先用 generate_keys 生成密钥并把公钥填入后再打 tag。"
+            exit 1
+          fi
+
+      # ── 导入 Developer ID Application 证书到临时钥匙串 ──
+      - name: 导入签名证书
+        env:
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # 把临时钥匙串加入搜索列表，让 codesign / find-identity 能找到证书。
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      # ── 配置 notarytool 凭证（package-app.sh 用 --keychain-profile termo-notary）──
+      - name: 配置公证凭证
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials "$NOTARY_PROFILE" \
+            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_APP_PASSWORD"
+
+      - name: 生成工程
+        run: xcodegen generate
+
+      # ── 归档 + Developer ID 签名 + 公证装订 + DMG（复用本地打包脚本）──
+      - name: 打包（签名 + 公证 + DMG）
+        run: NOTARY_PROFILE=$NOTARY_PROFILE ./scripts/package-app.sh
+
+      - name: 定位产物 + 计算版本
+        id: artifacts
+        run: |
+          set -euo pipefail
+          APP=$(find dist -maxdepth 2 -name 'Termo.app' | head -1)
+          DMG=$(find dist -maxdepth 2 -name '*.dmg' | head -1)
+          [ -d "$APP" ] || { echo "::error::未找到 Termo.app"; exit 1; }
+          [ -f "$DMG" ] || { echo "::error::未找到 DMG"; exit 1; }
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
+          echo "app=$APP"   >> "$GITHUB_OUTPUT"
+          echo "dmg=$DMG"   >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # ── 下载 Sparkle 发布工具（generate_appcast / sign_update）──
+      - name: 获取 Sparkle 工具
+        run: |
+          set -euo pipefail
+          curl -fsSL -o sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p .sparkle && tar -xJf sparkle.tar.xz -C .sparkle bin
+
+      # ── 准备 Sparkle 归档目录：zip + 上次的 appcast（从 gh-pages 取，保留历史条目）+ 发行说明 ──
+      - name: 组装 Sparkle 归档目录
+        id: sparkle
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.artifacts.outputs.version }}"
+          ARCH_DIR="$RUNNER_TEMP/sparkle-archives"
+          mkdir -p "$ARCH_DIR"
+          # 1) 供 Sparkle 自动安装的 zip（保留顶层 .app）
+          ditto -c -k --keepParent "${{ steps.artifacts.outputs.app }}" "$ARCH_DIR/Termo-$VERSION.zip"
+          # 2) 取回已发布的 appcast（首发时不存在则忽略），让 generate_appcast 追加而非重建
+          curl -fsSL "https://icloudza.github.io/termo/appcast.xml" -o "$ARCH_DIR/appcast.xml" || true
+          # 3) 发行说明：用本次 tag 的注释信息（无则用提交说明）生成同名 .html，被 appcast 作为更新内容
+          NOTES=$(git tag -l --format='%(contents)' "${{ github.ref_name }}")
+          [ -n "$NOTES" ] || NOTES=$(git log -1 --pretty=%B "${{ github.ref_name }}")
+          {
+            echo "<h2>Termo $VERSION</h2>"
+            printf '%s\n' "$NOTES" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/$/<br>/'
+          } > "$ARCH_DIR/Termo-$VERSION.html"
+          echo "dir=$ARCH_DIR" >> "$GITHUB_OUTPUT"
+
+      # ── EdDSA 签名 + 生成 appcast（enclosure 指向本次 Release 的 zip 资产）──
+      - name: 生成 appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          PREFIX="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | .sparkle/bin/generate_appcast \
+            --ed-key-file - \
+            --download-url-prefix "$PREFIX" \
+            --link "https://github.com/${{ github.repository }}" \
+            --maximum-versions 0 \
+            "${{ steps.sparkle.outputs.dir }}"
+          echo "—— appcast.xml ——"; cat "${{ steps.sparkle.outputs.dir }}/appcast.xml"
+
+      # ── 创建 GitHub Release，上传 zip + dmg ──
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Termo ${{ steps.artifacts.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            ${{ steps.sparkle.outputs.dir }}/Termo-${{ steps.artifacts.outputs.version }}.zip
+            ${{ steps.artifacts.outputs.dmg }}
+          generate_release_notes: true
+
+      # ── 发布 appcast.xml 到 GitHub Pages（SUFeedURL 固定指向它）──
+      - name: 部署 appcast 到 Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ${{ steps.sparkle.outputs.dir }}
+          keep_files: true   # 不删除 Pages 上其它文件（如历史 appcast 资源）
+          exclude_assets: "*.zip,*.app"   # 只发布 appcast.xml / *.html，不把 zip 推到 Pages

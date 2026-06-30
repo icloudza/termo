@@ -25,6 +25,9 @@ struct AboutContent: View {
             infoLine("渲染", value: "CoreText / AppKit")
             infoLine("平台", value: "macOS 14+")
             infoLine("架构", value: "Apple Silicon")
+
+            Rectangle().fill(Pal.fill(0.06)).frame(height: 1).padding(.vertical, 6)
+            UpdateInlineControls()
         }
         .padding(20)
         .background(Pal.fill(0.03), in: RoundedRectangle(cornerRadius: 10))

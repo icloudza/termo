@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Notifier.requestAuthIfNeeded()   // 申请系统通知权限（上传/下载完成提醒）
         tray = TrayController(onShow: { [weak self] in self?.showMainWindow() },
                               onQuit: { [weak self] in self?.forceQuit() })
+        UpdateController.shared.startup()   // 启动自动更新调度（Dev ID 走 Sparkle；MAS 无操作）
         NSApp.activate(ignoringOtherApps: true)
         // 窗口此刻已创建；记录主窗口并接管其关闭行为（隐藏到托盘）。延迟一拍确保 WindowGroup 已出窗口。
         DispatchQueue.main.async { [weak self] in self?.attachMainWindow() }
@@ -174,6 +175,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let about = NSMenuItem(title: "关于 Termo", action: #selector(showAbout), keyEquivalent: "")
         about.target = self
         appMenu.addItem(about)
+        let checkUpdate = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+        checkUpdate.target = self
+        appMenu.addItem(checkUpdate)
         appMenu.addItem(.separator())
         let quit = NSMenuItem(title: "退出 Termo", action: #selector(requestQuit), keyEquivalent: "q")
         quit.target = self   // 经退出流程检查后台任务，而非直接 terminate
@@ -202,6 +206,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         addEdit("全选", #selector(NSText.selectAll(_:)), "a")
 
         NSApp.mainMenu = main
+    }
+
+    @objc private func checkForUpdates() {
+        MainActor.assumeIsolated { UpdateController.shared.checkForUpdates() }   // 菜单动作恒在主线程投递
     }
 
     @objc private func showAbout() {

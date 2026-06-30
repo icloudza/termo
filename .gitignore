@@ -21,3 +21,6 @@ dist/
 
 # MCP 工具运行日志
 .playwright-mcp/
+
+# Sparkle 发布期工具（generate_keys/sign_update/generate_appcast）：仅本地一次性用，CI 自下载，不入库
+scripts/sparkle-tools/

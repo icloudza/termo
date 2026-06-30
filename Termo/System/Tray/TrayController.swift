@@ -127,6 +127,9 @@ final class TrayController: NSObject, NSMenuDelegate {
         let show = NSMenuItem(title: "显示 Termo", action: #selector(showTapped), keyEquivalent: "")
         show.target = self
         menu.addItem(show)
+        let checkUpdate = NSMenuItem(title: "检查更新…", action: #selector(checkUpdateTapped), keyEquivalent: "")
+        checkUpdate.target = self
+        menu.addItem(checkUpdate)
         menu.addItem(.separator())
 
         let tasks = AppModel.shared.runningBackgroundSummaries
@@ -156,6 +159,7 @@ final class TrayController: NSObject, NSMenuDelegate {
 
     @objc private func showTapped() { onShow() }
     @objc private func quitTapped() { onQuit() }
+    @objc private func checkUpdateTapped() { UpdateController.shared.checkForUpdates() }
 
     /// 菜单栏图标：终端提示符 `>_`。`>` 跟随明暗菜单栏的标签色；`_` 用 `barColor`（平时品牌蓝，
     /// 有后台任务时由上层在蓝绿间平滑过渡）。因含彩色不能用模板渲染（会被强制单色）；
