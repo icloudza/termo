@@ -1,0 +1,23 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Termo</title>
+        <item>
+            <title>0.9.1</title>
+            <pubDate>Tue, 30 Jun 2026 16:30:04 +0000</pubDate>
+            <link>https://github.com/icloudza/termo</link>
+            <sparkle:version>27</sparkle:version>
+            <sparkle:shortVersionString>0.9.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<h2>Termo 0.9.1</h2>
+build(release): 公证前自内向外重签 Sparkle 嵌套可执行体（Updater/Autoupdate/XPC）+ 加固运行时 + 时间戳<br>
+<br>
+修复公证 Invalid：xcodebuild 嵌入框架只签顶层二进制，不递归签 Sparkle 内置的<br>
+Updater.app/Autoupdate/Downloader.xpc/Installer.xpc，导致苹果判「无有效 Developer ID<br>
+签名 + 无安全时间戳」。在导出后、公证前自内向外重签这些嵌套体与框架，并重签外层 App。<br>
+]]></description>
+            <enclosure url="https://github.com/icloudza/termo/releases/download/v0.9.1/Termo-0.9.1.zip" length="18992279" type="application/octet-stream" sparkle:edSignature="3kuv0KXpxgMbGpMI/ikLYpe44UoiiH45xdzryOcpvdjZ3Nj9QIbmdevf1tqAQ6eNSkizkeAE9rwp84LDJOyLAg=="/>
+        </item>
+    </channel>
+</rss>

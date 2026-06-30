@@ -1,0 +1,6 @@
+<h2>Termo 0.9.1</h2>
+build(release): 公证前自内向外重签 Sparkle 嵌套可执行体（Updater/Autoupdate/XPC）+ 加固运行时 + 时间戳<br>
+<br>
+修复公证 Invalid：xcodebuild 嵌入框架只签顶层二进制，不递归签 Sparkle 内置的<br>
+Updater.app/Autoupdate/Downloader.xpc/Installer.xpc，导致苹果判「无有效 Developer ID<br>
+签名 + 无安全时间戳」。在导出后、公证前自内向外重签这些嵌套体与框架，并重签外层 App。<br>
