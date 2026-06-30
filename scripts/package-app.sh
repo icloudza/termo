@@ -113,6 +113,32 @@ else
     warn "未找到 dSYM（崩溃将无法符号化）"
 fi
 
+# ── 重签 Sparkle 嵌套可执行体（公证前置）──────────────────────────────────────
+# xcodebuild「嵌入时签名」只签 Sparkle.framework 顶层二进制，不会递归签其内置的
+# Updater.app / Autoupdate / XPCServices（出厂由 Sparkle 团队签、且无安全时间戳）。
+# 公证要求所有可执行体均以本 Developer ID + 加固运行时 + 安全时间戳签名，故在此自内向外重签。
+if [ -n "$DEVID" ]; then
+    section "重签 Sparkle 嵌套可执行体"
+    SPK="$APP/Contents/Frameworks/Sparkle.framework"
+    if [ -d "$SPK" ]; then
+        for t in \
+            "Versions/B/XPCServices/Downloader.xpc" \
+            "Versions/B/XPCServices/Installer.xpc" \
+            "Versions/B/Autoupdate" \
+            "Versions/B/Updater.app"; do
+            [ -e "$SPK/$t" ] && run_quiet codesign --force --options runtime --timestamp -s "$DEVID" "$SPK/$t"
+        done
+        run_quiet codesign --force --options runtime --timestamp -s "$DEVID" "$SPK"
+        # 内层签名变更使外层 App 封套失效，带原 entitlements 重签外层（加固运行时 + 时间戳）。
+        run_quiet codesign --force --options runtime --timestamp \
+            --entitlements "$ROOT/$APP_NAME.entitlements" -s "$DEVID" "$APP"
+        run_quiet codesign --verify --deep --strict "$APP"
+        ok "Sparkle 嵌套体 + App 重签校验完成"
+    else
+        warn "未发现 Sparkle.framework，跳过重签"
+    fi
+fi
+
 # ── 公证 App（仅 Developer ID 签名时）────────────────────────────────────────
 # 顺序：先公证 + 装订 App，再据此做 DMG（DMG 内即为已装订 App），最后单独公证 DMG。
 if [ -n "$DEVID" ]; then
