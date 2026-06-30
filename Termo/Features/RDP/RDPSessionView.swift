@@ -111,7 +111,7 @@ struct RDPOpenDialog: View {
 }
 
 /// 连接进度卡（RDPConnectingDialog 内居中）：目标行 + 三步进度 + 实时日志。
-/// 连上出帧后随弹窗隐藏；失败/断开时提供「重试」，连接中提供「取消」。
+/// 连上出帧后随弹窗隐藏；「取消」始终可用，失败/断开时额外提供「重试」。
 private struct RDPConnectingPanel: View {
     @ObservedObject var session: RDPSession
     let onCancel: () -> Void
@@ -121,7 +121,7 @@ private struct RDPConnectingPanel: View {
     private var cfg: RDPConnection { session.config }
     private var target: String { "\(cfg.user)@\(cfg.host):\(cfg.port)" }
 
-    private var ended: Bool {   // 失败或断开：提供重试，否则提供取消
+    private var ended: Bool {   // 失败或断开：额外显示「重试」（取消始终在）
         switch session.phase { case .failed, .disconnected: return true; default: return false }
     }
 
@@ -188,12 +188,11 @@ private struct RDPConnectingPanel: View {
 
             Rectangle().fill(Pal.fill(0.06)).frame(height: 1)
 
-            HStack {
+            HStack(spacing: 10) {
                 Spacer()
+                SecondaryButton(title: "取消") { onCancel() }   // 取消始终可用
                 if ended {
-                    PrimaryButton(title: "重试") { onRetry() }
-                } else {
-                    SecondaryButton(title: "取消") { onCancel() }
+                    PrimaryButton(title: "重试") { onRetry() }   // 失败/断开时额外给重试
                 }
             }
             .padding(.horizontal, 20).padding(.vertical, 12)

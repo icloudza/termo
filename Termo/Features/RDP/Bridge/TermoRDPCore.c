@@ -28,6 +28,9 @@
 #include <freerdp/channels/disp.h>    // DISP_DVC_CHANNEL_NAME / DISPLAY_CONTROL_MONITOR_LAYOUT
 #include <freerdp/client/cliprdr.h>   // CliprdrClientContext（剪贴板同步）
 #include <freerdp/channels/cliprdr.h> // CLIPRDR_* PDU / CB_* 常量 / CLIPRDR_SVC_CHANNEL_NAME
+#include <freerdp/client/rdpgfx.h>    // RdpgfxClientContext（图形管线 / 全彩）
+#include <freerdp/channels/rdpgfx.h>  // RDPGFX_DVC_CHANNEL_NAME
+#include <freerdp/gdi/gfx.h>          // gdi_graphics_pipeline_init/uninit
 #include <winpr/user.h>               // CF_UNICODETEXT
 #include <winpr/string.h>             // ConvertUtf8ToWCharAlloc / ConvertWCharNToUtf8Alloc
 #include <winpr/synch.h>
@@ -71,6 +74,7 @@ struct TermoRDPHandle {
     CliprdrClientContext *cliprdr;  // CLIPRDR 通道连上后填入，用于剪贴板同步
     WCHAR *clip_local;         // 本地剪贴板文本（UTF-16，含结尾 null），用于响应服务器取数据请求
     UINT32 clip_local_bytes;   // clip_local 字节数（含结尾 null 的 2 字节）
+    RdpgfxClientContext *gfx;  // RDPGFX 图形管线（全彩）连上后填入；服务器不支持则保持 NULL、留 legacy GDI
 };
 
 static void termo_emit_state(TermoRDPHandle *h, TermoRDPState s, const char *msg) {
@@ -261,6 +265,28 @@ static void termo_on_channel_connected(void *context, const ChannelConnectedEven
         c->ServerFormatDataRequest = termo_cliprdr_server_format_data_request;
         c->ServerFormatDataResponse = termo_cliprdr_server_format_data_response;
         h->cliprdr = c;
+    } else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
+        // 图形管线（全彩）协商成功 → 把它接入 gdi：此后帧由 gfx 表面命令（Progressive/RFX）渲染进
+        // primary_buffer（32 位 BGRX），EndPaint 帧回调照常。失败/不支持时本分支不触发，留 legacy GDI（RGB16）。
+        RdpgfxClientContext *gfx = (RdpgfxClientContext *)e->pInterface;
+        rdpGdi *gdi = h->context ? h->context->gdi : NULL;
+        if (gfx && gdi && gdi_graphics_pipeline_init(gdi, gfx)) {
+            h->gfx = gfx;
+            termo_log(h, 0, "图形管线已启用（全彩）");
+        }
+    }
+}
+
+// 通道断开 → 解绑 gfx 管线（必须在此处用事件携带的 gfx 上下文 uninit；放到 post_disconnect 会 double-free）。
+static void termo_on_channel_disconnected(void *context, const ChannelDisconnectedEventArgs *e) {
+    if (!e || !e->name) return;
+    TermoRDPHandle *h = ((TermoContext *)context)->owner;
+    if (!h) return;
+    if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
+        rdpGdi *gdi = h->context ? h->context->gdi : NULL;
+        if (gdi && e->pInterface)
+            gdi_graphics_pipeline_uninit(gdi, (RdpgfxClientContext *)e->pInterface);
+        h->gfx = NULL;
     }
 }
 
@@ -301,6 +327,7 @@ static BOOL termo_pre_connect(freerdp *instance) {
     termo_log(termo_owner(instance), 0, "初始化连接参数…");
     if (!freerdp_settings_set_bool(s, FreeRDP_CertificateCallbackPreferPEM, TRUE)) return FALSE;
     PubSub_SubscribeChannelConnected(context->pubSub, termo_on_channel_connected);
+    PubSub_SubscribeChannelDisconnected(context->pubSub, termo_on_channel_disconnected);
     return TRUE;
 }
 
@@ -319,6 +346,8 @@ static BOOL termo_post_connect(freerdp *instance) {
 static void termo_post_disconnect(freerdp *instance) {
     if (!instance || !instance->context) return;
     TermoRDPHandle *h = ((TermoContext *)instance->context)->owner;
+    // 注意：gfx 管线在 ChannelDisconnected 处理器里 uninit（此刻通道/gfx 上下文仍有效）；
+    // 不能放这里——到 post_disconnect 时 rdpgfx 通道已被释放，再 uninit 会 double-free（rfx_context_free 野指针崩溃）。
     gdi_free(instance);
     termo_log(h, 0, "连接已断开");
     termo_emit_state(h, TermoRDPStateDisconnected, NULL);
@@ -437,9 +466,23 @@ int termo_rdp_connect(TermoRDPHandle *h, const char *host, int port,
     // 关闭音频播放/采集：对应通道在 FreeRDP 构建中已禁用，开启会被请求 → dlopen 缺失插件而失败。
     freerdp_settings_set_bool(s, FreeRDP_AudioPlayback, FALSE);
     freerdp_settings_set_bool(s, FreeRDP_AudioCapture, FALSE);
-    // 把 disp 加入动态通道列表，drdynvc 协商后据此拉起 DisplayControl 子通道。
+    // 注意：不要关 NetworkAutoDetect。有些服务器（如雨云测试机）会主动发 RTT 测量请求，
+    // 关掉支持后 FreeRDP 收到该包会 STATE_RUN_FAILED 直接断连。那条 messageChannelId 错配只是良性告警，保留默认开。
+
+    // 图形管线（RDPGFX）→ 全彩 32 位。用免版税编解码 Progressive/RemoteFX（构建已关 H264/FFmpeg）。
+    // gfx 经 drdynvc 协商：服务器不支持（如 XP）则通道不开，自动回落 legacy GDI（不破坏现有连接）。
+    freerdp_settings_set_bool(s, FreeRDP_SupportGraphicsPipeline, TRUE);
+    freerdp_settings_set_bool(s, FreeRDP_GfxProgressive, TRUE);
+    freerdp_settings_set_bool(s, FreeRDP_RemoteFxCodec, TRUE);
+    freerdp_settings_set_bool(s, FreeRDP_GfxH264, FALSE);       // 无 H264 解码，明确不通告 AVC，迫使服务器用 Progressive/RFX
+    freerdp_settings_set_bool(s, FreeRDP_GfxAVC444, FALSE);
+    freerdp_settings_set_bool(s, FreeRDP_GfxAVC444v2, FALSE);
+
+    // 把 disp / rdpgfx 加入动态通道列表，drdynvc 协商后据此拉起 DisplayControl / 图形管线子通道。
     const char *disp_args[] = { "disp" };
     freerdp_client_add_dynamic_channel(s, 1, disp_args);
+    const char *gfx_args[] = { "rdpgfx" };
+    freerdp_client_add_dynamic_channel(s, 1, gfx_args);
 
     char line[192];
     snprintf(line, sizeof(line), "开始连接 %s@%s:%d", (username && *username) ? username : "(无)", host, port);
