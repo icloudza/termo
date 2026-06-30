@@ -3,6 +3,24 @@
     <channel>
         <title>Termo</title>
         <item>
+            <title>0.9.1.1</title>
+            <pubDate>Tue, 30 Jun 2026 17:58:43 +0000</pubDate>
+            <link>https://github.com/icloudza/termo</link>
+            <sparkle:version>28</sparkle:version>
+            <sparkle:shortVersionString>0.9.1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<h2>Termo 0.9.1.1</h2>
+release: 0.9.1.1（构建号 28）<br>
+<br>
+移除内置的演示主机与模拟监控数据<br>
+重做「软件更新」弹窗：改用原生标题栏，并在关于页内联检查更新<br>
+修复检查更新后无法再次点击的问题<br>
+补充出口加密合规声明（仅使用标准 SSH/TLS 加密）<br>
+]]></description>
+            <enclosure url="https://github.com/icloudza/termo/releases/download/v0.9.1.1/Termo-0.9.1.1.zip" length="18993256" type="application/octet-stream" sparkle:edSignature="TfPr+DiIceDdviheoY6RdAsnk+MYIhtPB0oMqdj9xuswseh3zml8d3BRFN8Brdt+s/JtkZJERsR5RB1K3WYgBQ=="/>
+        </item>
+        <item>
             <title>0.9.1</title>
             <pubDate>Tue, 30 Jun 2026 16:30:04 +0000</pubDate>
             <link>https://github.com/icloudza/termo</link>
