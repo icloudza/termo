@@ -80,38 +80,14 @@ struct UpdatePanel: View {
     @ObservedObject var controller: UpdateController
     @ObservedObject private var theme = ThemeManager.shared
 
+    // 标题由原生标题栏（窗口 title「软件更新」+ 交通灯）提供，面板本身只渲染内容，
+    // 高度全交给系统固定的标题栏，不再随状态切换而跳动（自绘 header + fullSizeContentView 的旧做法会跳）。
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Rectangle().fill(Pal.fill(0.07)).frame(height: 1)
-            content
-                .padding(20)
-        }
-        .frame(width: 440)
-        .background(Pal.solidBase)
-        .preferredColorScheme(theme.isDark ? .dark : .light)
-    }
-
-    // 顶部：图标 + 标题 + 自绘 ✕（窗口无原生关闭键，统一观感）
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Pal.mauve)
-            Text("软件更新").font(.system(size: 13, weight: .semibold)).foregroundStyle(Pal.text)
-            Spacer()
-            Button(action: { controller.userClosedPanel() }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Pal.subtext)
-                    .frame(width: 22, height: 22)
-                    .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 6))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
-        }
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        content
+            .padding(.horizontal, 20).padding(.vertical, 18)
+            .frame(width: 440, alignment: .leading)
+            .background(Pal.solidBase)
+            .preferredColorScheme(theme.isDark ? .dark : .light)
     }
 
     @ViewBuilder
@@ -286,19 +262,21 @@ final class UpdateWindowPresenter {
     private func ensureWindow() -> NSWindow {
         if let w = window { return w }
         let host = NSHostingView(rootView: UpdatePanel(controller: .shared))
+        // 原生标题栏（含交通灯）：标题栏高度由系统固定、内容区在其下方；窗口随状态重算高度时标题栏不跳，
+        // 与「关于」窗口同一观感。替代旧的自绘 header + fullSizeContentView（后者会随状态切换而变高）。
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 200),
-                         styleMask: [.titled, .fullSizeContentView],
+                         styleMask: [.titled, .closable],
                          backing: .buffered, defer: false)
-        w.titlebarAppearsTransparent = true
-        w.titleVisibility = .hidden
-        w.isMovableByWindowBackground = true
-        w.standardWindowButton(.closeButton)?.isHidden = true
-        w.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        w.standardWindowButton(.zoomButton)?.isHidden = true
+        w.title = "软件更新"
         w.isReleasedWhenClosed = false
         w.backgroundColor = NSColor(Pal.solidBase)
         w.contentView = host
         w.setContentSize(NSSize(width: 440, height: host.fittingSize.height))
+        // 点红灯 / ⌘W 关闭 ≈ 旧的自绘 ✕：通知 controller 收尾（取消进行中的检查、回 idle）。
+        // orderOut（dismiss）不触发本通知，故程序化隐藏不会误调。
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { _ in
+            MainActor.assumeIsolated { UpdateController.shared.userClosedPanel() }
+        }
         window = w
         return w
     }

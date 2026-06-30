@@ -3,11 +3,12 @@ import SwiftUI
 
 /// 「关于」内容卡片——设置页的「关于」与菜单打开的独立「关于」窗口共用同一份。
 struct AboutContent: View {
+    var showUpdateStatus: Bool = true   // 独立「关于」弹窗里置 false：不显示「上次检查」等状态文字，更精简
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 14) {
+            HStack(alignment: .center, spacing: 14) {
                 Image(systemName: "server.rack")
                     .font(.system(size: 28))
                     .foregroundStyle(Pal.mauve)
@@ -18,6 +19,8 @@ struct AboutContent: View {
                     Text(AppInfo.versionLine)
                         .font(.system(size: 12)).foregroundStyle(Pal.subtext)
                 }
+                Spacer()
+                UpdateInlineControls(showStatus: showUpdateStatus)   // 软件更新：自动检查开关 + 检查更新按钮，置于头部右侧
             }
             Divider().background(Pal.fill(0.06)).padding(.vertical, 6)
             linkLine("GitHub", "github.com/icloudza/termo", url: "https://github.com/icloudza/termo")
@@ -25,9 +28,6 @@ struct AboutContent: View {
             infoLine("渲染", value: "CoreText / AppKit")
             infoLine("平台", value: "macOS 14+")
             infoLine("架构", value: "Apple Silicon")
-
-            Rectangle().fill(Pal.fill(0.06)).frame(height: 1).padding(.vertical, 6)
-            UpdateInlineControls()
         }
         .padding(20)
         .background(Pal.fill(0.03), in: RoundedRectangle(cornerRadius: 10))
@@ -63,9 +63,9 @@ struct AboutWindow: View {
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
-        AboutContent()
+        AboutContent(showUpdateStatus: false)   // 独立弹窗不显示「上次检查」状态文字
             .padding(24)
-            .frame(width: 420)
+            .frame(width: 460)
             .background(Pal.solidBase)
             .preferredColorScheme(theme.isDark ? .dark : .light)
     }

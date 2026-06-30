@@ -138,7 +138,6 @@ enum HostStore {
     }
 
     static func saveHosts(_ hosts: [Host]) {
-        let hosts = hosts.filter { !$0.isMock }   // 模拟演示主机不落盘
         // 密码合并写入单条 Keychain 条目；JSON 由 SSHConnection.CodingKeys 排除了 password 字段
         var pwMap: [String: String] = [:]
         for h in hosts {

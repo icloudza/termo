@@ -93,6 +93,16 @@ final class SparkleUpdateBackend: NSObject, UpdateBackend, ControllerBindable, S
         controller?.apply(.idle)
     }
 
+    /// 静默结束会话（内联「已是最新」用）：只触发 Sparkle 的确认块以复位 sessionInProgress，
+    /// 不主动 apply(.idle)——后续 Sparkle 会回调 dismissUpdateInstallation 自然收尾。
+    func concludeSilently() {
+        if let a = acknowledgement {
+            acknowledgement = nil
+            a()
+        }
+        cancellation = nil
+    }
+
     // MARK: - SPUUserDriver
 
     /// 首次运行的授权请求：不弹原生框，直接默认「开启自动检查、不上报系统画像」。用户可在设置页随时关。

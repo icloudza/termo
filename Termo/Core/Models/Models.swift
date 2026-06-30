@@ -325,10 +325,6 @@ struct Host: Identifiable, Codable {
     /// 是否为 RDP（远程桌面）主机。
     var isRDP: Bool { rdp != nil }
 
-    /// 内置模拟演示主机的 id：监控面板用合成数据驱动，不连真服务器、不持久化、不参与状态扫描。
-    static let mockHostId = "__mock_demo__"
-    var isMock: Bool { id == Host.mockHostId }
-
     /// 仅主机名/IP（不含登录用户）。
     var ipOrHost: String {
         if let h = ssh?.host, !h.isEmpty { return h }

@@ -500,7 +500,7 @@ final class AppModel: ObservableObject {
     /// 取得（或惰性创建）某主机的监控对象；不在此启动采集——采集只在其概览为当前激活视图时跑（见 overviewAppeared）。
     func hostMonitor(for host: Host) -> HostMonitor {
         if let m = hostMonitors[host.id] { return m }
-        let m = HostMonitor(ssh: host.ssh ?? SSHConnection(), simulated: host.isMock)
+        let m = HostMonitor(ssh: host.ssh ?? SSHConnection())
         let hid = host.id
         m.onSample = { [weak self] metrics in self?.evaluateAlerts(hostId: hid, metrics) }
         hostMonitors[host.id] = m
@@ -750,24 +750,6 @@ final class AppModel: ObservableObject {
                         body: "\(label) \(Int(v))%，已持续约 \(Self.alertSustainFrames * 2) 秒")
     }
 
-    /// 构造内置的模拟演示主机：高配 + 双显卡，监控面板用合成数据驱动以预览效果。不连真服务器、不落盘。
-    private static func makeMockHost() -> Host {
-        var ssh = SSHConnection()
-        ssh.host = "mock.demo"; ssh.user = "root"; ssh.port = 22
-        var specs = HostSpecs()
-        specs.os = "Ubuntu 22.04.5 LTS"
-        specs.cores = "64"
-        specs.memory = "128 GB"
-        specs.disk = "9.2 TB / 12.8 TB"   // 与监控面板三块盘的合计大致一致
-        specs.vram = "48 GB"
-        specs.gpu = "NVIDIA RTX 5090 ×2"
-        specs.probedAt = Date()
-        return Host(id: Host.mockHostId, name: "Mock 演示主机", addr: "mock.demo", group: "mock",
-                    status: .online, os: "ubuntu", ssh: ssh,
-                    notes: "模拟数据，用于预览监控面板效果（不连真服务器）。",
-                    specs: specs, latencyMs: 8)
-    }
-
     // ---------- 系统信息探测 ----------
     /// 远端一次性探测脚本：输出多行 key=value。MEM/DISK/VRAM 输出原始字节（客户端再按
     /// 1000 进制统一格式化，避免 free -h/df -h 的 Gi/Mi 单位浮动）；DISK 为「已用 总量」两个字节数；
@@ -792,7 +774,7 @@ final class AppModel: ObservableObject {
     /// 已有未过期的缓存(probedAt 在 specsTTL 内)则跳过——系统信息变化慢，无需每次打开都重探。
     func probeHostIfNeeded(_ host: Host) {
         guard let ssh = host.ssh, !ssh.host.isEmpty, ssh.hasUsableCredentials,
-              !probingHosts.contains(host.id), !host.isMock else { return }
+              !probingHosts.contains(host.id) else { return }
         if let probedAt = host.specs?.probedAt, Date().timeIntervalSince(probedAt) < Self.specsTTL { return }
         probingHosts.insert(host.id)
         let id = host.id
@@ -853,7 +835,7 @@ final class AppModel: ObservableObject {
 
     /// 对所有主机做一次轻量 TCP 可达性检测（启动/刷新/定时调用）。
     func refreshAllStatuses() {
-        for host in hosts where !host.isMock { checkReachability(host) }   // 模拟主机不做真实连通探测
+        for host in hosts { checkReachability(host) }
     }
 
     /// 定时扫描在线状态/延迟；仅在 App 处于活动状态时运行（失焦即暂停，省 CPU）。
@@ -1009,7 +991,6 @@ final class AppModel: ObservableObject {
     private init() {
         // 从磁盘加载主机与会话历史
         hosts = HostStore.loadHosts()
-        hosts.append(Self.makeMockHost())   // 注入模拟演示主机（内存中、不落盘），用于预览监控面板
         sessions = HostStore.loadSessions()
         forwards = HostStore.loadForwards()
         sshKeys = KeyStore.load()

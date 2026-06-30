@@ -5,7 +5,7 @@
 	<key>CFBundleAllowMixedLocalizations</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>zh-Hans</string>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Termo</string>
 	<key>CFBundleExecutable</key>
@@ -28,30 +28,27 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.9.1</string>
+	<string>0.9.1.1</string>
 	<key>CFBundleVersion</key>
-	<string>27</string>
+	<string>28</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Termo 需要访问本地网络，以便连接局域网内的 SSH / RDP 主机。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 cloudza. 保留所有权利。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Termo 需要访问本地网络，以便连接局域网内的 SSH / RDP 主机。</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
-	<!-- Sparkle 自动更新（仅 Developer ID 渠道生效；MAS 包剥离 Sparkle 后这些键被忽略，无副作用）。 -->
-	<!-- appcast 托管于 GitHub Pages，固定 URL；enclosure 指向各 release 的 zip。 -->
 	<key>SUFeedURL</key>
 	<string>https://icloudza.github.io/termo/appcast.xml</string>
-	<!-- EdDSA(Ed25519) 公钥：用 scripts/sparkle-tools/generate_keys 生成一次，私钥进钥匙串/CI Secret，
-	     公钥（base64）填这里。占位串必须替换，否则 Sparkle 拒绝校验任何更新。 -->
 	<key>SUPublicEDKey</key>
 	<string>s+AwMfJZ8Jd4e64NiWyqZQ1cX98HuKo96GAdoZbqJBE=</string>
-	<!-- 不设 SUEnableAutomaticChecks：首次运行由 Sparkle 触发授权请求，走我们自绘的 UI 询问是否自动检查。 -->
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 </dict>

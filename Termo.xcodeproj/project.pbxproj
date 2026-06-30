@@ -620,11 +620,11 @@
 				};
 			};
 			buildConfigurationList = 4140589C6F02BC5DA46E5CDC /* Build configuration list for PBXProject "Termo" */;
-			developmentRegion = en;
+			developmentRegion = "zh-Hans";
 			hasScannedForEncodings = 0;
 			knownRegions = (
+				"zh-Hans",
 				Base,
-				en,
 			);
 			mainGroup = BACE1B016C10D943441DCD8E;
 			minimizedProjectReferenceProxies = 1;
@@ -898,6 +898,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				ASSETCATALOG_COMPILER_OPTIMIZATION = space;
 				CODE_SIGN_ENTITLEMENTS = "Termo-MAS.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
@@ -915,6 +916,8 @@
 					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Termo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -937,6 +940,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = "Termo-MAS.entitlements";
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_HARDENED_RUNTIME = NO;
@@ -953,6 +957,8 @@
 					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Termo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -974,6 +980,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Termo.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_HARDENED_RUNTIME = NO;
@@ -990,6 +997,8 @@
 					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Termo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1010,6 +1019,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				ASSETCATALOG_COMPILER_OPTIMIZATION = space;
 				CODE_SIGN_ENTITLEMENTS = Termo.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -1027,6 +1037,8 @@
 					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Termo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

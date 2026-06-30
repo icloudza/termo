@@ -52,6 +52,9 @@ protocol UpdateBackend: AnyObject {
     func cancel()
     /// 确认并关闭「已是最新 / 出错」提示。
     func acknowledge()
+    /// 静默结束当前检查会话：内联入口「已是最新」不弹窗，但仍须结束 Sparkle 会话，
+    /// 否则其 sessionInProgress 不复位，下次检查报「called but .sessionInProgress == YES」。
+    func concludeSilently()
 }
 
 // MARK: - 控制器（UI 唯一观察源）
@@ -103,8 +106,13 @@ final class UpdateController: ObservableObject {
 
     // —— 用户操作 ——
 
-    /// 手动检查更新（关于/托盘/设置三处入口统一调此）。
-    func checkForUpdates() {
+    // checking / upToDate 是否在独立窗口呈现。内联入口（关于/设置页）置 false——那里已有内联进度与
+    // 「已是最新」状态，无需再弹窗；只有发现更新/下载/安装/出错才需要完整面板。菜单/托盘入口为 true。
+    private var surfaceTransient = true
+
+    /// 手动检查更新。surfaceTransient=false 时「检查中/已是最新」不弹独立窗口（交由内联控件展示）。
+    func checkForUpdates(surfaceTransient: Bool = true) {
+        self.surfaceTransient = surfaceTransient
         backend.check(userInitiated: true)
     }
 
@@ -135,7 +143,19 @@ final class UpdateController: ObservableObject {
         switch newPhase {
         case .idle:
             UpdateWindowPresenter.shared.dismiss()
-        case .checking, .found, .downloading, .extracting, .readyToInstall, .installing, .upToDate, .error:
+        case .checking:
+            // 检查中：内联入口不弹窗（内联控件自带 spinner），其它入口照常弹。
+            if surfaceTransient { UpdateWindowPresenter.shared.present() }
+            else { UpdateWindowPresenter.shared.dismiss() }
+        case .upToDate:
+            if surfaceTransient {
+                UpdateWindowPresenter.shared.present()
+            } else {
+                // 内联入口：不弹窗，但必须结束 Sparkle 会话，否则下次检查会因 sessionInProgress 失败。
+                UpdateWindowPresenter.shared.dismiss()
+                backend.concludeSilently()
+            }
+        case .found, .downloading, .extracting, .readyToInstall, .installing, .error:
             UpdateWindowPresenter.shared.present()
         }
         refreshFromBackend()
@@ -208,4 +228,5 @@ final class AppStoreUpdateBackend: UpdateBackend {
     func respond(_ choice: UpdateUserChoice) {}
     func cancel() {}
     func acknowledge() {}
+    func concludeSilently() {}
 }

@@ -49,7 +49,6 @@ final class HostMonitor: ObservableObject {
     var onSample: ((HostMetrics) -> Void)?
 
     private var ssh: SSHConnection
-    private let simulated: Bool          // true=合成数据演示主机，不连真服务器
     private var session: SSHSession?     // [SSH 迁移] libssh2 进程内会话（替代 spawn /usr/bin/ssh）
     private var launchGen = 0            // 每次 launch 自增；旧连接的回调据此失效（替代 Process 的 terminationHandler=nil）
     private var buffer = Data()
@@ -65,8 +64,8 @@ final class HostMonitor: ObservableObject {
     // 采样间隔，需与远端 sleep 一致；作为网速 Δt 的兜底（实际优先用 uptime 差更准）
     private static let interval = 2
 
-    /// 一帧采样的间隔秒数（真实流 2s、模拟 1s）；供折线图把左滑动画时长对齐采样节奏，保证连续不顿挫。
-    var sampleInterval: Double { simulated ? Self.simInterval : Double(Self.interval) }
+    /// 一帧采样的间隔秒数；供折线图把左滑动画时长对齐采样节奏，保证连续不顿挫。
+    var sampleInterval: Double { Double(Self.interval) }
 
     /// 远端内联采样脚本：无 /proc 立即报 NOPROC 退出；否则每 interval 秒输出一帧，以 === 分隔。
     /// CPU 输出整机与每核（cpu / cpuN）；网络累计排除回环 lo 并把网卡名冒号换空格再取字段，避免高流量字节数
@@ -88,24 +87,21 @@ final class HostMonitor: ObservableObject {
     done
     """
 
-    init(ssh: SSHConnection, simulated: Bool = false) {
+    init(ssh: SSHConnection) {
         self.ssh = ssh
-        self.simulated = simulated
     }
 
     /// 兜底回收：正常流程靠 stop() 清理。万一对象未 stop 即被释放（如所有者将来漏调 stop），
     /// 远端采样脚本是 `while :; sleep` 永不自行结束 —— 这里必须打断流（cancel 线程安全），
-    /// 否则后台阻塞线程 + TCP 连接 + 远端进程会永久泄漏；同时停掉模拟定时器（否则 runloop 永久持有）。
+    /// 否则后台阻塞线程 + TCP 连接 + 远端进程会永久泄漏。
     deinit {
         session?.cancel()
-        simTimer?.invalidate()
         restartWork?.cancel()
     }
 
     /// 用最新连接信息刷新（如「每次询问」先输错密码、缓存的监控仍持旧密码，改对后需更新）。
     /// 关键字段变化时若正在运行则立即用新信息重连，避免缓存的监控一直用旧/错密码连接失败。
     func updateConnection(_ s: SSHConnection) {
-        guard !simulated else { return }
         let changed = s.password != ssh.password || s.host != ssh.host
             || s.port != ssh.port || s.user != ssh.user || s.keyId != ssh.keyId || s.keyPath != ssh.keyPath
         guard changed else { return }
@@ -119,7 +115,6 @@ final class HostMonitor: ObservableObject {
 
     func start() {
         guard !running else { return }
-        if simulated { running = true; startSimulation(); return }
         guard !ssh.host.isEmpty else { phase = .unsupported; return }
         running = true
         phase = .connecting
@@ -129,7 +124,6 @@ final class HostMonitor: ObservableObject {
     func stop() {
         running = false
         restartWork?.cancel(); restartWork = nil
-        simTimer?.invalidate(); simTimer = nil
         teardownProcess()
         buffer.removeAll()
     }
@@ -137,7 +131,7 @@ final class HostMonitor: ObservableObject {
     /// 网络切换时调用：立刻丢弃当前连接重连，不等 keepalive 超时。
     /// launch 内部已对离线自守，离线则置 error 等下次网络恢复再连。
     func handleNetworkChange() {
-        guard running, !simulated else { return }
+        guard running else { return }
         restartWork?.cancel(); restartWork = nil
         teardownProcess()
         phase = .connecting
@@ -319,108 +313,4 @@ final class HostMonitor: ObservableObject {
         onSample?(m)
     }
 
-    // MARK: - 模拟演示
-
-    private var simTimer: Timer?
-    private static let simInterval = 1.0
-    private var simCores: [Double] = []
-    private var simBaseLoad = 0.0            // CPU 基础负载，缓慢漂移；各核围绕它波动，使热力图协调、与均值吻合
-    private var simCoreOffset: [Double] = [] // 每核固定偏移（个别核常驻高负载，模拟真实热点）
-    private var simMemTotalKB: Int64 = 0
-    private var simMemUsedKB = 0.0
-    private var simSwapTotalKB: Int64 = 0
-    private var simSwapUsedKB = 0.0
-    private var simDisks: [(mount: String, totalKB: Int64, usedKB: Double)] = []
-    private var simGpus: [(name: String, util: Double, memUsedMB: Double, memTotalMB: Int64, temp: Double)] = []
-    private var simRx = 0.0
-    private var simTx = 0.0
-    private var simUptime = 0.0
-
-    /// 随机游走：在 [lo, hi] 内按 step 抖动，让模拟数据看起来在动。
-    private static func walk(_ v: Double, _ step: Double, _ lo: Double, _ hi: Double) -> Double {
-        min(hi, max(lo, v + Double.random(in: -step...step)))
-    }
-
-    private func startSimulation() {
-        simBaseLoad = 52
-        simCoreOffset = (0..<64).map { _ in Double.random(in: -10...10) }
-        simCoreOffset[3] = 44; simCoreOffset[28] = 38   // 个别核常驻高负载，模拟真实热点
-        simCores = simCoreOffset.map { min(100, max(0, simBaseLoad + $0)) }
-        simMemTotalKB = 125_000_000          // ≈ 128 GB
-        simMemUsedKB = Double(simMemTotalKB) * 0.55
-        simSwapTotalKB = 8_000_000
-        simSwapUsedKB = Double(simSwapTotalKB) * 0.1
-        simDisks = [
-            ("/", 500_000_000, 500_000_000 * 0.58),
-            ("/data", 4_000_000_000, 4_000_000_000 * 0.34),
-            ("/backup", 8_000_000_000, 8_000_000_000 * 0.92),   // 高占用，演示 CRITICAL 转红
-        ]
-        simGpus = [
-            ("NVIDIA RTX 5090", 72, 24576 * 0.55, 24576, 68),
-            ("NVIDIA RTX 5090", 18, 24576 * 0.12, 24576, 51),
-        ]
-        simRx = 6_000_000
-        simTx = 1_200_000
-        simUptime = 20_157_120   // 233 天 7 时 12 分（233*86400 + 7*3600 + 12*60）
-        phase = .live
-        simulateTick()
-        simTimer = Timer.scheduledTimer(withTimeInterval: Self.simInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.simulateTick() }
-        }
-    }
-
-    private func simulateTick() {
-        simBaseLoad = Self.walk(simBaseLoad, 4, 12, 88)
-        for i in simCores.indices {
-            simCores[i] = min(100, max(0, simBaseLoad + simCoreOffset[i] + Double.random(in: -5...5)))
-        }
-        var m = HostMetrics()
-        m.perCore = simCores
-        let avg = simCores.isEmpty ? 0 : simCores.reduce(0, +) / Double(simCores.count)
-        m.cpuPercent = avg
-        let cc = Double(simCores.count)
-        m.load1 = max(0, avg / 100 * cc + Double.random(in: -2...2))
-        m.load5 = max(0, avg / 100 * cc * 0.92 + Double.random(in: -1.5...1.5))
-        m.load15 = max(0, avg / 100 * cc * 0.85 + Double.random(in: -1...1))
-
-        simMemUsedKB = Self.walk(simMemUsedKB, Double(simMemTotalKB) * 0.02,
-                                 Double(simMemTotalKB) * 0.25, Double(simMemTotalKB) * 0.88)
-        m.memTotalKB = simMemTotalKB
-        m.memUsedKB = Int64(simMemUsedKB)
-        simSwapUsedKB = Self.walk(simSwapUsedKB, Double(simSwapTotalKB) * 0.01, 0, Double(simSwapTotalKB) * 0.4)
-        m.swapTotalKB = simSwapTotalKB
-        m.swapUsedKB = Int64(simSwapUsedKB)
-
-        m.disks = simDisks.indices.map { i in
-            simDisks[i].usedKB = Self.walk(simDisks[i].usedKB, Double(simDisks[i].totalKB) * 0.004,
-                                           Double(simDisks[i].totalKB) * 0.05, Double(simDisks[i].totalKB) * 0.985)
-            return DiskUsage(mount: simDisks[i].mount, usedKB: Int64(simDisks[i].usedKB), totalKB: simDisks[i].totalKB)
-        }
-
-        m.gpus = simGpus.indices.map { i in
-            simGpus[i].util = Self.walk(simGpus[i].util, 12, 2, 99)
-            simGpus[i].memUsedMB = Self.walk(simGpus[i].memUsedMB, Double(simGpus[i].memTotalMB) * 0.03,
-                                             Double(simGpus[i].memTotalMB) * 0.1, Double(simGpus[i].memTotalMB) * 0.95)
-            // 温度随利用率：空闲约 40℃、满载约 85℃，更贴近真实
-            simGpus[i].temp = 40.0 + simGpus[i].util * 0.45 + Double.random(in: -2...2)
-            return GPUInfo(index: i, name: simGpus[i].name, utilPercent: simGpus[i].util,
-                           memUsedMB: Int64(simGpus[i].memUsedMB), memTotalMB: simGpus[i].memTotalMB,
-                           tempC: Int(simGpus[i].temp))
-        }
-
-        simRx = Self.walk(simRx, 5_000_000, 100_000, 90_000_000)
-        simTx = Self.walk(simTx, 1_200_000, 50_000, 18_000_000)
-        m.netRxBytesPerSec = simRx
-        m.netTxBytesPerSec = simTx
-        netHistory.append(NetSample(rx: simRx, tx: simTx))
-        if netHistory.count > Self.netHistoryCap { netHistory.removeFirst(netHistory.count - Self.netHistoryCap) }
-        netTick &+= 1
-
-        simUptime += Self.simInterval
-        m.uptimeSecs = simUptime
-
-        metrics = m
-        phase = .live
-        onSample?(m)
-    }
 }

@@ -216,13 +216,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if aboutWindow == nil {
             let hosting = NSHostingView(rootView: AboutWindow())
             let w = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 260),
                 styleMask: [.titled, .closable],
                 backing: .buffered, defer: false)
             w.title = "关于 Termo"
             w.isReleasedWhenClosed = false
             w.contentView = hosting
-            w.setContentSize(NSSize(width: 420, height: hosting.fittingSize.height))
+            w.setContentSize(NSSize(width: 460, height: hosting.fittingSize.height))
             w.center()
             aboutWindow = w
         }

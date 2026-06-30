@@ -3,15 +3,8 @@
 <plist version="1.0">
 <dict>
     <!--
-      当前阶段：本地开发 / Developer ID 方向，未开启 App Sandbox。
-      原因：本地终端需 spawn 用户 shell 与 PTY、SSH/SFTP/RDP 需任意网络与文件访问，
-      App Sandbox 会限制这些能力，留待上架 Mac App Store 时专门改造。
-
-      上架 Mac App Store 时在此新增（并把 ENABLE_HARDENED_RUNTIME 打开）：
-        <key>com.apple.security.app-sandbox</key><true/>
-        <key>com.apple.security.network.client</key><true/>
-        <key>com.apple.security.network.server</key><true/>          本地端口转发监听端
-        <key>com.apple.security.files.user-selected.read-write</key><true/>  配合安全作用域书签
+      Developer ID 直发渠道：不开启 App Sandbox（本地终端需 spawn shell/PTY、远程连接需任意网络与文件访问）。
+      故此处刻意留空。Mac App Store 的沙盒权限见 Termo-MAS.entitlements（ReleaseMAS 配置使用）。
     -->
 </dict>
 </plist>
