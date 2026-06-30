@@ -8,7 +8,7 @@
 #
 # 依赖：Xcode、create-dmg(brew)。DMG 布局经 Finder/AppleScript 设定，需在图形会话(本机终端)运行。
 #
-set -euo pipefail
+set -Eeuo pipefail   # -E(errtrace)：让 ERR trap 在函数(run_quiet)内的失败也能触发，否则吞掉 build.log
 
 # ── 配置 ────────────────────────────────────────────────────────────────────
 SCHEME="Termo"
@@ -39,7 +39,7 @@ die()     { printf '\n%s✗ 失败：%s%s\n' "$BOLD$RED" "$1" "$RST" >&2; exit 1
 
 # 出错时定位到行号并附上构建日志末尾，便于排查。
 trap 'rc=$?; [ $rc -ne 0 ] && { printf "\n%s✗ 脚本第 %s 行中止（退出码 %s）%s\n" "$BOLD$RED" "$LINENO" "$rc" "$RST" >&2;
-       [ -f "$LOG" ] && { echo "—— build.log 末 40 行 ——" >&2; tail -40 "$LOG" >&2; }; }' ERR
+       [ -f "$LOG" ] && { echo "—— build.log 末 120 行 ——" >&2; tail -120 "$LOG" >&2; }; }' ERR
 
 # 运行 xcodebuild：全量输出入日志文件，终端只留结论；失败由 trap 兜底打印日志尾。
 run_quiet() { "$@" >>"$LOG" 2>&1; }
