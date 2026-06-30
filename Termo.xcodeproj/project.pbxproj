@@ -15,6 +15,7 @@
 		0F66A021071A0C65CCF4B324 /* FileBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CD647B69FEE9C928419CC9A /* FileBrowser.swift */; };
 		12692E67AF93F18760DBDDE0 /* TabsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FDA3935AE9F0BBE6372D2C1 /* TabsModel.swift */; };
 		16D136F3D24B59CA45769116 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 960BB4F03437160E388C0A01 /* AboutView.swift */; };
+		18647157929F9F73934E7E44 /* CSSH2.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B5B933B18F54928AD3A1BED5 /* CSSH2.xcframework */; };
 		1AE8A97AFF2392F3BCEDDF3A /* RDPSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAC2312DCEA8551862769851 /* RDPSessionView.swift */; };
 		1FAFCA582661FF50BE800F7C /* TermoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB20521E7CB1F97B034FC777 /* TermoApp.swift */; };
 		275AC8E86EC97CCE744A5AE1 /* FileIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = E24CAA38E66B6D16CA193D8B /* FileIcons.swift */; };
@@ -59,6 +60,7 @@
 		AB040BAAE224C9A3DC34AC2A /* FileExtract.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD39E9CC2091D88B6C63B349 /* FileExtract.swift */; };
 		ABD40C5DF3AF425FC848A08B /* font-logos.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A67AE3D18D0C1243CFB8D557 /* font-logos.ttf */; };
 		B01DA0D4E8AD4CB41D738701 /* OSLogo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09193A7184944CAF7E27F8D3 /* OSLogo.swift */; };
+		B16D788B7D6327F2AFEB286A /* TermoSSHCore.c in Sources */ = {isa = PBXBuildFile; fileRef = F845B5037F1F9CD4FC3FFFB3 /* TermoSSHCore.c */; };
 		B239A88ECF733A6D9281BB9A /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 022AEDEEEA2726ED9937BBC7 /* Components.swift */; };
 		B3ABCC2C2D678CE2E3B4F20D /* TabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75740BD11A4036590AF39490 /* TabBar.swift */; };
 		B7FBDA0D3EA60CC50BB62DC5 /* HostDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501545F29B4E1519B62B1BC7 /* HostDraft.swift */; };
@@ -96,6 +98,7 @@
 		1983EEAC0FFD7F2C8003C88B /* KeysPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeysPanel.swift; sourceTree = "<group>"; };
 		1C321CE8CC691865AB47896F /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
 		248097FC2A8FBA83A9E42874 /* RemoteFS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteFS.swift; sourceTree = "<group>"; };
+		2AEE9BE384D7D3E41A645BFD /* TermoSSHCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TermoSSHCore.h; sourceTree = "<group>"; };
 		2CAFBC8380A693E6ED2162D0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		30E1CDC3F60325B41E91E2B0 /* RDPSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPSession.swift; sourceTree = "<group>"; };
 		3199CD445B46C9CE70D9A052 /* TermoRDPSession.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TermoRDPSession.m; sourceTree = "<group>"; };
@@ -136,6 +139,7 @@
 		A67AE3D18D0C1243CFB8D557 /* font-logos.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "font-logos.ttf"; sourceTree = "<group>"; };
 		AAC2312DCEA8551862769851 /* RDPSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPSessionView.swift; sourceTree = "<group>"; };
 		AE623D081B326C025E0118B3 /* SnippetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetStore.swift; sourceTree = "<group>"; };
+		B5B933B18F54928AD3A1BED5 /* CSSH2.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = CSSH2.xcframework; path = Vendor/CSSH2.xcframework; sourceTree = "<group>"; };
 		B5D622C08849A6205DE9113D /* BackgroundCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundCenterView.swift; sourceTree = "<group>"; };
 		B7FDEA83B50C900461CECE94 /* SnippetRunDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetRunDialog.swift; sourceTree = "<group>"; };
 		BB20521E7CB1F97B034FC777 /* TermoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TermoApp.swift; sourceTree = "<group>"; };
@@ -162,6 +166,7 @@
 		EC2740433D28692622FE7281 /* AppInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfo.swift; sourceTree = "<group>"; };
 		EF1A4E31A396CBDCD57DF2AB /* PortForwardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortForwardView.swift; sourceTree = "<group>"; };
 		F38CB670FB02EF6AF5CEBDF9 /* HostKeyDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyDialog.swift; sourceTree = "<group>"; };
+		F845B5037F1F9CD4FC3FFFB3 /* TermoSSHCore.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = TermoSSHCore.c; sourceTree = "<group>"; };
 		FA3E0ECD927BE5B8E2E188AF /* Snippet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Snippet.swift; sourceTree = "<group>"; };
 		FD32E564F595878325C284FC /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		FD39E9CC2091D88B6C63B349 /* FileExtract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileExtract.swift; sourceTree = "<group>"; };
@@ -176,6 +181,7 @@
 				3F74E95EBEDF83AE11A4A723 /* CodeEditSourceEditor in Frameworks */,
 				E94ABF77377FDEB920AEB59F /* CodeEditTextView in Frameworks */,
 				365595FD2E4D546CEF9E2FF1 /* CFreeRDP.xcframework in Frameworks */,
+				18647157929F9F73934E7E44 /* CSSH2.xcframework in Frameworks */,
 				2EE07A6CD3B97876E60F14BE /* Security.framework in Frameworks */,
 				F5B3AE3D0DA903464CC16F47 /* CoreFoundation.framework in Frameworks */,
 			);
@@ -187,6 +193,7 @@
 		00E039DECC3B427121451943 /* SSH */ = {
 			isa = PBXGroup;
 			children = (
+				5EF5BC3DCF23006BF2BFD8FF /* Engine */,
 				333A99410F1C608823899399 /* AddHostView.swift */,
 				E7EC3A802375763DAFCB55EB /* AskPasswordDialog.swift */,
 				F38CB670FB02EF6AF5CEBDF9 /* HostKeyDialog.swift */,
@@ -310,6 +317,15 @@
 			path = UI;
 			sourceTree = "<group>";
 		};
+		5EF5BC3DCF23006BF2BFD8FF /* Engine */ = {
+			isa = PBXGroup;
+			children = (
+				F845B5037F1F9CD4FC3FFFB3 /* TermoSSHCore.c */,
+				2AEE9BE384D7D3E41A645BFD /* TermoSSHCore.h */,
+			);
+			path = Engine;
+			sourceTree = "<group>";
+		};
 		6C09FB217A4AA1ED8AA795C5 /* Snippets */ = {
 			isa = PBXGroup;
 			children = (
@@ -411,6 +427,7 @@
 			children = (
 				E965A40BEE2746466C5F6D9E /* CFreeRDP.xcframework */,
 				7F11BB7AEF9BDB198C9803A9 /* CoreFoundation.framework */,
+				B5B933B18F54928AD3A1BED5 /* CSSH2.xcframework */,
 				FD32E564F595878325C284FC /* Security.framework */,
 			);
 			name = Frameworks;
@@ -645,6 +662,7 @@
 				1FAFCA582661FF50BE800F7C /* TermoApp.swift in Sources */,
 				83B88931B627C0C5A7971B1C /* TermoRDPCore.c in Sources */,
 				D64F14037725BC7EF22FDDEA /* TermoRDPSession.m in Sources */,
+				B16D788B7D6327F2AFEB286A /* TermoSSHCore.c in Sources */,
 				DD247A59BA9C0A9B8F8DECE0 /* TestConnectionView.swift in Sources */,
 				D64FA808A8F41212E30BD758 /* Theme.swift in Sources */,
 				791DFE9DEAD1061E2296BB15 /* Tooltip.swift in Sources */,
@@ -732,6 +750,8 @@
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers",
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/freerdp3",
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/winpr3",
+					"$(SRCROOT)/Vendor/CSSH2.xcframework/macos-arm64/Headers",
+					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -767,6 +787,8 @@
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers",
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/freerdp3",
 					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/winpr3",
+					"$(SRCROOT)/Vendor/CSSH2.xcframework/macos-arm64/Headers",
+					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

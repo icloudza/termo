@@ -15,3 +15,6 @@ dist/
 
 # FreeRDP 构建中间产物（见 scripts/build-freerdp.sh；产物 Vendor/CFreeRDP.xcframework 可选提交）
 .freerdp-build/
+
+# libssh2 静态库构建中间产物（SSH 迁移 J1）
+.libssh2-build/
