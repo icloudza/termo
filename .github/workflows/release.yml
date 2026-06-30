@@ -2,7 +2,7 @@ name: Release (Developer ID + Sparkle)
 
 # 推送 v* 标签即自动发版：构建 → Developer ID 签名 → 公证装订 → 打 zip/dmg →
 # Sparkle EdDSA 签名 + 生成 appcast → 创建 GitHub Release → 发布 appcast 到 GitHub Pages。
-# Dev ID（GitHub）渠道全自动；Mac App Store 渠道另走手动 Transporter 上传（见 docs/RELEASE.md）。
+# Dev ID（GitHub）渠道全自动；Mac App Store 渠道另走手动 Transporter 上传。
 on:
   push:
     tags:
@@ -32,7 +32,7 @@ jobs:
       - name: 安装构建工具
         run: brew install xcodegen create-dmg
 
-      # ── 防呆：占位公钥未替换则中止（否则发出去的更新无法被校验）──
+      # ── 占位公钥未替换则中止（否则发出去的更新无法被校验）──
       - name: 校验 Sparkle 公钥已填入 Info.plist
         run: |
           if grep -q "__SPARKLE_PUBLIC_ED_KEY_PLACEHOLDER__" Termo/Info.plist; then
@@ -77,7 +77,7 @@ jobs:
       - name: 打包（签名 + 公证 + DMG）
         run: NOTARY_PROFILE=$NOTARY_PROFILE ./scripts/package-app.sh
 
-      - name: 定位产物 + 计算版本
+      - name: 定位产物&计算版本
         id: artifacts
         run: |
           set -euo pipefail

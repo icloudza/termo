@@ -50,7 +50,7 @@
 	<!-- EdDSA(Ed25519) 公钥：用 scripts/sparkle-tools/generate_keys 生成一次，私钥进钥匙串/CI Secret，
 	     公钥（base64）填这里。占位串必须替换，否则 Sparkle 拒绝校验任何更新。 -->
 	<key>SUPublicEDKey</key>
-	<string>__SPARKLE_PUBLIC_ED_KEY_PLACEHOLDER__</string>
+	<string>s+AwMfJZ8Jd4e64NiWyqZQ1cX98HuKo96GAdoZbqJBE=</string>
 	<!-- 不设 SUEnableAutomaticChecks：首次运行由 Sparkle 触发授权请求，走我们自绘的 UI 询问是否自动检查。 -->
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
