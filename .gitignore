@@ -24,3 +24,6 @@ dist/
 
 # Sparkle 发布期工具（generate_keys/sign_update/generate_appcast）：仅本地一次性用，CI 自下载，不入库
 scripts/sparkle-tools/
+
+# 私人发布手册等文档：仅本地查阅，不入库
+docs/
