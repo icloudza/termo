@@ -14,6 +14,7 @@
 		0E96188D36EC928349BD587C /* RDPCertDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47CD8A8DDB495432E034CA69 /* RDPCertDialog.swift */; };
 		0F66A021071A0C65CCF4B324 /* FileBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CD647B69FEE9C928419CC9A /* FileBrowser.swift */; };
 		12692E67AF93F18760DBDDE0 /* TabsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FDA3935AE9F0BBE6372D2C1 /* TabsModel.swift */; };
+		1317AC84BBA66472850E1FA0 /* AppEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEF73C91115309B079FAE0A2 /* AppEnv.swift */; };
 		16D136F3D24B59CA45769116 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 960BB4F03437160E388C0A01 /* AboutView.swift */; };
 		18647157929F9F73934E7E44 /* CSSH2.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B5B933B18F54928AD3A1BED5 /* CSSH2.xcframework */; };
 		1AE8A97AFF2392F3BCEDDF3A /* RDPSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAC2312DCEA8551862769851 /* RDPSessionView.swift */; };
@@ -52,7 +53,9 @@
 		8EDFD4A742997CCB799687E5 /* FileTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800B3BEE581D0FE8185ABEE1 /* FileTree.swift */; };
 		91CE14BF1033D9A165E19E08 /* SSHKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = D172F44C6B1D699CB9362786 /* SSHKey.swift */; };
 		960955F58E819AA84229B9FC /* RemoteCodeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2A46D5373AE73D4AEC4165 /* RemoteCodeEditor.swift */; };
+		96D521A2A56367A415A467F1 /* SSHTerminalDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0FF5367FD75FA678A82796A /* SSHTerminalDriver.swift */; };
 		9946E781B1E37438F0E31352 /* HostMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 643CD14D9A1343A9CBEB6A5E /* HostMonitor.swift */; };
+		9A8317CC83A8962133251EE9 /* SSHSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C2B346E9462FFBEA66D9E8F /* SSHSession.swift */; };
 		9E90B83D1DF39F54A3E660FC /* SnippetsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7075C12BC3153FDBECAE6CDD /* SnippetsPanel.swift */; };
 		9EBF1625176E56AEFCEDB5A0 /* PortForwardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF1A4E31A396CBDCD57DF2AB /* PortForwardView.swift */; };
 		9F5F0EFF7D091F163C1AE5E3 /* Snippet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA3E0ECD927BE5B8E2E188AF /* Snippet.swift */; };
@@ -73,14 +76,17 @@
 		D4E1BB5C63DB0D8B5D3C4AA7 /* HostKeyDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F38CB670FB02EF6AF5CEBDF9 /* HostKeyDialog.swift */; };
 		D64F14037725BC7EF22FDDEA /* TermoRDPSession.m in Sources */ = {isa = PBXBuildFile; fileRef = 3199CD445B46C9CE70D9A052 /* TermoRDPSession.m */; };
 		D64FA808A8F41212E30BD758 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCEFBDBEDCA1B9A7D7F8DF36 /* Theme.swift */; };
+		DC0E22979A3E3F7C9761B86C /* TermoKeyGen_bcrypt.c in Sources */ = {isa = PBXBuildFile; fileRef = 6F4476E180D2D0CC7A76231B /* TermoKeyGen_bcrypt.c */; };
 		DC82E921312D10CFF921F97B /* Persistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C321CE8CC691865AB47896F /* Persistence.swift */; };
 		DD247A59BA9C0A9B8F8DECE0 /* TestConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3B549B96E762A0F96435705 /* TestConnectionView.swift */; };
+		DE283A4EBA547661A5B5F5D0 /* SSHSessionPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 172B7815060BD98DE4B52BAD /* SSHSessionPool.swift */; };
 		E101FB071C357D1A3E0D3B36 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 708441330F807778E77B2B88 /* AppSettings.swift */; };
 		E2EECA718684D03CF8345249 /* Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1626E272150021A09FC31784 /* Workspace.swift */; };
 		E6BFAC96BEDB66DBA492C523 /* HostKeyVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C703EECD0742870CD6D43856 /* HostKeyVerifier.swift */; };
 		E82806E27A86F286792F164A /* KeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 650DB60AA2A221003E5EAA5A /* KeyStore.swift */; };
 		E94ABF77377FDEB920AEB59F /* CodeEditTextView in Frameworks */ = {isa = PBXBuildFile; productRef = 6732CE908A2DDCC1F7A18FEF /* CodeEditTextView */; };
 		ED492FDD2B80C8A084BC87ED /* AddRDPHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FF3346630AADCC906545E0F /* AddRDPHostView.swift */; };
+		F543105BF82D2EF4D08D5C79 /* TermoKeyGen.c in Sources */ = {isa = PBXBuildFile; fileRef = 11A130EC1B7DFB2D5FC4ADA2 /* TermoKeyGen.c */; };
 		F5B3AE3D0DA903464CC16F47 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F11BB7AEF9BDB198C9803A9 /* CoreFoundation.framework */; };
 		F8EE9711E450E3D8C106045C /* BackgroundActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7024DA152ABF9F72C989A474 /* BackgroundActivity.swift */; };
 		FB99BAEE2ED4F30731A47A0F /* Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5222F58405D3CEFB6BD7717 /* Sidebar.swift */; };
@@ -94,7 +100,9 @@
 		09193A7184944CAF7E27F8D3 /* OSLogo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSLogo.swift; sourceTree = "<group>"; };
 		0B2A46D5373AE73D4AEC4165 /* RemoteCodeEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCodeEditor.swift; sourceTree = "<group>"; };
 		0BB120BE0A8466FDD6051FDD /* KeyTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyTools.swift; sourceTree = "<group>"; };
+		11A130EC1B7DFB2D5FC4ADA2 /* TermoKeyGen.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = TermoKeyGen.c; sourceTree = "<group>"; };
 		1626E272150021A09FC31784 /* Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workspace.swift; sourceTree = "<group>"; };
+		172B7815060BD98DE4B52BAD /* SSHSessionPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSessionPool.swift; sourceTree = "<group>"; };
 		1983EEAC0FFD7F2C8003C88B /* KeysPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeysPanel.swift; sourceTree = "<group>"; };
 		1C321CE8CC691865AB47896F /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
 		248097FC2A8FBA83A9E42874 /* RemoteFS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteFS.swift; sourceTree = "<group>"; };
@@ -118,6 +126,7 @@
 		643CD14D9A1343A9CBEB6A5E /* HostMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostMonitor.swift; sourceTree = "<group>"; };
 		650DB60AA2A221003E5EAA5A /* KeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyStore.swift; sourceTree = "<group>"; };
 		6A4DA8CC82A64EB068CBD823 /* Tooltip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tooltip.swift; sourceTree = "<group>"; };
+		6F4476E180D2D0CC7A76231B /* TermoKeyGen_bcrypt.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = TermoKeyGen_bcrypt.c; sourceTree = "<group>"; };
 		6FDA3935AE9F0BBE6372D2C1 /* TabsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabsModel.swift; sourceTree = "<group>"; };
 		7024DA152ABF9F72C989A474 /* BackgroundActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundActivity.swift; sourceTree = "<group>"; };
 		7075C12BC3153FDBECAE6CDD /* SnippetsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetsPanel.swift; sourceTree = "<group>"; };
@@ -131,6 +140,7 @@
 		862C497DDA041A73F78FEA04 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		88FE548D65E22CCE9FF8E686 /* PortForward.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortForward.swift; sourceTree = "<group>"; };
 		8B98C4B8B210F38C372B2955 /* Termo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Termo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8C2B346E9462FFBEA66D9E8F /* SSHSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSession.swift; sourceTree = "<group>"; };
 		922A429B171BE608DC237A98 /* FileOps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileOps.swift; sourceTree = "<group>"; };
 		960BB4F03437160E388C0A01 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
 		984C300A771B216F5C348E38 /* FileViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewer.swift; sourceTree = "<group>"; };
@@ -139,6 +149,8 @@
 		A67AE3D18D0C1243CFB8D557 /* font-logos.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "font-logos.ttf"; sourceTree = "<group>"; };
 		AAC2312DCEA8551862769851 /* RDPSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPSessionView.swift; sourceTree = "<group>"; };
 		AE623D081B326C025E0118B3 /* SnippetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetStore.swift; sourceTree = "<group>"; };
+		AEF73C91115309B079FAE0A2 /* AppEnv.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnv.swift; sourceTree = "<group>"; };
+		B0FF5367FD75FA678A82796A /* SSHTerminalDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalDriver.swift; sourceTree = "<group>"; };
 		B5B933B18F54928AD3A1BED5 /* CSSH2.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = CSSH2.xcframework; path = Vendor/CSSH2.xcframework; sourceTree = "<group>"; };
 		B5D622C08849A6205DE9113D /* BackgroundCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundCenterView.swift; sourceTree = "<group>"; };
 		B7FDEA83B50C900461CECE94 /* SnippetRunDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetRunDialog.swift; sourceTree = "<group>"; };
@@ -154,6 +166,7 @@
 		D026950CEB9B2C8A1AE92AF6 /* BundleResources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundleResources.swift; sourceTree = "<group>"; };
 		D172F44C6B1D699CB9362786 /* SSHKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHKey.swift; sourceTree = "<group>"; };
 		D30E8F85BB20C7A21F6D7899 /* ActivityBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityBar.swift; sourceTree = "<group>"; };
+		D4B5B9D81EF862FBF852FF90 /* termo_blowfish.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = termo_blowfish.h; sourceTree = "<group>"; };
 		D5336686AD7D595B6A0F188A /* KeySheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeySheets.swift; sourceTree = "<group>"; };
 		D9615D01CEC651F36383569C /* RDPSurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RDPSurfaceView.swift; sourceTree = "<group>"; };
 		DCED3CB381B1EBDA09D6F705 /* HostOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostOverview.swift; sourceTree = "<group>"; };
@@ -320,6 +333,11 @@
 		5EF5BC3DCF23006BF2BFD8FF /* Engine */ = {
 			isa = PBXGroup;
 			children = (
+				8C2B346E9462FFBEA66D9E8F /* SSHSession.swift */,
+				172B7815060BD98DE4B52BAD /* SSHSessionPool.swift */,
+				D4B5B9D81EF862FBF852FF90 /* termo_blowfish.h */,
+				6F4476E180D2D0CC7A76231B /* TermoKeyGen_bcrypt.c */,
+				11A130EC1B7DFB2D5FC4ADA2 /* TermoKeyGen.c */,
 				F845B5037F1F9CD4FC3FFFB3 /* TermoSSHCore.c */,
 				2AEE9BE384D7D3E41A645BFD /* TermoSSHCore.h */,
 			);
@@ -446,6 +464,7 @@
 		BF6A62117558C42285A364C4 /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				B0FF5367FD75FA678A82796A /* SSHTerminalDriver.swift */,
 				507FF5447F03353EF481A8B0 /* TerminalSurface.swift */,
 			);
 			path = Terminal;
@@ -490,6 +509,7 @@
 		E32C0139BE8918DED91D1077 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				AEF73C91115309B079FAE0A2 /* AppEnv.swift */,
 				501545F29B4E1519B62B1BC7 /* HostDraft.swift */,
 				862C497DDA041A73F78FEA04 /* Models.swift */,
 				FA3E0ECD927BE5B8E2E188AF /* Snippet.swift */,
@@ -605,6 +625,7 @@
 				BB1704EA4FE099F9C7A2DF06 /* ActivityBar.swift in Sources */,
 				766D139DE85662003CB933E0 /* AddHostView.swift in Sources */,
 				ED492FDD2B80C8A084BC87ED /* AddRDPHostView.swift in Sources */,
+				1317AC84BBA66472850E1FA0 /* AppEnv.swift in Sources */,
 				49ED9F3C1FB4A57E5C40A2D5 /* AppInfo.swift in Sources */,
 				425BC5173D1D386193DF0FF2 /* AppModel.swift in Sources */,
 				E101FB071C357D1A3E0D3B36 /* AppSettings.swift in Sources */,
@@ -647,6 +668,9 @@
 				CCCE7023A8BF9DF0D12F5A1C /* RemoteFS.swift in Sources */,
 				4E8BB08836DC765A3793C7BB /* SFTPClient.swift in Sources */,
 				91CE14BF1033D9A165E19E08 /* SSHKey.swift in Sources */,
+				9A8317CC83A8962133251EE9 /* SSHSession.swift in Sources */,
+				DE283A4EBA547661A5B5F5D0 /* SSHSessionPool.swift in Sources */,
+				96D521A2A56367A415A467F1 /* SSHTerminalDriver.swift in Sources */,
 				5006CD805681677B0CF1953B /* SettingsView.swift in Sources */,
 				FB99BAEE2ED4F30731A47A0F /* Sidebar.swift in Sources */,
 				0677DAF91BE14EB43D261021 /* SidebarDivider.swift in Sources */,
@@ -660,6 +684,8 @@
 				12692E67AF93F18760DBDDE0 /* TabsModel.swift in Sources */,
 				82564CB03E98959D9890E2AF /* TerminalSurface.swift in Sources */,
 				1FAFCA582661FF50BE800F7C /* TermoApp.swift in Sources */,
+				F543105BF82D2EF4D08D5C79 /* TermoKeyGen.c in Sources */,
+				DC0E22979A3E3F7C9761B86C /* TermoKeyGen_bcrypt.c in Sources */,
 				83B88931B627C0C5A7971B1C /* TermoRDPCore.c in Sources */,
 				D64F14037725BC7EF22FDDEA /* TermoRDPSession.m in Sources */,
 				B16D788B7D6327F2AFEB286A /* TermoSSHCore.c in Sources */,
@@ -733,6 +759,149 @@
 				SWIFT_VERSION = 5.9;
 			};
 			name = Release;
+		};
+		08E744A015E4F2DCBD184DB7 /* DebugMAS */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = KTP97H9YFF;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = DebugMAS;
+		};
+		4737907BF17204385CE4FC98 /* ReleaseMAS */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_OPTIMIZATION = space;
+				CODE_SIGN_ENTITLEMENTS = "Termo-MAS.entitlements";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Vendor\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers",
+					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/freerdp3",
+					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/winpr3",
+					"$(SRCROOT)/Vendor/CSSH2.xcframework/macos-arm64/Headers",
+					"$(SRCROOT)/Termo/Features/SSH/Engine",
+				);
+				INFOPLIST_FILE = Termo/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_LDFLAGS = (
+					"-lz",
+					"-lresolv",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cloudza.termo;
+				PRODUCT_NAME = Termo;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = TERMO_MAS;
+				SWIFT_OBJC_BRIDGING_HEADER = "Termo/Features/RDP/Bridge/Termo-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
+			};
+			name = ReleaseMAS;
+		};
+		68617F7FA2F240908BD1F960 /* DebugMAS */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "Termo-MAS.entitlements";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Vendor\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers",
+					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/freerdp3",
+					"$(SRCROOT)/Vendor/CFreeRDP.xcframework/macos-arm64/Headers/winpr3",
+					"$(SRCROOT)/Vendor/CSSH2.xcframework/macos-arm64/Headers",
+					"$(SRCROOT)/Termo/Features/SSH/Engine",
+				);
+				INFOPLIST_FILE = Termo/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_LDFLAGS = (
+					"-lz",
+					"-lresolv",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cloudza.termo;
+				PRODUCT_NAME = Termo;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG TERMO_MAS";
+				SWIFT_OBJC_BRIDGING_HEADER = "Termo/Features/RDP/Bridge/Termo-Bridging-Header.h";
+			};
+			name = DebugMAS;
 		};
 		92F7E487E56B677442FB84BE /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -808,6 +977,66 @@
 			};
 			name = Release;
 		};
+		E92C8E7F07EFE9E626FAECA2 /* ReleaseMAS */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = KTP97H9YFF;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = ReleaseMAS;
+		};
 		F0ECA21A3F5081D09F29C5EB /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -882,7 +1111,9 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F0ECA21A3F5081D09F29C5EB /* Debug */,
+				08E744A015E4F2DCBD184DB7 /* DebugMAS */,
 				0099A2BEA9AD4DA65481688F /* Release */,
+				E92C8E7F07EFE9E626FAECA2 /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
@@ -891,7 +1122,9 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				92F7E487E56B677442FB84BE /* Debug */,
+				68617F7FA2F240908BD1F960 /* DebugMAS */,
 				CDA89A2683E5576E77F50189 /* Release */,
+				4737907BF17204385CE4FC98 /* ReleaseMAS */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

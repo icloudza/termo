@@ -18,3 +18,6 @@ dist/
 
 # libssh2 静态库构建中间产物（SSH 迁移 J1）
 .libssh2-build/
+
+# MCP 工具运行日志
+.playwright-mcp/

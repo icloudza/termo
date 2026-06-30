@@ -44,10 +44,17 @@ struct RDPCertDialog: View {
                 }
                 .padding(.top, 6).padding(.bottom, 8)
 
-                Text(prompt.fingerprint.isEmpty ? "（无指纹信息）" : prompt.fingerprint)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(Pal.subtext).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // 证书指纹可能是整段 PEM（甚至证书链），限高 + 可滚动，避免弹窗被撑得过高。
+                ScrollView {
+                    Text(prompt.fingerprint.isEmpty ? "（无指纹信息）" : prompt.fingerprint)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Pal.subtext).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(maxHeight: 150)
+                .background(Pal.fill(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Pal.fill(0.08), lineWidth: 1))
 
                 if prompt.changed, let old = prompt.oldFingerprint, !old.isEmpty {
                     Text("原信任指纹：\(old)")

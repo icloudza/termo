@@ -6,14 +6,6 @@ enum SSHKeyType: String, Codable, CaseIterable, Hashable {
     case rsa
 
     var label: String { self == .ed25519 ? "Ed25519" : "RSA 4096" }
-
-    /// ssh-keygen 生成参数。
-    var keygenArgs: [String] { self == .ed25519 ? ["-t", "ed25519"] : ["-t", "rsa", "-b", "4096"] }
-
-    /// 由 ssh-keygen 指纹行尾括号里的类型名（ED25519 / RSA …）归一。
-    static func from(keygenName name: String) -> SSHKeyType {
-        name.uppercased().contains("RSA") ? .rsa : .ed25519
-    }
 }
 
 /// 一把受管 SSH 密钥的元数据。私钥本体不入 JSON（存系统钥匙串，见 KeyKeychain）。

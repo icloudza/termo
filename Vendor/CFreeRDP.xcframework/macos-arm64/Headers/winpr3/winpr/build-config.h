@@ -5,8 +5,8 @@
 #define WINPR_KEYMAP_PATH ""
 #define WINPR_PLUGIN_PATH ""
 
-#define WINPR_INSTALL_PREFIX "/Users/lxc/Development/Swift/Termo/.freerdp-build/stage"
-#define WINPR_INSTALL_SYSCONFDIR "/Users/lxc/Development/Swift/Termo/.freerdp-build/stage/etc"
+#define WINPR_INSTALL_PREFIX "/Users/cloudza/Development/Xcode/Termo/.freerdp-build/stage"
+#define WINPR_INSTALL_SYSCONFDIR "/Users/cloudza/Development/Xcode/Termo/.freerdp-build/stage/etc"
 
 #define WINPR_LIBRARY_PATH ""
 

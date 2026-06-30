@@ -11,6 +11,15 @@ options:
   defaultConfig: Debug
   groupSortPosition: top
 
+# 构建配置：Debug/Release = Developer ID 直发（不沙盒、本地终端满血）；
+# ReleaseMAS = Mac App Store（App Sandbox + TERMO_MAS 编译开关，隐藏本地终端、私钥仅走密钥库）。
+# MAS 构建：xcodebuild -scheme Termo -configuration ReleaseMAS（签名/描述文件待 J4 上架时配 Apple Distribution）。
+configs:
+  Debug: debug
+  Release: release
+  DebugMAS: debug         # 本地测沙盒：debug 优化 + App Sandbox + TERMO_MAS（可断点/日志）
+  ReleaseMAS: release      # 上架：release 优化 + App Sandbox + TERMO_MAS
+
 settings:
   base:
     # 版本号唯一源是 Termo/Info.plist 的 CFBundleShortVersionString / CFBundleVersion
@@ -89,6 +98,14 @@ targets:
           ASSETCATALOG_COMPILER_OPTIMIZATION: space   # 资产目录按体积优化
           # 去符号由 xcodebuild archive 的 install-time 处理（strip 主程序 + 分离 dSYM）；
           # 见 scripts/package-app.sh。dwarf-with-dsym 为 Release 默认，保留以便崩溃符号化。
+        DebugMAS:
+          CODE_SIGN_ENTITLEMENTS: Termo-MAS.entitlements      # 开 App Sandbox（本地测沙盒运行态）
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG TERMO_MAS
+        ReleaseMAS:
+          SWIFT_OPTIMIZATION_LEVEL: "-Osize"
+          ASSETCATALOG_COMPILER_OPTIMIZATION: space
+          CODE_SIGN_ENTITLEMENTS: Termo-MAS.entitlements      # 开 App Sandbox
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: TERMO_MAS      # 编译期渠道开关（隐藏本地终端、私钥仅库）
 
 # 共享 scheme：供 xcodebuild -scheme Termo 打包（scripts/package-app.sh）与 Xcode 运行/归档使用。
 schemes:
@@ -100,3 +117,12 @@ schemes:
       config: Debug
     archive:
       config: Release
+  # MAS（沙盒）本地测试 / 上架归档专用 scheme：在 Xcode 顶部切到它即可 Run 沙盒版（Apple Development 签名即激活沙盒）。
+  Termo-MAS:
+    build:
+      targets:
+        Termo: all
+    run:
+      config: DebugMAS
+    archive:
+      config: ReleaseMAS

@@ -50,7 +50,8 @@ final class HostMonitor: ObservableObject {
 
     private var ssh: SSHConnection
     private let simulated: Bool          // true=合成数据演示主机，不连真服务器
-    private var process: Process?
+    private var session: SSHSession?     // [SSH 迁移] libssh2 进程内会话（替代 spawn /usr/bin/ssh）
+    private var launchGen = 0            // 每次 launch 自增；旧连接的回调据此失效（替代 Process 的 terminationHandler=nil）
     private var buffer = Data()
     private var running = false            // 期望运行中；意外退出时据此决定是否重连
     private var restartWork: DispatchWorkItem?
@@ -90,6 +91,15 @@ final class HostMonitor: ObservableObject {
     init(ssh: SSHConnection, simulated: Bool = false) {
         self.ssh = ssh
         self.simulated = simulated
+    }
+
+    /// 兜底回收：正常流程靠 stop() 清理。万一对象未 stop 即被释放（如所有者将来漏调 stop），
+    /// 远端采样脚本是 `while :; sleep` 永不自行结束 —— 这里必须打断流（cancel 线程安全），
+    /// 否则后台阻塞线程 + TCP 连接 + 远端进程会永久泄漏；同时停掉模拟定时器（否则 runloop 永久持有）。
+    deinit {
+        session?.cancel()
+        simTimer?.invalidate()
+        restartWork?.cancel()
     }
 
     /// 用最新连接信息刷新（如「每次询问」先输错密码、缓存的监控仍持旧密码，改对后需更新）。
@@ -135,55 +145,53 @@ final class HostMonitor: ObservableObject {
     }
 
     private func teardownProcess() {
-        if let p = process {
-            p.terminationHandler = nil
-            (p.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = nil
-            if p.isRunning { p.terminate() }
-        }
-        process = nil
+        launchGen &+= 1        // 使旧 stream 的回调（ingest/结束重连）失效
+        session?.cancel()      // 打断流；其后台线程会自行 close 收尾
+        session = nil
     }
 
     private func launch() {
         // 离线时不发起连接，等网络恢复由 handleNetworkChange 触发重连，避免离线期间空转重试。
         guard NetworkMonitor.shared.isOnline else { phase = .error; return }
         let cmd = Self.script.replacingOccurrences(of: "__INTERVAL__", with: String(Self.interval))
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        // 独立连接、不复用终端 master：关掉终端不会连带掐断监控；该主机已验证过指纹故 known_hosts 命中不弹窗。
-        proc.arguments = ssh.sshArguments() + ["-o", "BatchMode=no", cmd]
-        var env = ProcessInfo.processInfo.environment
-        if ssh.needsAskpass, let ap = SSHAskpass.envVars(password: ssh.password) {
-            for (k, v) in ap { env[k] = v }
-        }
-        proc.environment = env
-
-        let outPipe = Pipe()
-        proc.standardOutput = outPipe
-        proc.standardError = Pipe()   // 丢弃 stderr
-        outPipe.fileHandleForReading.readabilityHandler = { [weak self] fh in
-            let data = fh.availableData
-            if data.isEmpty { fh.readabilityHandler = nil; return }   // EOF：摘掉监听，避免空读自旋
-            Task { @MainActor in self?.ingest(data) }
-        }
-        proc.terminationHandler = { [weak self] _ in
-            Task { @MainActor in self?.handleExit() }
-        }
+        // 认证参数（独立连接，不复用 master；探测脚本 accept-new，与原行为一致）
+        let isKey = ssh.authMethod == .key
+        let keyPath: String? = isKey
+            ? (ssh.keyId.isEmpty ? (ssh.keyPath.isEmpty ? nil : ssh.keyPath) : KeyMaterializer.path(forKeyId: ssh.keyId))
+            : nil
+        let password: String? = isKey ? nil : ssh.password
+        let keyPass: String? = isKey ? ssh.password : nil
+        let (h, p, u) = (ssh.host, ssh.port, ssh.user)
 
         prevCpu.removeAll(); prevRx = nil; prevTx = nil; prevUptime = nil
         buffer.removeAll()
-        do {
-            try proc.run()
-            process = proc
-        } catch {
-            process = nil
-            phase = .error
-            scheduleRestart()
+        launchGen &+= 1
+        let gen = launchGen
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let session = try? SSHSession.connect(host: h, port: p, user: u,
+                                                        password: password, keyPath: keyPath, keyPassphrase: keyPass) else {
+                Task { @MainActor in self?.streamEnded(gen: gen) }   // 连接失败 → 重连
+                return
+            }
+            Task { @MainActor in self?.adoptSession(session, gen: gen) }
+            session.execStream(cmd) { data in                        // 同步阻塞直到 cancel/EOF
+                Task { @MainActor in guard gen == self?.launchGen else { return }; self?.ingest(data) }
+            }
+            session.close()                                          // 流结束后在本线程关闭，无竞态
+            Task { @MainActor in self?.streamEnded(gen: gen) }
         }
     }
 
-    private func handleExit() {
-        process = nil
-        guard running else { return }   // 我方主动停止，不重连
+    /// 后台线程连上后回主线程认领会话；若此次 launch 已被取代/停止则就地取消。
+    private func adoptSession(_ s: SSHSession, gen: Int) {
+        if gen == launchGen { session = s } else { s.cancel() }
+    }
+
+    /// 流结束（EOF/错误/连接失败）。仅当前代际有效；我方未停止则延迟重连。
+    private func streamEnded(gen: Int) {
+        guard gen == launchGen else { return }   // 已被新 launch 取代 → 忽略
+        session = nil
+        guard running else { return }            // 我方主动停止，不重连
         phase = .error
         scheduleRestart()
     }

@@ -89,7 +89,7 @@ struct Sidebar: View {
             }
 
             Spacer(minLength: 0)
-            localTerminalButton
+            if AppEnv.localTerminalEnabled { localTerminalButton }   // MAS 沙盒下隐藏
         }
         .frame(width: max(224, layout.sidebarWidth), alignment: .leading)
         .frame(maxHeight: .infinity)

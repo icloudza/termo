@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Mac App Store 构建（ReleaseMAS 配置）：App Sandbox 开启。
+      远程 SSH/SFTP/RDP/端口转发全部进程内（libssh2/FreeRDP/OpenSSL），不再 spawn 任何系统二进制，
+      故可沙盒化。本地终端在 MAS 下隐藏（TERMO_MAS 编译开关）。
+
+      路径：沙盒下 NSHomeDirectory() 自动重定向到容器，known_hosts / session_known_hosts /
+      密钥库工作文件均落在 ~/Library/Containers/com.cloudza.termo/Data 内，无需访问真实 ~/.ssh。
+      私钥仅走密钥库（Keychain → 容器工作文件）；文件路径私钥在 MAS 下改为「选文件即导入库」。
+    -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- 远程连接（SSH/SFTP/RDP/端口转发出站、可达性探测） -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- 端口转发 -L/-D 的本地监听套接字 -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- 用户经面板选择的文件读写：导入私钥、上传/下载文件 -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <!-- 下载文件夹（下载远端文件的默认落点） -->
+    <key>com.apple.security.files.downloads.read-write</key>
+    <true/>
+</dict>
+</plist>

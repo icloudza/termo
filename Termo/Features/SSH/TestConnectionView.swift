@@ -282,11 +282,14 @@ final class ConnectionTester: ObservableObject {
     @Published var isRunning = false
     @Published var failed = false
 
-    private var process: Process?
     private let stepTitles = ["初始化配置", "解析主机地址", "建立 TCP 连接", "SSH 协议握手", "身份验证", "连接成功"]
-    private let probeMarker = "TERMO_CONNECT_OK"
-    private var sawMarker = false
+    private var cancelled = false
     private var concluded = false
+    /// C 回调闭包载体（Unmanaged 跨 @convention(c) 边界传递）。
+    private final class StageBox {
+        let cb: (Int, Bool, String?) -> Void
+        init(_ cb: @escaping (Int, Bool, String?) -> Void) { self.cb = cb }
+    }
     /// 测试/连接结束时回调一次（true=成功）。
     var onFinished: ((Bool) -> Void)?
 
@@ -316,7 +319,7 @@ final class ConnectionTester: ObservableObject {
         logs = []
         isRunning = true
         failed = false
-        sawMarker = false
+        cancelled = false
         concluded = false
 
         guard !conn.host.isEmpty else {
@@ -331,127 +334,55 @@ final class ConnectionTester: ObservableObject {
         if !conn.ciphers.isEmpty { log("指定 Cipher：\(conn.ciphers)") }
         if !conn.kexAlgos.isEmpty { log("指定 KEX：\(conn.kexAlgos)") }
         markSuccess(0)
+        markRunning(1)
 
-        // 构建真实 ssh -v 命令
-        let proc = Process()
-        var env = ProcessInfo.processInfo.environment
-        let sshArgs = conn.sshArguments(verbose: true, ephemeralKnownHosts: true) + ["-o", "BatchMode=no", "echo \(probeMarker); uname -a; echo EXIT_$?"]
+        // [SSH 迁移] 进程内 libssh2 分阶段测试（替代 spawn ssh -v）：连接由 App 进程发起，
+        // 触发 macOS 本地网络权限弹窗，且内网主机不再因子进程发起连接而被静默拦截。
+        let isKey = conn.authMethod == .key
+        let keyPath: String? = isKey
+            ? (conn.keyId.isEmpty ? (conn.keyPath.isEmpty ? nil : conn.keyPath) : KeyMaterializer.path(forKeyId: conn.keyId))
+            : nil
+        let password: String? = isKey ? nil : conn.password
+        let keyPass: String? = isKey ? conn.password : nil
+        let (h, p, u) = (conn.host, conn.port, conn.user)
 
-        // 密码用 OpenSSH 内置 SSH_ASKPASS 喂入（无需 sshpass，且无 TTY 也能工作）
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        proc.arguments = sshArgs
-        if conn.needsAskpass, let askpass = SSHAskpass.envVars(password: conn.password) {
-            for (k, v) in askpass { env[k] = v }
-        }
-        proc.environment = env
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        proc.standardOutput = outPipe
-        proc.standardError = errPipe
-
-        outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let d = h.availableData
-            guard !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
-            Task { @MainActor in self?.handleStdout(s) }
-        }
-        errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let d = h.availableData
-            guard !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
-            Task { @MainActor in self?.handleVerbose(s) }
-        }
-
-        proc.terminationHandler = { [weak self] p in
-            Task { @MainActor in self?.finished(code: p.terminationStatus) }
-        }
-
-        do {
-            try proc.run()
-            process = proc
-            markRunning(1)
-        } catch {
-            log("启动 ssh 失败：\(error.localizedDescription)", color: Pal.red)
-            failStep(1)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let box = Unmanaged.passRetained(StageBox { stage, ok, msg in
+                Task { @MainActor in self?.onStage(stage: stage, ok: ok, message: msg) }
+            }).toOpaque()
+            termo_ssh_test(h, Int32(p), u, password, keyPath, keyPass, { ud, stage, ok, msg in
+                guard let ud else { return }
+                let b = Unmanaged<StageBox>.fromOpaque(ud).takeUnretainedValue()
+                b.cb(Int(stage), ok != 0, msg.map { String(cString: $0) })
+            }, box)
+            Unmanaged<StageBox>.fromOpaque(box).release()
         }
     }
 
     func cancel() {
-        process?.terminationHandler = nil
-        if process?.isRunning == true { process?.terminate() }
-        process = nil
+        cancelled = true   // 后台 libssh2 测试会在超时后自行结束；这里停止后续 UI 更新
         isRunning = false
     }
 
-    // MARK: - 解析真实 ssh -v 输出
-
-    private func handleVerbose(_ chunk: String) {
-        for raw in chunk.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = String(raw)
-            let lower = line.lowercased()
-
-            // 过滤太底层的 debug 噪音，保留关键流程
-            if line.contains("Connecting to ") {
-                markSuccess(1); markRunning(2)
-                log(line.replacingOccurrences(of: "debug1: ", with: ""))
-            } else if line.contains("Connection established") {
-                markSuccess(2); markRunning(3)
-                log("TCP 连接已建立")
-            } else if line.contains("Remote protocol version") {
-                log(line.replacingOccurrences(of: "debug1: ", with: ""))
-            } else if lower.contains("kex:") || line.contains("SSH2_MSG_KEXINIT") || line.contains("kex_exchange_identification") {
-                markRunning(3)
-            } else if line.contains("Server host key:") {
-                log(line.replacingOccurrences(of: "debug1: ", with: ""))
-            } else if line.contains("Authenticating to") || line.contains("Next authentication method") || line.contains("Offering public key") || line.contains("Trying password") || line.contains("Authentications that can continue") {
-                markSuccess(3); markRunning(4)
-                log(line.replacingOccurrences(of: "debug1: ", with: ""))
-            } else if line.contains("Authentication succeeded") || line.contains("Authenticated to") {
-                markSuccess(4); markRunning(5)
-                log("身份验证成功", color: Pal.green)
-            } else if lower.contains("permission denied") {
-                log("身份验证失败：密码或密钥错误", color: Pal.red)
-                failStep(4)
-            } else if lower.contains("connection refused") {
-                log("连接被拒绝（端口未开放？）", color: Pal.red)
-                failStep(2)
-            } else if lower.contains("connection timed out") || lower.contains("operation timed out") {
-                log("连接超时", color: Pal.red)
-                failStep(2)
-            } else if lower.contains("could not resolve hostname") || lower.contains("name or service not known") {
-                log("无法解析主机地址", color: Pal.red)
-                failStep(1)
+    /// libssh2 分阶段回调（C stage 1..5 ↔ UI 步骤 1..5）。
+    private func onStage(stage: Int, ok: Bool, message: String?) {
+        guard isRunning, !cancelled, stage >= 1, stage < steps.count else { return }
+        if let message, !message.isEmpty { log(message, color: ok ? Pal.subtext : Pal.red) }
+        if ok {
+            markSuccess(stage)
+            if stage == steps.count - 1 {          // 末阶段「连接成功」
+                log("连接成功 ✓", color: Pal.green)
+                isRunning = false
+                conclude(true)
+            } else {
+                markRunning(stage + 1)
             }
-        }
-    }
-
-    private func handleStdout(_ chunk: String) {
-        for raw in chunk.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = String(raw)
-            if line.contains(probeMarker) {
-                sawMarker = true
-                markSuccess(4); markRunning(5)
-            } else if !line.isEmpty && !line.hasPrefix("EXIT_") {
-                log("远程：\(line)", color: Pal.text)
-            }
-        }
-    }
-
-    private func finished(code: Int32) {
-        if sawMarker || code == 0 {
-            markSuccess(5)
-            log("连接成功 ✓", color: Pal.green)
-            failed = false
-            isRunning = false
-            conclude(true)
-        } else if !failed {
-            failedCurrentStep()
-            log("连接失败（ssh 退出码 \(code)）", color: Pal.red)
-            isRunning = false
-            conclude(false)
         } else {
-            isRunning = false
+            failStep(stage)                        // 置失败 + 结束（内部 conclude(false)）
         }
     }
+
+    // MARK: - 解析真实 ssh -v 输出
 
     // MARK: - 步骤状态
 
@@ -470,12 +401,6 @@ final class ConnectionTester: ObservableObject {
         isRunning = false
         cancel()
         conclude(false)
-    }
-    private func failedCurrentStep() {
-        if let idx = steps.firstIndex(where: { $0.state == .running || $0.state == .pending }) {
-            steps[idx].state = .failure
-        }
-        failed = true
     }
 
     private func log(_ message: String, color: Color = Pal.subtext) {

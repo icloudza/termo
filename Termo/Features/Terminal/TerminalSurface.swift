@@ -228,7 +228,8 @@ final class PacedTerminalView: LocalProcessTerminalView {
     /// 小粘贴（单片）即时发完、无延迟；仅大块才进入限速节奏。
     private func sendChunks(_ chunks: [[UInt8]], from i: Int) {
         guard i < chunks.count else { return }
-        send(data: chunks[i][...])
+        // 经 terminalDelegate 发送：本地终端 delegate=self→本地进程，SSH 终端 delegate=驱动→libssh2 通道。
+        terminalDelegate?.send(source: self, data: chunks[i][...])
         guard i + 1 < chunks.count else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.interChunkDelay) { [weak self] in
             self?.sendChunks(chunks, from: i + 1)

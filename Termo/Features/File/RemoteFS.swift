@@ -22,21 +22,21 @@ final class UploadControl: @unchecked Sendable {
     var sent: Int64 { lock.lock(); defer { lock.unlock() }; return _sent }
 }
 
-/// 命令取消句柄：持有运行中的 ssh 子进程，cancel() 终止它——远端命令随通道关闭收到 SIGHUP 而结束。
+/// 命令取消句柄：持有运行中的 libssh2 会话，cancel() 置其取消标志——exec 循环检测后中断、通道关闭。
 /// 用于让「正在删除」等可能较慢的命令支持用户中途取消。线程安全。
 final class CommandHandle: @unchecked Sendable {
     private let lock = NSLock()
-    private var proc: Process?
+    private var session: SSHSession?
     private var cancelled = false
 
-    /// 绑定已启动的子进程；若在绑定前已被取消，立即终止它。
-    func bind(_ p: Process) {
-        lock.lock(); let c = cancelled; if !c { proc = p }; lock.unlock()
-        if c, p.isRunning { p.terminate() }
+    /// 绑定借出的会话；若在绑定前已被取消，立即打断它。
+    func bind(_ s: SSHSession) {
+        lock.lock(); let c = cancelled; if !c { session = s }; lock.unlock()
+        if c { s.cancel() }
     }
     func cancel() {
-        lock.lock(); cancelled = true; let p = proc; lock.unlock()
-        if let p, p.isRunning { p.terminate() }
+        lock.lock(); cancelled = true; let s = session; lock.unlock()
+        s?.cancel()
     }
     var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
 }
@@ -123,57 +123,28 @@ final class RemoteFS {
     /// `stdin` 非空时写入子进程标准输入（用于写文件等大数据下行）。
     func run(_ remoteCommand: String, stdin: Data? = nil, timeout: Double = 20,
              handle: CommandHandle? = nil) async -> OpResult {
-        ensureControlDir()
+        let conn = ssh
         return await withCheckedContinuation { (cont: CheckedContinuation<OpResult, Never>) in
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            proc.arguments = ssh.sshArguments(multiplex: true) + ["-o", "BatchMode=no", remoteCommand]
-            var env = ProcessInfo.processInfo.environment
-            if ssh.needsAskpass, let ap = SSHAskpass.envVars(password: ssh.password) {
-                for (k, v) in ap { env[k] = v }
-            }
-            proc.environment = env
-
-            let outPipe = Pipe(), errPipe = Pipe()
-            proc.standardOutput = outPipe
-            proc.standardError = errPipe
-            let inPipe: Pipe? = stdin != nil ? Pipe() : nil
-            if let inPipe { proc.standardInput = inPipe }
-
-            var outData = Data(), errData = Data()
-            let group = DispatchGroup()
-            group.enter()
             DispatchQueue.global().async {
-                outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                group.leave()
-            }
-            group.enter()
-            DispatchQueue.global().async {
-                errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                group.leave()
-            }
-            group.notify(queue: .global()) {
-                proc.waitUntilExit()
-                cont.resume(returning: OpResult(data: outData, stderr: errData, code: proc.terminationStatus))
-            }
-
-            do {
-                try proc.run()
-            } catch {
-                cont.resume(returning: OpResult(data: Data(), stderr: Data(), code: -1))
-                return
-            }
-            handle?.bind(proc)   // 绑定取消句柄：用户取消时终止此子进程
-            // 在独立线程写入 stdin（大数据需分块，避免与 ssh 输出形成管道死锁）
-            if let inPipe, let stdin {
-                DispatchQueue.global().async {
-                    let fh = inPipe.fileHandleForWriting
-                    fh.write(stdin)
-                    try? fh.close()
+                let pool = SSHSessionPool.shared
+                let s: SSHSession
+                do { s = try pool.take(conn) }      // 借暖连接（认证只在首次摊销，替代 ControlMaster）
+                catch {
+                    let msg = (error as? SSHSession.SSHError)?.message ?? "连接失败"
+                    cont.resume(returning: OpResult(data: Data(), stderr: Data(msg.utf8), code: -1))
+                    return
                 }
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                if proc.isRunning { proc.terminate() }
+                handle?.bind(s)                     // 绑定取消句柄：用户取消 → s.cancel() 中断 exec 循环
+                do {
+                    let r = try s.execBytes(remoteCommand, stdin: stdin, timeout: timeout)
+                    if r.timedOut || r.cancelled { pool.discard(s) } else { pool.recycle(conn, s) }
+                    let code = (r.timedOut || r.cancelled) ? -1 : r.exitCode
+                    cont.resume(returning: OpResult(data: r.stdout, stderr: r.stderr, code: code))
+                } catch {
+                    pool.discard(s)                 // 通道级错误（可能断线）→ 弃用，不污染池
+                    let msg = (error as? SSHSession.SSHError)?.message ?? "执行失败"
+                    cont.resume(returning: OpResult(data: Data(), stderr: Data(msg.utf8), code: -1))
+                }
             }
         }
     }
@@ -233,7 +204,7 @@ final class RemoteFS {
         if let perm = (try await sftpStatOrNil(remotePath))?.permissions {
             _ = try? await s.setPermissions(part, perm)    // 继承原权限（best-effort）
         }
-        if await s.supportsPosixRename {
+        if s.supportsPosixRename {
             try await s.posixRename(from: part, to: remotePath)    // 原子覆盖（审查 R7）
         } else {
             do { try await s.rename(from: part, to: remotePath) }
@@ -401,111 +372,62 @@ final class RemoteFS {
     private func uploadViaShell(localURL: URL, toRemote remotePath: String,
                 startOffset: Int64,
                 control: UploadControl) async -> UploadOutcome {
-        ensureControlDir()
+        // [SSH 迁移] 进程内 libssh2 流式上传（替代 spawn ssh + cat）：独占连接，pull 回调把本地文件分片喂入
+        // 远端 `cat >`，支持暂停/取消（保留 .part 续传）。
         let b64 = Data(remotePath.utf8).base64EncodedString()
         let redir = startOffset > 0 ? ">>" : ">"
         let remoteCmd = "P=$(printf %s '\(b64)'|base64 -d); T=\"$P.part\"; cat \(redir) \"$T\""
+        let conn = ssh
 
         return await withCheckedContinuation { (cont: CheckedContinuation<UploadOutcome, Never>) in
-            let sshProc = Process()
-            sshProc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            sshProc.arguments = self.ssh.sshArguments(multiplex: true)
-                + ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4",
-                   "-o", "BatchMode=no", remoteCmd]
-            var env = ProcessInfo.processInfo.environment
-            if self.ssh.needsAskpass, let ap = SSHAskpass.envVars(password: self.ssh.password) {
-                for (k, v) in ap { env[k] = v }
-            }
-            sshProc.environment = env
-
-            let errPipe = Pipe(), sshIn = Pipe()
-            sshProc.standardOutput = FileHandle.nullDevice
-            sshProc.standardError = errPipe
-            sshProc.standardInput = sshIn
-            let feed = sshIn.fileHandleForWriting
-
-            let stopLock = NSLock()
-            var cancelled = false
-            var paused = false
-            var hitEOF = false
-            var feederError: String? = nil
-
-            var errData = Data()
-            let group = DispatchGroup()
-            group.enter()
             DispatchQueue.global().async {
-                errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                group.leave()
-            }
-            group.notify(queue: .global()) {
-                sshProc.waitUntilExit()
-                stopLock.lock()
-                let c = cancelled; let p = paused; let eof = hitEOF; let ferr = feederError
-                stopLock.unlock()
-                if c { cont.resume(returning: .cancelled); return }
-                if p { cont.resume(returning: .paused); return }   // 保留远端 .part 供续传
-                if let ferr { cont.resume(returning: .failed(ferr)); return }
-                if eof && sshProc.terminationStatus == 0 {
-                    cont.resume(returning: .completed)
-                } else {
-                    let e = String(data: errData, encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    cont.resume(returning: .failed(e.isEmpty
-                        ? "上传中断（ssh \(sshProc.terminationStatus)）" : e))
-                }
-            }
-
-            do { try sshProc.run() }
-            catch { cont.resume(returning: .failed("无法启动 ssh")); return }
-
-            // 取消看门狗：喂入循环结束后若卡在「等 ssh 退出」，取消也能立刻杀掉 ssh（否则取消无效）。
-            DispatchQueue.global().async {
-                while sshProc.isRunning {
-                    let sig = control.signal
-                    if sig == .cancel || sig == .pause {
-                        stopLock.lock(); if sig == .cancel { cancelled = true } else { paused = true }; stopLock.unlock()
-                        sshProc.terminate(); break
-                    }
-                    Thread.sleep(forTimeInterval: 0.15)
-                }
-            }
-
-            // 后台喂入：本地文件(seek 到 startOffset) → ssh stdin
-            DispatchQueue.global().async {
-                guard let input = try? FileHandle(forReadingFrom: localURL) else {
-                    stopLock.lock(); feederError = "无法读取本地文件"; stopLock.unlock()
-                    try? feed.close()
-                    if sshProc.isRunning { sshProc.terminate() }
+                let session: SSHSession
+                do { session = try SSHSessionPool.shared.dedicated(conn) }
+                catch {
+                    cont.resume(returning: .failed((error as? SSHSession.SSHError)?.message ?? "无法连接"))
                     return
                 }
+                defer { session.close() }
+                guard let input = try? FileHandle(forReadingFrom: localURL) else {
+                    cont.resume(returning: .failed("无法读取本地文件")); return
+                }
+                defer { try? input.close() }
                 if startOffset > 0 { try? input.seek(toOffset: UInt64(startOffset)) }
                 var sent = startOffset
                 control.setSent(sent)
-                while true {
-                    let sig = control.signal
-                    if sig == .cancel || sig == .pause {
-                        stopLock.lock(); if sig == .cancel { cancelled = true } else { paused = true }; stopLock.unlock(); break
+
+                var reason = 0   // 0=正常 1=取消 2=暂停 3=读错误
+                let pull: (UnsafeMutablePointer<CChar>, Int32) -> Int32 = { buf, cap in
+                    switch control.signal {
+                    case .cancel: reason = 1; return -1
+                    case .pause:  reason = 2; return -1
+                    case .run:    break
                     }
+                    let want = min(Int(cap), 256 * 1024)
                     let chunk: Data
                     do {
-                        guard let c = try input.read(upToCount: 256 * 1024), !c.isEmpty else {
-                            stopLock.lock(); hitEOF = true; stopLock.unlock(); break
-                        }
+                        guard let c = try input.read(upToCount: want), !c.isEmpty else { return 0 }  // EOF
                         chunk = c
-                    } catch {
-                        stopLock.lock(); feederError = "读取本地文件出错"; stopLock.unlock(); break
-                    }
-                    do { try feed.write(contentsOf: chunk) }
-                    catch {
-                        stopLock.lock(); if !cancelled { feederError = "连接中断" }; stopLock.unlock(); break
-                    }
-                    sent += Int64(chunk.count)
+                    } catch { reason = 3; return -1 }
+                    let count = chunk.count
+                    _ = chunk.withUnsafeBytes { memcpy(buf, $0.baseAddress, count) }
+                    sent += Int64(count)
                     control.setSent(sent)
+                    return Int32(count)
                 }
-                try? input.close()
-                try? feed.close()   // 关 ssh stdin → 远端 cat 收 EOF 落地 → ssh 退出
-                let sig = control.signal
-                if (sig == .cancel || sig == .pause), sshProc.isRunning { sshProc.terminate() }
+
+                let outcome: UploadOutcome
+                do {
+                    let r = try session.execUpload(remoteCmd, pull: pull)
+                    if reason == 1 { outcome = .cancelled }
+                    else if reason == 2 { outcome = .paused }                 // 保留远端 .part 供续传
+                    else if reason == 3 { outcome = .failed("读取本地文件出错") }
+                    else if r.rc == 0 && r.exitCode == 0 { outcome = .completed }
+                    else { outcome = .failed("上传中断（退出码 \(r.exitCode)）") }
+                } catch {
+                    outcome = .failed((error as? SSHSession.SSHError)?.message ?? "连接中断")
+                }
+                cont.resume(returning: outcome)
             }
         }
     }
@@ -622,7 +544,7 @@ final class RemoteFS {
             await s.closeHandle(h)
         } catch { await s.closeHandle(h); throw error }
         if let perm = existing?.permissions { _ = try? await s.setPermissions(tmp, perm) }
-        if await s.supportsPosixRename {
+        if s.supportsPosixRename {
             try await s.posixRename(from: tmp, to: path)
         } else {
             do { try await s.rename(from: tmp, to: path) }
@@ -796,15 +718,11 @@ final class RemoteFS {
     }
 
     /// 断开该主机的 ControlMaster 复用主连接（文件浏览的底层连接）。
+    /// 关闭该主机在 libssh2 会话池中的空闲暖连接（替代旧 ControlMaster 的 `ssh -O exit`）：
+    /// 主机已无任何标签 / 网络切换时调用，及时释放复用连接、回收 socket 与远端进程。
+    /// 只关池内空闲连接；借出中（run 进行中）的不受影响。SFTP 用各实例自己的 dedicated 连接，另由 shutdown 回收。
     func closeMaster() {
-        ensureControlDir()
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        proc.arguments = ssh.sshArguments(multiplex: true) + ["-O", "exit"]
-        proc.environment = ProcessInfo.processInfo.environment
-        proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
-        try? proc.run()
+        SSHSessionPool.shared.closeHost(ssh)
     }
 
     /// 登录用户的家目录绝对路径。
@@ -925,11 +843,6 @@ final class RemoteFS {
 
     private func join(_ base: String, _ name: String) -> String {
         base == "/" ? "/" + name : base + "/" + name
-    }
-
-    private func ensureControlDir() {
-        let dir = NSHomeDirectory() + "/.termo/cm"
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     }
 }
 

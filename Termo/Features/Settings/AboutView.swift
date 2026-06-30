@@ -23,7 +23,7 @@ struct AboutContent: View {
             linkLine("GitHub", "github.com/icloudza/termo", url: "https://github.com/icloudza/termo")
             infoLine("终端引擎", value: "SwiftTerm 1.13")
             infoLine("渲染", value: "CoreText / AppKit")
-            infoLine("平台", value: "macOS 13+")
+            infoLine("平台", value: "macOS 14+")
             infoLine("架构", value: "Apple Silicon")
         }
         .padding(20)

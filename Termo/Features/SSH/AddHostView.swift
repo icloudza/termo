@@ -160,7 +160,12 @@ struct AddHostView: View {
         panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh")
         panel.prompt = "选择"
         if panel.runModal() == .OK, let url = panel.url {
-            draft.keyPath = url.path
+            if AppEnv.isMAS {
+                // 沙盒下不能长期持有容器外路径 → 选中即导入密钥库，改用 keyId。
+                if let key = model.importKey(from: url) { draft.keyId = key.id; draft.keyPath = "" }
+            } else {
+                draft.keyPath = url.path
+            }
         }
     }
 
@@ -206,9 +211,14 @@ struct AddHostView: View {
                 }
                 if draft.keyId.isEmpty {
                     labeled("私钥文件") {
-                        HStack(spacing: 8) {
-                            ThemedTextField(placeholder: "~/.ssh/id_ed25519", text: $draft.keyPath)
-                            SecondaryButton(title: "选择…") { chooseKeyFile() }
+                        if AppEnv.isMAS {
+                            // 沙盒下不接受手填路径（容器外读不到）：选文件即导入密钥库。
+                            SecondaryButton(title: "选择文件并导入密钥库…") { chooseKeyFile() }
+                        } else {
+                            HStack(spacing: 8) {
+                                ThemedTextField(placeholder: "~/.ssh/id_ed25519", text: $draft.keyPath)
+                                SecondaryButton(title: "选择…") { chooseKeyFile() }
+                            }
                         }
                     }
                 }

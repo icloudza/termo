@@ -1,4 +1,75 @@
 import SwiftUI
+import AppKit
+
+private struct TruncWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// 单行文本：内容溢出被截断时整段可点击 → 弹出可复制的完整内容预览；未截断则不可点击。
+/// 用于端口转发失败原因等可能很长的单行信息。
+struct TruncatableText: View {
+    let text: String
+    var fontSize: CGFloat = 11
+    var color: Color = Pal.red
+
+    @State private var available: CGFloat = 0
+    @State private var showPreview = false
+    @State private var copied = false
+
+    /// 实测文本全宽 > 实际可用宽 ⇒ 被截断。
+    private var isTruncated: Bool {
+        guard available > 0 else { return false }
+        let w = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: fontSize)]).width
+        return w > available + 1
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: fontSize))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .background(GeometryReader { g in
+                Color.clear.preference(key: TruncWidthKey.self, value: g.size.width)
+            })
+            .onPreferenceChange(TruncWidthKey.self) { available = $0 }
+            .contentShape(Rectangle())
+            .onTapGesture { if isTruncated { showPreview = true } }
+            .pointerCursor(isTruncated)
+            .help(isTruncated ? "点击查看完整内容（可复制）" : "")
+            .popover(isPresented: $showPreview, arrowEdge: .bottom) { preview }
+    }
+
+    private var preview: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(text)
+                .font(.system(size: 12, design: .monospaced)).foregroundStyle(Pal.text)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 360, alignment: .leading)
+            HStack {
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 11))
+                        Text(copied ? "已复制" : "复制").font(.system(size: 12))
+                    }
+                    .foregroundStyle(copied ? Pal.green : Pal.mauve)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background((copied ? Pal.green : Pal.mauve).opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).pointerCursor()
+            }
+        }
+        .padding(14).frame(width: 380)
+    }
+}
 
 /// 自定义分段控件，风格统一、主题自适应。
 struct SegmentedControl<T: Hashable>: View {

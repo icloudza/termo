@@ -14,7 +14,7 @@ struct PendingHostKey: Identifiable {
 // 在线探测的并发队列与上限（最多 6 个并发 TCP 探测，控制线程/CPU，主机多时不会线程爆炸）。
 // 置于文件作用域而非 @MainActor 的 AppModel 内：DispatchQueue/Semaphore 本身线程安全且非 actor 隔离，
 // 可在后台 Sendable 闭包里直接使用，不触发「主actor隔离静态属性不可在 Sendable 闭包引用」告警。
-private let reachQueue = DispatchQueue(label: "termo.reach", attributes: .concurrent)
+private let reachQueue = DispatchQueue(label: "termo.reach", qos: .utility, attributes: .concurrent)
 private let reachLimit = DispatchSemaphore(value: 6)
 
 /// 承载「新窗口」打开的 RDP 远程桌面：独立 NSWindow + RDPSessionView，默认进入全屏。
@@ -316,10 +316,13 @@ final class AppModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true   // ~/.ssh 下私钥多为隐藏
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        importKey(from: url)
+        _ = importKey(from: url)
     }
 
-    private func importKey(from url: URL) {
+    /// 从文件导入私钥到密钥库（Keychain + 元数据），返回新建的密钥。
+    /// MAS 沙盒下：AddHostView 选私钥时调用本方法，把容器外文件导入库（改用 keyId），规避沙盒读路径限制。
+    @discardableResult
+    func importKey(from url: URL) -> SSHKey? {
         do {
             let pem = try String(contentsOf: url, encoding: .utf8)
             let info = try KeyTools.importInfo(privatePath: url.path)
@@ -330,8 +333,10 @@ final class AppModel: ObservableObject {
             KeyKeychain.set(key.id, pem)
             sshKeys.append(key)
             KeyStore.save(sshKeys)
+            return key
         } catch {
             keyOpError = (error as? KeyError)?.errorDescription ?? error.localizedDescription
+            return nil
         }
     }
 
@@ -448,7 +453,9 @@ final class AppModel: ObservableObject {
             snippetNotice = "请先打开并切到一个终端，再运行片段。"
             return
         }
-        tv.send(txt: run ? text + "\n" : text)
+        let line = run ? text + "\n" : text
+        // SSH 终端经 libssh2 驱动注入；本地终端走 LocalProcessTerminalView 自身。
+        if let driver = termDrivers[id] { driver.sendText(line) } else { tv.send(txt: line) }
     }
 
     // ---------- 会话历史 ----------
@@ -781,33 +788,13 @@ final class AppModel: ObservableObject {
         probingHosts.insert(host.id)
         let id = host.id
 
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        proc.arguments = ssh.sshArguments(ephemeralKnownHosts: true) + ["-o", "BatchMode=no", Self.probeScript]
-        var env = ProcessInfo.processInfo.environment
-        if ssh.needsAskpass, let ap = SSHAskpass.envVars(password: ssh.password) {
-            for (k, v) in ap { env[k] = v }
-        }
-        proc.environment = env
-
-        let outPipe = Pipe()
-        proc.standardOutput = outPipe
-        proc.standardError = Pipe()   // 丢弃 stderr
-        proc.terminationHandler = { [weak self] _ in
-            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-            let text = String(data: data, encoding: .utf8) ?? ""
-            Task { @MainActor in self?.applyProbe(id: id, output: text) }
-        }
-
-        do {
-            try proc.run()
-        } catch {
-            probingHosts.remove(id)
-            return
-        }
-        // 安全超时：20s 还没结束就杀掉，避免卡在认证
-        DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
-            if proc.isRunning { proc.terminate() }
+        // [SSH 迁移] 进程内 libssh2（替换原来的 spawn /usr/bin/ssh）：经会话池借暖连接→exec 探测脚本→解析。
+        // probeScript / applyProbe 完全不变，只换传输层。会话池保活连接，下次探测复用、不重复认证（替代 ControlMaster）。
+        let conn = ssh
+        let script = Self.probeScript
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let output = (try? SSHSessionPool.shared.withSession(conn) { try $0.exec(script).output }) ?? ""
+            Task { @MainActor in self?.applyProbe(id: id, output: output) }
         }
     }
 
@@ -999,6 +986,7 @@ final class AppModel: ObservableObject {
     }
 
     private var terminals: [Int: LocalProcessTerminalView] = [:]
+    private var termDrivers: [Int: SSHTerminalDriver] = [:]   // SSH 终端的 libssh2 驱动（按标签）
     private var rdpSessions: [Int: RDPSession] = [:]
     private var nextTabId = 1
     private var themeCancellable: AnyCancellable?
@@ -1242,23 +1230,18 @@ final class AppModel: ObservableObject {
         applyTheme(to: tv)
         applyTerminalConfig(to: tv)
 
-        // 会话代理：cwd 跟踪（仅 SSH 主机）+ 进程退出（exit / 掉线）回调，先于启动设好以免漏掉即时退出
-        let d = TerminalSessionDelegate()
-        if hostId != nil {   // 仅 SSH 主机跟踪 cwd（用 tabId 定位，无需绑定 hostId 本身）
-            d.onCwd = { [weak self] path in
-                Task { @MainActor in self?.handleTerminalCwd(tabId: tabId, path: path) }
-            }
-        }
-        d.onTerminated = { [weak self] code in
-            Task { @MainActor in self?.handleTerminalExit(tabId: tabId, hostId: hostId, exitCode: code) }
-        }
-        tv.processDelegate = d
-        termDelegates[tabId] = d
-
         if let ssh {
-            startTerminalProcess(tv: tv, ssh: ssh)
+            // SSH 终端：libssh2 驱动接管输入/输出/cwd/退出（见 startTerminalProcess），不起本地子进程。
+            startTerminalProcess(tv: tv, ssh: ssh, tabId: tabId, hostId: hostId)
             terminalConns[tabId] = TerminalConn()   // 仅 SSH 终端支持断线重连
         } else {
+            // 本地终端：仍走 LocalProcessTerminalView 的本地 shell 子进程（仅 Dev ID 构建启用）。
+            let d = TerminalSessionDelegate()
+            d.onTerminated = { [weak self] code in
+                Task { @MainActor in self?.handleTerminalExit(tabId: tabId, hostId: nil, exitCode: code) }
+            }
+            tv.processDelegate = d
+            termDelegates[tabId] = d
             var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
             let lang = ProcessInfo.processInfo.environment["LANG"] ?? ""
             if !lang.uppercased().contains("UTF-8") { env.append("LANG=en_US.UTF-8") }
@@ -1270,21 +1253,22 @@ final class AppModel: ObservableObject {
         return tv
     }
 
-    /// 在给定终端视图上（重新）发起 SSH 连接：构建参数与 askpass 环境、启动 ssh、注入 OSC 7 钩子与初始命令。
-    /// 重连复用同一终端视图，滚动历史得以保留。先 terminate 一次：SwiftTerm 的 startProcess 不会清理上一个
-    /// 进程的 DispatchIO/childMonitor，重入会泄漏文件描述符；terminate 做有序拆除（且不回调 processTerminated），
-    /// 终端缓冲区不受影响。首次连接时进程未启动，terminate 为无害空操作。
-    private func startTerminalProcess(tv: LocalProcessTerminalView, ssh: SSHConnection) {
-        tv.process.terminate()
-        var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
-        let lang = ProcessInfo.processInfo.environment["LANG"] ?? ""
-        if !lang.uppercased().contains("UTF-8") { env.append("LANG=en_US.UTF-8") }
-        // 密码用 OpenSSH 内置 SSH_ASKPASS 喂入（无需 sshpass）
-        if ssh.needsAskpass, let askpass = SSHAskpass.envVars(password: ssh.password) {
-            for (k, v) in askpass { env.append("\(k)=\(v)") }
+    /// 在给定终端视图上（重新）发起 SSH 连接：用 libssh2 驱动接管输入/输出/cwd/退出，注入 OSC 7 钩子与初始命令。
+    /// 重连复用同一终端视图，滚动历史得以保留——先关旧驱动（停 pump + 释放通道与会话）再建新驱动。
+    private func startTerminalProcess(tv: LocalProcessTerminalView, ssh: SSHConnection, tabId: Int, hostId: String?) {
+        termDrivers[tabId]?.onTerminated = nil      // 旧驱动退出回调失效，避免拆除时误触重连
+        termDrivers[tabId]?.close()
+        let term = tv.getTerminal()
+        let driver = SSHTerminalDriver(tv: tv, ssh: ssh)
+        driver.onCwd = { [weak self] path in
+            Task { @MainActor in self?.handleTerminalCwd(tabId: tabId, path: path) }
         }
-        tv.startProcess(executable: "/usr/bin/ssh", args: ssh.sshArguments(), environment: env)
-        scheduleInitialCommands(tv, ssh: ssh)
+        driver.onTerminated = { [weak self] code in
+            Task { @MainActor in self?.handleTerminalExit(tabId: tabId, hostId: hostId, exitCode: code) }
+        }
+        tv.terminalDelegate = driver                // 接管输入/resize/cwd（替代 LocalProcessTerminalView 自身）
+        termDrivers[tabId] = driver
+        driver.connect(cols: term.cols, rows: term.rows, initialLine: initialCommandLine(ssh))
     }
 
     // ---------- 终端断线重连 ----------
@@ -1341,7 +1325,7 @@ final class AppModel: ObservableObject {
               NetworkMonitor.shared.isOnline else { return }
         conn.attempt += 1
         let gen = conn.dropGen
-        startTerminalProcess(tv: tv, ssh: ssh)   // .ask 的本会话密码已在 host.ssh 内，重连复用
+        startTerminalProcess(tv: tv, ssh: ssh, tabId: tabId, hostId: hostId)   // .ask 本会话密码已在 host.ssh 内，重连复用
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
             guard let self, let c = self.terminalConns[tabId],
                   c.phase == .dropped, c.dropGen == gen else { return }
@@ -1376,29 +1360,25 @@ final class AppModel: ObservableObject {
         didApplyStartup = true
         switch AppSettings.shared.startupBehavior {
         case .terminal:
-            openLocalTerminal()
+            if AppEnv.localTerminalEnabled { openLocalTerminal() }   // MAS 沙盒下无本地终端 → 落欢迎页
         case .welcome, .restore:
             // 欢迎页为默认（标签为空时即显示）；会话恢复待持久化功能后实现
             break
         }
     }
 
-    private func scheduleInitialCommands(_ tv: LocalProcessTerminalView, ssh: SSHConnection) {
+    /// 构造 SSH 登录后注入的命令行：OSC 7 钩子（cwd 跟踪）+ 清屏隐藏回显（banner 仍留 scrollback）
+    /// + 可选 cd / 初始命令（输出落在清屏后的干净界面）。由驱动在登录后延时发送。
+    private func initialCommandLine(_ ssh: SSHConnection) -> String {
         let path = ssh.defaultPath.trimmingCharacters(in: .whitespaces)
         let cmd = ssh.initialCommand.trimmingCharacters(in: .whitespaces)
-        // 总是注入 OSC 7 钩子（用于 cwd 跟踪）；随后清屏隐藏该命令的回显（banner 仍留在 scrollback，
-        // 向上滚动可见），再附加可选的 cd / 初始命令（其输出落在清屏后的干净界面上）。
         var tail = ""
         if !path.isEmpty && path != "~" { tail += "cd \(path)" }
         if !cmd.isEmpty { tail += (tail.isEmpty ? "" : " && ") + cmd }
         var line = Self.osc7Hook + "; printf '\\033[2J\\033[H'"
         if !tail.isEmpty { line += "; " + tail }
         line += "\n"
-        // 等待 SSH 登录完成后再发送
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak tv] in
-            guard let tv else { return }
-            tv.send(txt: line)
-        }
+        return line
     }
 
     // ---------- 标签操作 ----------
@@ -1672,8 +1652,9 @@ final class AppModel: ObservableObject {
         let pf = await Task.detached { HostKeyVerifier.preflight(host: h, port: p) }.value
         switch pf {
         case .known, .scanFailed:
-            return true   // 已知放行；扫描失败交给 ssh 自己报错
-        case .prompt(let info):
+            return true   // 已知放行；扫描失败交给后续实际连接报错
+        case .prompt(let info), .changed(let info):
+            // 未知主机 / 已变更（info.changed=true 时弹窗醒目警示）→ 让用户核对指纹后决定。
             let decision: HostKeyDecision = await withCheckedContinuation { cont in
                 pendingHostKey = PendingHostKey(info: info) { cont.resume(returning: $0) }
             }
@@ -2370,14 +2351,16 @@ final class AppModel: ObservableObject {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         let closedHostId = tabs[idx].hostId
         tabs.remove(at: idx)
-        // 先清空代理回调，避免 terminate 触发的 processTerminated 再次回调（重入）
+        // 先清空代理回调，避免拆除触发的退出回调再次回调（重入 / 误触重连）
         if let d = termDelegates[id] { d.onTerminated = nil; d.onCwd = nil }
-        // 终止子进程（SIGTERM）并关闭 PTY fd，避免孤儿 ssh/shell 进程与 fd 泄漏
+        if let drv = termDrivers[id] { drv.onTerminated = nil; drv.onCwd = nil; drv.close() }   // SSH 驱动：停 pump + 关连接
+        // 终止本地子进程（SIGTERM）并关闭 PTY fd；SSH 终端无子进程，terminate 为无害空操作
         if let tv = terminals[id] {
             tv.process.terminate()
         }
         terminals.removeValue(forKey: id)
         termDelegates.removeValue(forKey: id)
+        termDrivers.removeValue(forKey: id)
         // 取消该标签未完成的文件操作并释放浏览/树状态（按标签独立，关即释放）
         browserStates[id]?.cancel()
         browserStates.removeValue(forKey: id)

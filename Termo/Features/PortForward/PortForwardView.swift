@@ -233,7 +233,7 @@ private struct ForwardRow: View {
                         .font(.system(size: 11, design: .monospaced)).foregroundStyle(Pal.subtext)
                         .lineLimit(1).truncationMode(.middle)
                     if case .failed(let reason) = status {
-                        Text("· \(reason)").font(.system(size: 11)).foregroundStyle(Pal.red).lineLimit(1)
+                        TruncatableText(text: "· \(reason)", color: Pal.red)
                     }
                 }
             }

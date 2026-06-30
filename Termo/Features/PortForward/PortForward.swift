@@ -59,17 +59,6 @@ struct ForwardRule: Identifiable, Codable, Hashable {
         destPort = try c.decodeIfPresent(Int.self, forKey: .destPort) ?? 0
     }
 
-    /// 传给 ssh 的转发参数（作为独立 argv，不经 shell，无注入风险）。
-    var sshForwardFlags: [String] {
-        let bind = bindAddress.trimmingCharacters(in: .whitespaces)
-        let prefix = bind.isEmpty ? "" : "\(bind):"
-        switch kind {
-        case .local:   return ["-L", "\(prefix)\(listenPort):\(destHost):\(destPort)"]
-        case .remote:  return ["-R", "\(prefix)\(listenPort):\(destHost):\(destPort)"]
-        case .dynamic: return ["-D", "\(prefix)\(listenPort)"]
-        }
-    }
-
     /// 列表里展示的 from → to 摘要。
     var summary: String {
         let bind = bindAddress.isEmpty ? "127.0.0.1" : bindAddress
@@ -91,19 +80,24 @@ struct ForwardRule: Identifiable, Codable, Hashable {
     }
 }
 
-/// 进程级登记表：记录所有存活的转发子进程，供 App 退出时统一清理。
-/// ssh -N 不写 stdout，不会像监控进程那样随父进程死亡触发 SIGPIPE 自然退出，必须显式终止以免残留。
+/// 进程级登记表：记录所有存活的 libssh2 转发隧道的关闭动作，供 App 退出时统一清理（释放 -R 的服务器端监听）。
 /// 用锁保护，可在任意线程（含退出通知的同步回调）安全调用，规避 MainActor 隔离与 macOS 14 才有的 assumeIsolated。
+/// 注：libssh2 转发是进程内线程+socket，随进程死亡自动回收；本表主要做优雅收尾。
 final class ForwardProcessRegistry: @unchecked Sendable {
     static let shared = ForwardProcessRegistry()
     private let lock = NSLock()
-    private var procs: [ObjectIdentifier: Process] = [:]
+    private var items: [Int: () -> Void] = [:]
+    private var nextId = 0
 
-    func register(_ p: Process) { lock.lock(); procs[ObjectIdentifier(p)] = p; lock.unlock() }
-    func unregister(_ p: Process) { lock.lock(); procs[ObjectIdentifier(p)] = nil; lock.unlock() }
+    /// 登记一个关闭动作，返回句柄。
+    func register(_ close: @escaping () -> Void) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        let id = nextId; nextId += 1; items[id] = close; return id
+    }
+    func unregister(_ id: Int) { lock.lock(); items[id] = nil; lock.unlock() }
     func terminateAll() {
-        lock.lock(); let all = Array(procs.values); procs.removeAll(); lock.unlock()
-        for p in all where p.isRunning { p.terminate() }
+        lock.lock(); let all = Array(items.values); items.removeAll(); lock.unlock()
+        for close in all { close() }
     }
 }
 
@@ -121,9 +115,11 @@ final class ForwardManager: ObservableObject {
 
     private let ssh: SSHConnection
     @Published private(set) var statuses: [UUID: RuleStatus] = [:]
-    private var procs: [UUID: Process] = [:]
-    private var graceWork: [UUID: DispatchWorkItem] = [:]
-    private var stderrBuf: [UUID: String] = [:]
+    // [SSH 迁移] 每条隧道 = 一条 dedicated libssh2 会话 + 一个 C 层 pump（TermoSSHForward*）。
+    private var sessions: [UUID: SSHSession] = [:]
+    private var forwards: [UUID: OpaquePointer] = [:]        // TermoSSHForward*
+    private var boxes: [UUID: UnsafeMutableRawPointer] = [:] // on_state 回调载体（StateBox 经 Unmanaged）
+    private var regIds: [UUID: Int] = [:]                    // 退出登记表句柄
 
     // 看门狗状态：intended = 用户期望保持运行的规则；startedRules 留存其配置以便自动重启；
     // failCount 驱动退避；restartWork 记录已排程的重启（去重，避免叠加）。
@@ -132,13 +128,17 @@ final class ForwardManager: ObservableObject {
     private var failCount: [UUID: Int] = [:]
     private var restartWork: [UUID: DispatchWorkItem] = [:]
 
-    // 宽限期：进程存活超过此时长仍未退出，视为转发已建立。配合 ExitOnForwardFailure，
-    // 端口被占用 / 转发被拒等失败会让 ssh 提前退出，从而在宽限期内被判为失败。
-    private static let graceSeconds: TimeInterval = 1.2
-    // 自动重启退避：base * 2^失败次数，封顶 cap。短暂网络抖动由 ssh 自带 ServerAliveInterval 容忍，
-    // 进程真正退出后才走重启；离线时不重启（等网络恢复回调统一拉起），避免抖动期反复重连。
+    // 自动重启退避：base * 2^失败次数，封顶 cap。离线时不重启（等网络恢复回调统一拉起）。
     private static let backoffBase: TimeInterval = 2
     private static let backoffCap: TimeInterval = 30
+    // 致命失败（重试无益，需用户改配置/释放端口）：看门狗不自动重启。
+    private static let fatalSubstrings = ["端口已被占用", "认证", "主机密钥", "转发请求被拒绝", "主机未配置"]
+
+    /// on_state(ok=0) 异步断开回调的载体。
+    private final class StateBox {
+        let cb: (String) -> Void
+        init(_ cb: @escaping (String) -> Void) { self.cb = cb }
+    }
 
     init(ssh: SSHConnection) { self.ssh = ssh }
 
@@ -156,68 +156,98 @@ final class ForwardManager: ObservableObject {
         launch(rule)
     }
 
-    /// 拉起一条隧道的子进程（start 与自动重启共用；不改 intended/退避）。
+    /// 拉起一条隧道（start 与自动重启共用；不改 intended/退避）：后台建 dedicated 会话 + 开 C 层转发。
     private func launch(_ rule: ForwardRule) {
-        guard procs[rule.id] == nil else { return }
+        guard forwards[rule.id] == nil, sessions[rule.id] == nil else { return }
         guard NetworkMonitor.shared.isOnline else { statuses[rule.id] = .failed("等待网络"); return }
         guard !ssh.host.isEmpty else { statuses[rule.id] = .failed("主机未配置"); return }
 
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        // -N 只建隧道不开 shell；ExitOnForwardFailure 让转发建立失败时 ssh 立即退出（而非空连着）。
-        proc.arguments = ssh.sshArguments()
-            + ["-N", "-o", "ExitOnForwardFailure=yes", "-o", "BatchMode=no"]
-            + rule.sshForwardFlags
-        var env = ProcessInfo.processInfo.environment
-        if ssh.needsAskpass, let ap = SSHAskpass.envVars(password: ssh.password) {
-            for (k, v) in ap { env[k] = v }
-        }
-        proc.environment = env
+        statuses[rule.id] = .starting
+        let conn = ssh
+        let id = rule.id
+        let kind: Int32 = rule.kind == .local ? 0 : (rule.kind == .remote ? 1 : 2)
+        let (bind, lport, dhost, dport) = (rule.bindAddress, rule.listenPort, rule.destHost, rule.destPort)
 
-        let errPipe = Pipe()
-        proc.standardError = errPipe
-        proc.standardOutput = Pipe()
-        stderrBuf[rule.id] = ""
-        errPipe.fileHandleForReading.readabilityHandler = { [weak self] fh in
-            let d = fh.availableData
-            if d.isEmpty { fh.readabilityHandler = nil; return }
-            guard let s = String(data: d, encoding: .utf8) else { return }
-            Task { @MainActor in self?.stderrBuf[rule.id, default: ""] += s }
-        }
-        proc.terminationHandler = { [weak self] _ in
-            Task { @MainActor in self?.handleExit(rule.id) }
-        }
-
-        do {
-            try proc.run()
-            procs[rule.id] = proc
-            ForwardProcessRegistry.shared.register(proc)
-            statuses[rule.id] = .starting
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.graceWork[rule.id] = nil
-                if self.procs[rule.id]?.isRunning == true {
-                    self.statuses[rule.id] = .active
-                    self.failCount[rule.id] = 0   // 稳定建立即清零退避
-                }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let a = conn.libssh2Auth
+            let session: SSHSession
+            do {
+                session = try SSHSession.connect(host: conn.host, port: conn.port, user: conn.user,
+                                                 password: a.password, keyPath: a.keyPath, keyPassphrase: a.keyPassphrase)
+            } catch {
+                let msg = (error as? SSHSession.SSHError)?.message ?? "连接失败"
+                Task { @MainActor in self?.onFailure(id, reason: msg) }
+                return
             }
-            graceWork[rule.id] = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.graceSeconds, execute: work)
-        } catch {
-            statuses[rule.id] = .failed("启动失败")
+            guard let raw = session.rawHandle else {
+                session.close()
+                Task { @MainActor in self?.onFailure(id, reason: "连接失败") }
+                return
+            }
+            let box = Unmanaged.passRetained(StateBox { msg in
+                Task { @MainActor in self?.onDropped(id, reason: msg) }
+            }).toOpaque()
+            var err = [CChar](repeating: 0, count: 256)
+            guard let fwd = termo_ssh_forward_open(raw, kind, bind, Int32(lport), dhost, Int32(dport),
+                                                   { ud, ok, msg in
+                                                       guard let ud, ok == 0 else { return }
+                                                       Unmanaged<StateBox>.fromOpaque(ud).takeUnretainedValue()
+                                                           .cb(msg.map { String(cString: $0) } ?? "连接已断开")
+                                                   }, box, &err, 256) else {
+                Unmanaged<StateBox>.fromOpaque(box).release()
+                session.close()
+                let reason = String(cString: err)
+                Task { @MainActor in self?.onFailure(id, reason: reason) }
+                return
+            }
+            Task { @MainActor in self?.onEstablished(id, session: session, forward: fwd, box: box) }
         }
     }
 
-    /// 终止子进程并清理其登记，但不改 intended/退避（供 stop 与网络重连复用）。
-    private func teardown(_ id: UUID) {
-        graceWork[id]?.cancel(); graceWork[id] = nil
-        if let p = procs[id] {
-            p.terminationHandler = nil   // 主动终止，不触发失败/重启判定
-            (p.standardError as? Pipe)?.fileHandleForReading.readabilityHandler = nil
-            ForwardProcessRegistry.shared.unregister(p)
-            if p.isRunning { p.terminate() }
+    /// 后台建立成功：登记并标记 active（若期间已被 stop，则就地拆掉）。
+    private func onEstablished(_ id: UUID, session: SSHSession, forward: OpaquePointer, box: UnsafeMutableRawPointer) {
+        guard intended.contains(id) else {
+            termo_ssh_forward_close(forward); session.close()
+            Unmanaged<StateBox>.fromOpaque(box).release()
+            return
         }
-        procs[id] = nil
+        sessions[id] = session
+        forwards[id] = forward
+        boxes[id] = box
+        regIds[id] = ForwardProcessRegistry.shared.register {
+            termo_ssh_forward_close(forward); session.close()
+        }
+        statuses[id] = .active
+        failCount[id] = 0
+    }
+
+    /// 建立失败（连接/认证/监听）：标记失败；致命则不重试，瞬时则退避重启。
+    private func onFailure(_ id: UUID, reason: String) {
+        statuses[id] = .failed(reason)
+        guard intended.contains(id) else { return }
+        if Self.fatalSubstrings.contains(where: { reason.contains($0) }) {
+            intended.remove(id); failCount[id] = nil
+            restartWork[id]?.cancel(); restartWork[id] = nil
+        } else {
+            scheduleRestart(id)
+        }
+    }
+
+    /// 运行中异步断开（C 层 on_state 回调）：拆除并按瞬时失败重启。
+    private func onDropped(_ id: UUID, reason: String) {
+        guard sessions[id] != nil else { return }   // 已被 stop/teardown → 忽略
+        teardown(id)
+        statuses[id] = .failed(reason.isEmpty ? "连接已断开" : reason)
+        guard intended.contains(id) else { return }
+        scheduleRestart(id)
+    }
+
+    /// 关闭转发 + 会话并清理登记，但不改 intended/退避（供 stop 与网络重连复用）。
+    private func teardown(_ id: UUID) {
+        if let regId = regIds[id] { ForwardProcessRegistry.shared.unregister(regId); regIds[id] = nil }
+        if let fwd = forwards[id] { termo_ssh_forward_close(fwd); forwards[id] = nil }   // 停 pump（join）后无更多回调
+        if let box = boxes[id] { Unmanaged<StateBox>.fromOpaque(box).release(); boxes[id] = nil }
+        if let s = sessions[id] { s.close(); sessions[id] = nil }
     }
 
     /// 用户主动停止：取消期望、清退避与待重启，然后终止。
@@ -229,7 +259,7 @@ final class ForwardManager: ObservableObject {
         statuses[id] = .stopped
     }
 
-    func stopAll() { for id in Set(procs.keys).union(intended) { stop(id) } }
+    func stopAll() { for id in Set(forwards.keys).union(intended) { stop(id) } }
 
     /// 网络切换：离线时取消待重启等待恢复；恢复在线时清零退避、立即重连所有期望运行的隧道。
     func handleNetworkChange() {
@@ -256,27 +286,6 @@ final class ForwardManager: ObservableObject {
         }
     }
 
-    // 永久性失败：重试也无济于事（需用户改配置/释放端口），看门狗不自动重启，留待手动处理。
-    private static let fatalReasons: Set<String> = ["本地端口已被占用", "认证失败", "转发请求被拒绝", "主机无法解析"]
-
-    private func handleExit(_ id: UUID) {
-        // 主动 stop 已把 procs[id] 置 nil 且摘掉 handler；走到这里即意外退出。
-        guard let p = procs[id] else { return }
-        graceWork[id]?.cancel(); graceWork[id] = nil
-        ForwardProcessRegistry.shared.unregister(p)
-        procs[id] = nil
-        let reason = Self.failureReason(from: stderrBuf[id] ?? "")
-        statuses[id] = .failed(reason)
-        guard intended.contains(id) else { return }
-        if Self.fatalReasons.contains(reason) {
-            // 永久性失败：撤销期望运行，避免看门狗反复无效重试（用户修正后可手动重启）
-            intended.remove(id); failCount[id] = nil
-            restartWork[id]?.cancel(); restartWork[id] = nil
-        } else {
-            scheduleRestart(id)   // 瞬时失败（断线/超时）→ 退避后自动重启
-        }
-    }
-
     /// 退避后自动重启一条期望运行的隧道（去重、离线不排程）。
     private func scheduleRestart(_ id: UUID) {
         guard intended.contains(id), restartWork[id] == nil else { return }
@@ -293,18 +302,5 @@ final class ForwardManager: ObservableObject {
         }
         restartWork[id] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-    }
-
-    /// 把 ssh 的 stderr 翻译成简短中文原因。
-    static func failureReason(from err: String) -> String {
-        let e = err.lowercased()
-        if e.contains("address already in use") || e.contains("cannot listen to port") { return "本地端口已被占用" }
-        if e.contains("permission denied") { return "认证失败" }
-        if e.contains("connection refused") { return "目标拒绝连接" }
-        if e.contains("could not request") || (e.contains("forwarding") && e.contains("fail")) { return "转发请求被拒绝" }
-        if e.contains("name or service not known") || e.contains("could not resolve") { return "主机无法解析" }
-        if e.contains("timed out") || e.contains("timeout") { return "连接超时" }
-        if e.isEmpty { return "连接已断开" }
-        return "连接失败"
     }
 }

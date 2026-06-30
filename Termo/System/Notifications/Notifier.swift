@@ -1,7 +1,7 @@
 import Foundation
 import UserNotifications
 
-/// 系统通知（上传/下载完成等）。用 Apple 自带 UserNotifications 框架，无需第三方权限库。
+/// 系统通知（上传/下载完成等）用 UserNotifications 框架
 ///
 /// 仅在以 `.app` 形式运行时启用：纯可执行（Xcode 直接运行裸二进制）下 `UNUserNotificationCenter`
 /// 拿不到 bundle 代理会崩溃，故先判断是否在 .app 包内，不在则整体降级为空操作。

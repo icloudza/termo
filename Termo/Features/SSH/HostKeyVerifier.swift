@@ -4,22 +4,25 @@ import Foundation
 struct HostKeyInfo {
     let host: String
     let port: Int
-    let keyLine: String   // known_hosts 行（ssh-keyscan 输出），用于写入信任
+    let keyLine: String   // known_hosts 行（"<host|[host]:port> <keytype> <base64key>"），用于写入信任
     let sha256: String
     let md5: String
+    var changed = false    // true=已有记录但密钥变了（疑似 MITM），弹窗需醒目警示
 }
 
 enum HostKeyDecision { case cancel, once, save }
 
-/// 基于系统 ssh-keyscan / ssh-keygen 的主机密钥验证。
+/// 基于 libssh2 的主机密钥验证（替代旧的 ssh-keyscan / ssh-keygen 子进程）。
 /// known_hosts 用「真实文件 + 本次会话临时文件」两份：信任并保存写真实文件，仅本次写临时文件（重启即失效）。
+/// 实际连接的 MITM 强制由 `SSHSession.connect`（termo_ssh_open 认证前查 known_hosts、不匹配即拒）保证；
+/// 本类负责连接前的「首次未知/已变更」交互式确认。
 enum HostKeyVerifier {
-    enum Preflight { case known, prompt(HostKeyInfo), scanFailed }
+    enum Preflight { case known, prompt(HostKeyInfo), changed(HostKeyInfo), scanFailed }
 
     static var realKnownHosts: String { NSHomeDirectory() + "/.ssh/known_hosts" }
     static var sessionKnownHosts: String { NSHomeDirectory() + "/.termo/session_known_hosts" }
 
-    /// ssh 的 UserKnownHostsFile 值（两份文件，空格分隔）。
+    /// ssh 的 UserKnownHostsFile 值（两份文件，空格分隔）。供尚未迁移的 ssh 子进程路径使用。
     static func userKnownHostsArg() -> String { "\(realKnownHosts) \(sessionKnownHosts)" }
 
     /// App 启动时清空会话临时文件（让「仅本次」在重启后重新验证）。
@@ -28,14 +31,19 @@ enum HostKeyVerifier {
         try? Data().write(to: URL(fileURLWithPath: sessionKnownHosts))
     }
 
-    /// 连接前预检（阻塞，建议在后台线程调用）。
+    /// 连接前预检（阻塞，建议在后台线程调用）：只握手取主机密钥、对照 known_hosts，不认证、不发密码。
     static func preflight(host: String, port: Int) -> Preflight {
-        if isKnown(host: host, port: port) { return .known }
-        if let info = scan(host: host, port: port) { return .prompt(info) }
-        return .scanFailed
+        var scan = TermoHostKeyScan()
+        termo_ssh_scan_hostkey(host, Int32(port), realKnownHosts, sessionKnownHosts, &scan)
+        switch scan.status {
+        case 0:  return .known
+        case 1:  return info(host, port, scan).map { .prompt($0) } ?? .scanFailed
+        case 2:  return info(host, port, scan).map { var i = $0; i.changed = true; return .changed(i) } ?? .scanFailed
+        default: return .scanFailed   // -1：连接/握手失败，交给后续实际连接报错
+        }
     }
 
-    /// 写入信任：persist=true 写真实 known_hosts，false 写会话临时文件。
+    /// 写入信任：persist=true 写真实 known_hosts，false 写会话临时文件。追加单行（不重写用户文件）。
     static func trust(_ info: HostKeyInfo, persist: Bool) {
         let file = persist ? realKnownHosts : sessionKnownHosts
         ensureParentDir(file)
@@ -49,53 +57,23 @@ enum HostKeyVerifier {
 
     // MARK: - 内部
 
-    private static func isKnown(host: String, port: Int) -> Bool {
-        let spec = port == 22 ? host : "[\(host)]:\(port)"
-        for file in [realKnownHosts, sessionKnownHosts] where FileManager.default.fileExists(atPath: file) {
-            if run("/usr/bin/ssh-keygen", ["-F", spec, "-f", file]).code == 0 { return true }
+    private static func info(_ host: String, _ port: Int, _ scan: TermoHostKeyScan) -> HostKeyInfo? {
+        let line = cstr(scan.line)
+        guard !line.isEmpty else { return nil }
+        return HostKeyInfo(host: host, port: port, keyLine: line,
+                           sha256: cstr(scan.sha256), md5: cstr(scan.md5))
+    }
+
+    /// C 定长 char 数组（导入为 Swift 元组）→ String。
+    private static func cstr<T>(_ tuple: T) -> String {
+        var t = tuple
+        return withUnsafeBytes(of: &t) { raw in
+            String(cString: raw.baseAddress!.assumingMemoryBound(to: CChar.self))
         }
-        return false
-    }
-
-    private static func scan(host: String, port: Int) -> HostKeyInfo? {
-        let r = run("/usr/bin/ssh-keyscan", ["-p", String(port), "-T", "5", host])
-        let lines = (String(data: r.out, encoding: .utf8) ?? "")
-            .split(separator: "\n").map(String.init)
-            .filter { !$0.hasPrefix("#") && !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        guard !lines.isEmpty else { return nil }
-        // 偏好最强算法：ed25519 > ecdsa > 其它
-        let key = lines.first { $0.contains("ssh-ed25519") }
-            ?? lines.first { $0.contains("ecdsa-") }
-            ?? lines[0]
-
-        let tmp = NSTemporaryDirectory() + "termo_hk_\(ProcessInfo.processInfo.globallyUniqueString)"
-        defer { try? FileManager.default.removeItem(atPath: tmp) }
-        guard (try? (key + "\n").write(toFile: tmp, atomically: true, encoding: .utf8)) != nil else { return nil }
-        let sha = fingerprint(parse: run("/usr/bin/ssh-keygen", ["-lf", tmp]).out)
-        let md5 = fingerprint(parse: run("/usr/bin/ssh-keygen", ["-E", "md5", "-lf", tmp]).out)
-        guard !sha.isEmpty || !md5.isEmpty else { return nil }
-        return HostKeyInfo(host: host, port: port, keyLine: key, sha256: sha, md5: md5)
-    }
-
-    private static func fingerprint(parse data: Data) -> String {
-        let s = String(data: data, encoding: .utf8) ?? ""
-        return s.split(separator: " ").first { $0.hasPrefix("SHA256:") || $0.hasPrefix("MD5:") }
-            .map(String.init) ?? ""
     }
 
     private static func ensureParentDir(_ path: String) {
         let dir = (path as NSString).deletingLastPathComponent
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-    }
-
-    private static func run(_ exe: String, _ args: [String]) -> (out: Data, code: Int32) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: exe)
-        p.arguments = args
-        let o = Pipe(); p.standardOutput = o; p.standardError = Pipe()
-        do { try p.run() } catch { return (Data(), -1) }
-        let d = o.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        return (d, p.terminationStatus)
     }
 }

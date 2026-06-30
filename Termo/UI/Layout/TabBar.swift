@@ -27,15 +27,17 @@ struct TabBar: View {
                 .coordinateSpace(name: "tabstrip")
                 .onPreferenceChange(TabFramesKey.self) { frames = $0 }
             }
-            Button {
-                model.openLocalTerminal()
-            } label: {
-                Image(systemName: "plus").font(.system(size: 13)).foregroundStyle(Pal.overlay)
-                    .frame(width: 24, height: 34)
-                    .offset(y: -5)
+            if AppEnv.localTerminalEnabled {   // MAS 沙盒下隐藏本地终端入口
+                Button {
+                    model.openLocalTerminal()
+                } label: {
+                    Image(systemName: "plus").font(.system(size: 13)).foregroundStyle(Pal.overlay)
+                        .frame(width: 24, height: 34)
+                        .offset(y: -5)
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
             }
-            .buttonStyle(.plain)
-            .pointerCursor()
         }
         .padding(.horizontal, 8)
         .padding(.top, 10)

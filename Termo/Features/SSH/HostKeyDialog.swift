@@ -15,13 +15,21 @@ struct HostKeyDialog: View {
             VStack(alignment: .leading, spacing: 0) {
                 // 标题栏
                 HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 18)).foregroundStyle(Pal.yellow)
-                    Text("首次连接：请验证主机指纹")
+                    Image(systemName: info.changed ? "exclamationmark.shield.fill" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 18)).foregroundStyle(info.changed ? Pal.red : Pal.yellow)
+                    Text(info.changed ? "警告：主机密钥已变更" : "首次连接：请验证主机指纹")
                         .font(.system(size: 16, weight: .semibold)).foregroundStyle(Pal.text)
                     Spacer()
                 }
-                .padding(.bottom, 14)
+                .padding(.bottom, info.changed ? 10 : 14)
+
+                // 密钥变更警示：曾连接过该主机但其密钥与记录不符，可能是服务器重装/换密钥，也可能是中间人攻击。
+                if info.changed {
+                    Text("此前记录的主机密钥与当前不一致。若非你刚重装服务器或更换密钥，请勿继续——可能存在中间人攻击。")
+                        .font(.system(size: 12)).foregroundStyle(Pal.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 14)
+                }
 
                 HStack(spacing: 8) {
                     Text("目标：").font(.system(size: 13)).foregroundStyle(Pal.overlay)
