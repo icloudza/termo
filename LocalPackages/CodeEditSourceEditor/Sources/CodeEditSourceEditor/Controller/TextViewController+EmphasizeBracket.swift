@@ -93,10 +93,22 @@ extension TextViewController {
         }
         var closeCount = 0
         var index: Int?
+        // 防御性构造搜索范围。NSRange.length 桥接到 NSString 时按无符号解读：若 `limit` 落在 `from`
+        // 的错误一侧（视图重载时 visibleTextRange 可能为 .zero/陈旧 → limit 反而小于 from），
+        // `limit - from` 会是负 Int → 桥接成巨大 NSUInteger → enumerateSubstrings 越界崩溃。
+        // 故按方向取合法区间 [lo, hi)、钳到文档边界，区间退化（无可搜索内容）时直接返回 nil。
+        let docMax = textView.documentRange.max
+        let lo: Int, hi: Int
+        if reverse {
+            lo = max(0, limit)            // 反向：搜索 [limit, from)
+            hi = min(docMax, from)
+        } else {
+            lo = max(0, from)             // 前向：搜索 [from, limit)
+            hi = min(docMax, limit)
+        }
+        guard hi > lo else { return nil }
         textView.textStorage.mutableString.enumerateSubstrings(
-            in: reverse ?
-                NSRange(location: limit, length: from - limit) :
-                NSRange(location: from, length: limit - from),
+            in: NSRange(location: lo, length: hi - lo),
             options: options,
             using: { substring, range, _, stop in
                 if substring == close {

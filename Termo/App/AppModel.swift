@@ -50,8 +50,11 @@ final class RDPWindowController: NSWindowController, NSWindowDelegate {
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
-    func showFullScreen() {
+    /// 前置并显示窗口；fullscreen=true 时进入全屏（由设置「新窗口行为」决定）。
+    func present(fullscreen: Bool) {
         window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        guard fullscreen else { return }
         // 延后一拍再切全屏：紧接 makeKeyAndOrderFront 调用 toggleFullScreen 可能被忽略。
         DispatchQueue.main.async { [weak self] in
             guard let w = self?.window, !w.styleMask.contains(.fullScreen) else { return }
@@ -1566,7 +1569,7 @@ final class AppModel: ObservableObject {
         refreshRDPHosts()
     }
 
-    /// 新窗口打开：把会话放进一个独立窗口并默认进入全屏；窗口由 controller 持有（连同会话），关闭即断开。
+    /// 新窗口打开：把会话放进一个独立窗口；是否默认全屏由设置「新窗口行为」决定。窗口由 controller 持有（连同会话），关闭即断开。
     func openRDPWindow(_ session: RDPSession) {
         let c = RDPWindowController(session: session)
         c.onClose = { [weak self, weak c] in
@@ -1579,10 +1582,10 @@ final class AppModel: ObservableObject {
         rdpWindowControllers.append(c)
         recordSession(hostId: session.host.id, kind: .rdp, detail: "远程桌面（窗口）")
         refreshRDPHosts()
-        c.showFullScreen()
+        c.present(fullscreen: AppSettings.shared.rdpWindowFullscreen)
     }
 
-    /// 「每次询问」选择结果：window=true 新窗口（全屏），否则内嵌标签；remember 写入设置作为默认。
+    /// 「每次询问」选择结果：window=true 新窗口（是否全屏由设置决定），否则内嵌标签；remember 写入设置作为默认。
     func resolveRDPOpen(_ session: RDPSession, window: Bool, remember: Bool) {
         pendingRDPOpen = nil
         if remember { AppSettings.shared.rdpOpenMode = window ? .window : .embedded }
@@ -1593,6 +1596,22 @@ final class AppModel: ObservableObject {
     func cancelRDPOpen() {
         pendingRDPOpen?.disconnect()
         pendingRDPOpen = nil
+    }
+
+    /// 退出 App 前同步关闭所有 RDP 连接（内嵌标签 + 新窗口 + 连接中/待选会话），并 join 各后台线程。
+    /// 不在此处断开 = 进程退出时 FreeRDP 线程仍在跑 → 报错/卡顿/互斥。两遍：先全部发 abort（各线程并行
+    /// 收尾），再逐个 join（总耗时≈单个，不随连接数线性增长）。仅「真正退出」调用，隐藏到托盘不调用（保活）。
+    func shutdownAllRDP() {
+        let sessions = Array(rdpSessions.values) + rdpWindowControllers.map { $0.session }
+            + [connectingRDP, pendingRDPOpen].compactMap { $0 }
+        guard !sessions.isEmpty else { return }
+        for s in sessions { s.disconnect() }   // 第一遍：全部 abort + 解证书等待（不阻塞）
+        for s in sessions { s.shutdown() }      // 第二遍：逐个 join，此时各线程已在并行收尾
+        rdpSessions.removeAll()
+        rdpWindowControllers.removeAll()        // 释放窗口控制器（连同会话）；窗口由后续 terminate 流程拆除
+        connectingRDP = nil
+        pendingRDPOpen = nil
+        rdpHosts = []
     }
 
     /// 标签未开时连接所用的估算画布（≈工作区尺寸）；标签出现后 RDPSessionView 会按真实尺寸 requestResize 校正。

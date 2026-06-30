@@ -147,12 +147,26 @@ struct SettingsView: View {
                 ThemedToggle(isOn: $settings.confirmHostDelete)
             }
 
-            settingRow("远程桌面打开方式", description: "RDP 连接成功后内嵌为标签还是在新窗口（全屏）打开；「每次询问」会弹出选择且可记住") {
+            settingRow("远程桌面打开方式", description: "RDP 连接成功后内嵌为标签还是在新窗口打开；「每次询问」会弹出选择且可记住") {
                 ThemedDropdown(
                     options: RDPOpenMode.allCases.map { ($0, $0.label) },
                     selection: $settings.rdpOpenMode
                 )
                 .frame(width: 160)
+            }
+
+            if settings.rdpOpenMode == .window {
+                settingRow("新窗口行为", description: "「新窗口」打开时，新的远程桌面窗口是否默认进入全屏") {
+                    ThemedDropdown(
+                        options: [(true, "默认全屏"), (false, "不全屏")],
+                        selection: $settings.rdpWindowFullscreen
+                    )
+                    .frame(width: 160)
+                }
+            }
+
+            settingRow("远程桌面剪贴板同步", description: "RDP 连接的本地与远端剪贴板双向同步纯文本（复制粘贴互通）；关闭则两端剪贴板互不影响") {
+                ThemedToggle(isOn: $settings.rdpClipboardSync)
             }
         }
     }

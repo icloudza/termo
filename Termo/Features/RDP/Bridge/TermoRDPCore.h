@@ -29,6 +29,8 @@ typedef struct {
     void (*on_state)(void *userdata, TermoRDPState state, const char *message);
     /// 连接日志（各生命周期点上报，供连接面板「实时日志」展示）。level：0=信息 1=警告 2=错误。
     void (*on_log)(void *userdata, int level, const char *text);
+    /// 远端剪贴板文本到达（UTF-8）：上层据此写入本地剪贴板。从后台线程触发，需自行跨线程。
+    void (*on_clipboard)(void *userdata, const char *utf8_text);
     /// 证书信任校验（从后台事件循环线程**同步**调用，允许阻塞等待用户决定）。
     /// changed=0 首见证书、1 与已存指纹不一致（old_* 提供旧证书信息，否则为 NULL）。
     /// 返回：0=拒绝连接、1=接受并永久信任、2=仅本次接受。回调为 NULL 时底层默认 2（仅本次）。
@@ -60,8 +62,27 @@ void termo_rdp_mouse_button(TermoRDPHandle *handle, int button, int down, int x,
 /// 滚轮：delta 正=上滚、负=下滚（约 120/格）。
 void termo_rdp_mouse_wheel(TermoRDPHandle *handle, int delta, int x, int y);
 
+/// 修饰键抽象位（与 NSEvent 解耦，由上层翻译后传入；底层据此与上次状态 diff 发送增量）。
+typedef enum {
+    TermoRDPModShift    = 1 << 0,
+    TermoRDPModControl  = 1 << 1,
+    TermoRDPModAlt      = 1 << 2,   // ⌥ Option → 远端 Alt
+    TermoRDPModCommand  = 1 << 3,   // ⌘ Command → 远端左 Win
+    TermoRDPModCapsLock = 1 << 4,   // 锁定切换键
+} TermoRDPModMask;
+
+/// 普通按键：mac_keycode 为 macOS 虚拟键码（NSEvent.keyCode）；down=1 按下、0 抬起。
+/// 底层经 WinPR 映射 Apple keycode → Windows VK → RDP 扫描码后发送（含扩展键标志）。
+void termo_rdp_key(TermoRDPHandle *handle, int mac_keycode, int down);
+/// 修饰键状态变化：传入当前修饰键掩码（TermoRDPModMask 或运算），底层与上次比对后发送按下/抬起增量。
+void termo_rdp_modifiers(TermoRDPHandle *handle, int mod_mask);
+
 /// 动态分辨率：请求远端桌面改为 width×height（经 DisplayControl 通道；通道未就绪则忽略）。
 void termo_rdp_resize(TermoRDPHandle *handle, int width, int height);
+
+/// 本地剪贴板文本变化（UTF-8）：向服务器广播「本地有文本」（经 CLIPRDR 通道）。传 NULL/空串表示清空。
+/// 服务器随后按需取数据；通道未就绪则仅缓存，MonitorReady 后再广播。
+void termo_rdp_clipboard_offer_text(TermoRDPHandle *handle, const char *utf8_text);
 
 /// 请求断开（令事件循环退出，线程自然结束）。
 void termo_rdp_disconnect(TermoRDPHandle *handle);

@@ -19,8 +19,9 @@ struct HostOverview: View {
                         }
                     }
                 }
-                Text(isRDP ? "\(host.ipOrHost) · 端口 \(host.rdp?.port ?? 3389)"
-                           : "\(host.addr) · 端口 \(host.port)")
+                // 端口用 String() 包一层：Text 的 LocalizedStringKey 插值会给裸整数加千分符（20,241）。
+                Text(isRDP ? "\(host.ipOrHost) · 端口 \(String(host.rdp?.port ?? 3389))"
+                           : "\(host.addr) · 端口 \(String(host.port))")
                     .font(.system(size: 13)).foregroundStyle(Pal.subtext)
                     .privacyBlur(model.privacyMode)
                     .padding(.top, 6).padding(.bottom, 16)

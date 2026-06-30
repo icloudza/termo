@@ -4,6 +4,7 @@
 static void termo_bridge_on_state(void *userdata, TermoRDPState state, const char *message);
 static void termo_bridge_on_frame(void *userdata, const uint8_t *pixels, int width, int height, int stride, int bpp);
 static void termo_bridge_on_log(void *userdata, int level, const char *text);
+static void termo_bridge_on_clipboard(void *userdata, const char *utf8_text);
 static int termo_bridge_verify_certificate(void *userdata, const char *host, int port,
                                            const char *common_name, const char *subject,
                                            const char *issuer, const char *fingerprint, int changed,
@@ -52,6 +53,7 @@ static int termo_bridge_verify_certificate(void *userdata, const char *host, int
     cb.on_state = termo_bridge_on_state;
     cb.on_frame = termo_bridge_on_frame;
     cb.on_log = termo_bridge_on_log;
+    cb.on_clipboard = termo_bridge_on_clipboard;
     cb.verify_certificate = termo_bridge_verify_certificate;
     _handle = termo_rdp_create(cb);
     int rc = termo_rdp_connect(_handle, _host.UTF8String, _port,
@@ -67,6 +69,14 @@ static int termo_bridge_verify_certificate(void *userdata, const char *host, int
 - (void)disconnect {
     [self resolveCertificate:0];   // 若正卡在证书弹窗，按「拒绝」放行后台线程，使其能干净退出
     if (_handle) termo_rdp_disconnect(_handle);
+}
+
+- (void)shutdown {
+    [self resolveCertificate:0];   // 同上：先解开证书等待，否则后台线程仍阻塞，下面 join 会卡死
+    if (_handle) {
+        termo_rdp_free(_handle);   // abort + join 后台线程 + free：同步收尾，返回后保证无残留线程/回调
+        _handle = NULL;            // 置空后 dealloc 不再重复 free
+    }
 }
 
 // MARK: - 证书校验跨线程同步
@@ -127,6 +137,15 @@ static int termo_bridge_verify_certificate(void *userdata, const char *host, int
 - (void)sendMouseWheel:(int)delta x:(int)x y:(int)y {
     if (_handle) termo_rdp_mouse_wheel(_handle, delta, x, y);
 }
+- (void)sendKey:(int)keyCode down:(BOOL)down {
+    if (_handle) termo_rdp_key(_handle, keyCode, down ? 1 : 0);
+}
+- (void)sendModifiers:(int)mask {
+    if (_handle) termo_rdp_modifiers(_handle, mask);
+}
+- (void)offerClipboardText:(NSString *)text {
+    if (_handle) termo_rdp_clipboard_offer_text(_handle, text.UTF8String);
+}
 - (void)resizeToWidth:(int)width height:(int)height {
     if (_handle) termo_rdp_resize(_handle, width, height);
 }
@@ -173,6 +192,18 @@ static void termo_bridge_on_log(void *userdata, int level, const char *text) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([session.delegate respondsToSelector:@selector(rdpSession:didLog:level:)])
             [session.delegate rdpSession:session didLog:line level:(NSInteger)level];
+    });
+}
+
+// 剪贴板蹦床：远端文本转回主线程交给 delegate 写入本地剪贴板。
+static void termo_bridge_on_clipboard(void *userdata, const char *utf8_text) {
+    if (!utf8_text) return;
+    TermoRDPSession *session = (__bridge TermoRDPSession *)userdata;
+    NSString *text = [NSString stringWithUTF8String:utf8_text];
+    if (!text) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([session.delegate respondsToSelector:@selector(rdpSession:didReceiveClipboardText:)])
+            [session.delegate rdpSession:session didReceiveClipboardText:text];
     });
 }
 

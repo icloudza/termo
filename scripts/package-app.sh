@@ -118,10 +118,11 @@ fi
 if [ -n "$DEVID" ]; then
     section "公证 App（notarytool）"
     if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
-        step "提交 App 公证（--wait，初次可能数分钟）…"
+        step "提交 App 公证（--wait，初次比较慢，期间请勿中断）…"
         ZIP="$WORK/app.zip"; rm -f "$ZIP"
         ditto -c -k --keepParent "$APP" "$ZIP"
-        run_quiet xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+        # 不走 run_quiet：notarytool 轮询期间需把状态实时显示在终端，否则看似卡死易被误中断。
+        xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1 | tee -a "$LOG"
         xcrun stapler staple "$APP" >>"$LOG" 2>&1 \
             && { ok "App 公证 + 装订完成"; NOTARIZED=true; } \
             || die "App 装订失败（公证可能被拒，详见 $LOG）"
@@ -161,8 +162,8 @@ ok "DMG → ${DMG#$ROOT/}"
 # ── 公证 DMG（App 已公证时）──────────────────────────────────────────────────
 if [ "$NOTARIZED" = true ]; then
     section "公证 DMG"
-    step "提交 DMG 公证（--wait）…"
-    run_quiet xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+    step "提交 DMG 公证（--wait，期间请勿中断）…"
+    xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1 | tee -a "$LOG"
     xcrun stapler staple "$DMG" >>"$LOG" 2>&1 && ok "DMG 公证 + 装订完成" || die "DMG 装订失败（详见 $LOG）"
 fi
 

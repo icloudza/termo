@@ -17,7 +17,9 @@ struct RDPSessionView: View {
                     RDPMouseLayer(remoteW: img.width, remoteH: img.height,
                                   onMove: { session.sendMouseMove($0, $1) },
                                   onButton: { session.sendMouseButton($0, down: $1, x: $2, y: $3) },
-                                  onWheel: { session.sendMouseWheel($0, x: $1, y: $2) })
+                                  onWheel: { session.sendMouseWheel($0, x: $1, y: $2) },
+                                  onKey: { session.sendKey($0, down: $1) },
+                                  onFlags: { session.sendModifiers($0) })
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -70,7 +72,7 @@ struct RDPConnectingDialog: View {
     }
 }
 
-/// 连接成功后的打开方式选择弹窗：内嵌标签 还是 新窗口（全屏），可勾选记住（写入设置默认）。
+/// 连接成功后的打开方式选择弹窗：内嵌标签 还是 新窗口，可勾选记住（写入设置默认）。
 struct RDPOpenDialog: View {
     let hostName: String
     let onChoose: (_ window: Bool, _ remember: Bool) -> Void

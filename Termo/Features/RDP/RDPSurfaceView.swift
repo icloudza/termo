@@ -1,14 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// RDP 鼠标输入捕获层：透明 NSView 覆盖在远端画面之上，把本地鼠标事件映射为远端桌面像素坐标后回调。
-/// 渲染仍由上层 SwiftUI Image 负责；本层只管输入。坐标映射与 `scaledToFit` 的等比居中布局一致。
+/// RDP 输入捕获层：透明 NSView 覆盖在远端画面之上，把本地鼠标/键盘事件转成远端坐标/扫描码后回调。
+/// 渲染仍由上层 SwiftUI Image 负责；本层只管输入。鼠标坐标映射与 `scaledToFit` 的等比居中布局一致。
 struct RDPMouseLayer: NSViewRepresentable {
     let remoteW: Int
     let remoteH: Int
     let onMove: (Int, Int) -> Void
     let onButton: (Int, Bool, Int, Int) -> Void
     let onWheel: (Int, Int, Int) -> Void
+    let onKey: (Int, Bool) -> Void      // (macOS 虚拟键码, 按下)
+    let onFlags: (Int) -> Void          // 修饰键掩码（见 RDPMouseView.modMask）
 
     func makeNSView(context: Context) -> RDPMouseView { RDPMouseView() }
 
@@ -18,6 +20,8 @@ struct RDPMouseLayer: NSViewRepresentable {
         v.onMove = onMove
         v.onButton = onButton
         v.onWheel = onWheel
+        v.onKey = onKey
+        v.onFlags = onFlags
     }
 }
 
@@ -27,8 +31,17 @@ final class RDPMouseView: NSView {
     var onMove: ((Int, Int) -> Void)?
     var onButton: ((Int, Bool, Int, Int) -> Void)?
     var onWheel: ((Int, Int, Int) -> Void)?
+    var onKey: ((Int, Bool) -> Void)?
+    var onFlags: ((Int) -> Void)?
 
     override var isFlipped: Bool { true }   // 顶左原点，匹配 RDP 坐标系与上层图像布局
+
+    // 接收键盘：需成为窗口第一响应者。点击远端画面即取焦；移入窗口时也自动取焦（标签/窗口一打开即可输入）。
+    override var acceptsFirstResponder: Bool { true }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { DispatchQueue.main.async { [weak self] in self?.window?.makeFirstResponder(self) } }
+    }
 
     private var tracking: NSTrackingArea?
     override func updateTrackingAreas() {
@@ -67,7 +80,10 @@ final class RDPMouseView: NSView {
     override func mouseDragged(with e: NSEvent) { move(e) }
     override func rightMouseDragged(with e: NSEvent) { move(e) }
     override func otherMouseDragged(with e: NSEvent) { move(e) }
-    override func mouseDown(with e: NSEvent) { button(e, 0, true) }
+    override func mouseDown(with e: NSEvent) {
+        window?.makeFirstResponder(self)   // 点击画面即取键盘焦点
+        button(e, 0, true)
+    }
     override func mouseUp(with e: NSEvent) { button(e, 0, false) }
     override func rightMouseDown(with e: NSEvent) { button(e, 1, true) }
     override func rightMouseUp(with e: NSEvent) { button(e, 1, false) }
@@ -78,5 +94,30 @@ final class RDPMouseView: NSView {
         guard let (x, y) = remotePoint(e) else { return }
         let dy = e.scrollingDeltaY
         if dy != 0 { onWheel?(Int((dy * 10).rounded()), x, y) }   // 放大到 RDP 滚轮量级
+    }
+
+    // MARK: - 键盘
+    // 修饰键位需与 C 层 TermoRDPModMask 一致：Shift=1 Control=2 Alt=4 Command=8 CapsLock=16。
+    private func modMask(_ f: NSEvent.ModifierFlags) -> Int {
+        var m = 0
+        if f.contains(.shift)    { m |= 1 }
+        if f.contains(.control)  { m |= 2 }
+        if f.contains(.option)   { m |= 4 }
+        if f.contains(.command)  { m |= 8 }
+        if f.contains(.capsLock) { m |= 16 }
+        return m
+    }
+
+    // 先同步修饰键，再发按键；不调用 super 以免系统对未处理按键发出 beep。
+    override func keyDown(with e: NSEvent) {
+        onFlags?(modMask(e.modifierFlags))
+        onKey?(Int(e.keyCode), true)
+    }
+    override func keyUp(with e: NSEvent) {
+        onFlags?(modMask(e.modifierFlags))
+        onKey?(Int(e.keyCode), false)
+    }
+    override func flagsChanged(with e: NSEvent) {
+        onFlags?(modMask(e.modifierFlags))
     }
 }

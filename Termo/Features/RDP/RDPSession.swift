@@ -101,7 +101,15 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
 
     /// 请求断开；底层线程结束后经 didChangeState(.disconnected) 收尾，会话对象在本对象释放时 free。
     func disconnect() {
+        stopClipboardSync()
         session?.disconnect()
+    }
+
+    /// 同步关闭并 join 后台线程（退出 App 前用）。返回后底层线程已收尾，不会在进程退出时残留/互斥。
+    func shutdown() {
+        stopClipboardSync()
+        session?.shutdown()
+        session = nil
     }
 
     // MARK: - 鼠标输入（x/y 为远端桌面像素坐标）
@@ -118,6 +126,16 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
     func sendMouseWheel(_ delta: Int, x: Int, y: Int) {
         guard isConnected else { return }
         session?.sendMouseWheel(Int32(delta), x: Int32(x), y: Int32(y))
+    }
+
+    // MARK: - 键盘输入（keyCode=macOS 虚拟键码；mask=修饰键掩码 TermoRDPModMask）
+    func sendKey(_ keyCode: Int, down: Bool) {
+        guard isConnected else { return }
+        session?.sendKey(Int32(keyCode), down: down)
+    }
+    func sendModifiers(_ mask: Int) {
+        guard isConnected else { return }
+        session?.sendModifiers(Int32(mask))
     }
 
     // MARK: - 动态分辨率（窗口缩放自适应）
@@ -142,10 +160,58 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
     func rdpSession(_ session: TermoRDPSession, didChangeState state: Int, message: String?) {
         switch state {
         case 0: phase = .connecting
-        case 1: phase = .connected
-        case 2: phase = .disconnected
-        default: phase = .failed(message ?? "连接失败")
+        case 1: phase = .connected; startClipboardSync()
+        case 2: phase = .disconnected; stopClipboardSync()
+        default: phase = .failed(message ?? "连接失败"); stopClipboardSync()
         }
+    }
+
+    // MARK: - 剪贴板同步（双向纯文本）
+    private var pbTimer: Timer?
+    private var pbLastCount = NSPasteboard.general.changeCount
+    private var pbSuppressCount = -1   // 远端写入本地时记下该 changeCount，避免回环再广播回远端
+
+    /// 剪贴板同步是否开启（设置项，可运行中切换）。
+    private var clipboardSyncOn: Bool { AppSettings.shared.rdpClipboardSync }
+
+    /// 连接成功即开始：若开启，先把当前本地文本通告远端；再每 0.5s 轮询本地剪贴板变化（NSPasteboard 无变更通知）。
+    /// 定时器始终运行，三个动作点各自按开关门控，从而支持运行中实时开/关。
+    private func startClipboardSync() {
+        guard pbTimer == nil else { return }
+        pbLastCount = NSPasteboard.general.changeCount
+        if clipboardSyncOn, let s = NSPasteboard.general.string(forType: .string), !s.isEmpty {
+            self.session?.offerClipboardText(s)
+        }
+        let t = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.pollLocalClipboard()
+        }
+        RunLoop.main.add(t, forMode: .common)   // 拖动/滚动等跟踪模式下也轮询
+        pbTimer = t
+    }
+
+    private func stopClipboardSync() {
+        pbTimer?.invalidate()
+        pbTimer = nil
+    }
+
+    private func pollLocalClipboard() {
+        guard clipboardSyncOn else { return }
+        let pb = NSPasteboard.general
+        let count = pb.changeCount
+        guard count != pbLastCount else { return }
+        pbLastCount = count
+        if count == pbSuppressCount { return }   // 这次变化来自远端回写，不再广播回去
+        session?.offerClipboardText(pb.string(forType: .string))
+    }
+
+    /// 远端剪贴板文本 → 本地（桥已派发到主线程）。记下 changeCount 以便轮询跳过本次写入，避免回环。
+    func rdpSession(_ session: TermoRDPSession, didReceiveClipboardText text: String) {
+        guard clipboardSyncOn else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        pbSuppressCount = pb.changeCount
+        pbLastCount = pb.changeCount
     }
 
     func rdpSession(_ session: TermoRDPSession, didReceiveFrame pixels: Data,

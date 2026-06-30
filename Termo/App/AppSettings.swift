@@ -27,7 +27,7 @@ enum RDPOpenMode: String, CaseIterable, Hashable {
         switch self {
         case .ask: return "每次询问"
         case .embedded: return "内嵌标签"
-        case .window: return "新窗口（全屏）"
+        case .window: return "新窗口"
         }
     }
 }
@@ -125,6 +125,16 @@ final class AppSettings: ObservableObject {
         didSet { d.set(rdpOpenMode.rawValue, forKey: "rdpOpenMode") }
     }
 
+    // RDP 剪贴板双向同步（本地 ↔ 远端纯文本）；默认开。关闭后既不广播本地、也不接收远端剪贴板。
+    @Published var rdpClipboardSync: Bool {
+        didSet { d.set(rdpClipboardSync, forKey: "rdpClipboardSync") }
+    }
+
+    // 「新窗口」打开方式下，新 RDP 窗口是否默认进入全屏；默认开。仅 rdpOpenMode == .window 时生效。
+    @Published var rdpWindowFullscreen: Bool {
+        didSet { d.set(rdpWindowFullscreen, forKey: "rdpWindowFullscreen") }
+    }
+
     private init() {
         startupBehavior = StartupBehavior(rawValue: d.string(forKey: "startupBehavior") ?? "") ?? .welcome
         defaultShell = DefaultShell(rawValue: d.string(forKey: "defaultShell") ?? "") ?? .auto
@@ -146,6 +156,8 @@ final class AppSettings: ObservableObject {
         monitorNoticeHidden = d.object(forKey: "monitorNoticeHidden") as? Bool ?? false
         snippetAction = SnippetAction(rawValue: d.string(forKey: "snippetAction") ?? "") ?? .ask
         rdpOpenMode = RDPOpenMode(rawValue: d.string(forKey: "rdpOpenMode") ?? "") ?? .ask
+        rdpClipboardSync = d.object(forKey: "rdpClipboardSync") as? Bool ?? true
+        rdpWindowFullscreen = d.object(forKey: "rdpWindowFullscreen") as? Bool ?? true
     }
 
     /// 实际下载目录：设置为空则用系统下载文件夹。

@@ -15,6 +15,8 @@
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/input.h>
+#include <freerdp/scancode.h>        // RDP_SCANCODE_*（修饰键扫描码）
+#include <winpr/input.h>             // GetVirtualKeyCodeFromKeycode / GetVirtualScanCodeFromVirtualKeyCode
 #include <freerdp/event.h>
 #include <freerdp/version.h>
 #include <freerdp/settings.h>
@@ -24,6 +26,10 @@
 #include <freerdp/channels/channels.h>// freerdp_channels_client_load_ex
 #include <freerdp/client/disp.h>      // DispClientContext / SendMonitorLayout（动态分辨率）
 #include <freerdp/channels/disp.h>    // DISP_DVC_CHANNEL_NAME / DISPLAY_CONTROL_MONITOR_LAYOUT
+#include <freerdp/client/cliprdr.h>   // CliprdrClientContext（剪贴板同步）
+#include <freerdp/channels/cliprdr.h> // CLIPRDR_* PDU / CB_* 常量 / CLIPRDR_SVC_CHANNEL_NAME
+#include <winpr/user.h>               // CF_UNICODETEXT
+#include <winpr/string.h>             // ConvertUtf8ToWCharAlloc / ConvertWCharNToUtf8Alloc
 #include <winpr/synch.h>
 
 #include <openssl/provider.h>        // OSSL_PROVIDER_add_builtin / OSSL_PROVIDER_load
@@ -61,6 +67,10 @@ struct TermoRDPHandle {
     DispClientContext *disp;   // DisplayControl 通道连上后填入，用于动态分辨率
     int dynresize_ready;       // 收到 DisplayControlCaps 后才置 1，之前发 SendMonitorLayout 服务器会忽略
     UINT32 want_w, want_h;     // 最后一次请求的目标尺寸；通道未就绪时缓存，就绪后补发（消除连接期竞态）
+    int mod_state;             // 上次上报的修饰键掩码（TermoRDPModMask），用于 diff 出增量
+    CliprdrClientContext *cliprdr;  // CLIPRDR 通道连上后填入，用于剪贴板同步
+    WCHAR *clip_local;         // 本地剪贴板文本（UTF-16，含结尾 null），用于响应服务器取数据请求
+    UINT32 clip_local_bytes;   // clip_local 字节数（含结尾 null 的 2 字节）
 };
 
 static void termo_emit_state(TermoRDPHandle *h, TermoRDPState s, const char *msg) {
@@ -138,15 +148,120 @@ static UINT termo_disp_caps(DispClientContext *disp, UINT32 maxNumMonitors,
     return CHANNEL_RC_OK;
 }
 
-// disp DVC 连上 → 捕获 DispClientContext 并挂上 caps 回调，供后续发送布局。
+// ── 剪贴板同步（CLIPRDR）──────────────────────────────────────────────────
+// 发送客户端能力集（通用集，支持长格式名）。
+static UINT termo_cliprdr_send_caps(CliprdrClientContext *c) {
+    CLIPRDR_GENERAL_CAPABILITY_SET gen = { 0 };
+    gen.capabilitySetType = CB_CAPSTYPE_GENERAL;
+    gen.capabilitySetLength = CB_CAPSTYPE_GENERAL_LEN;
+    gen.version = CB_CAPS_VERSION_2;
+    gen.generalFlags = CB_USE_LONG_FORMAT_NAMES;
+    CLIPRDR_CAPABILITIES caps = { 0 };
+    caps.cCapabilitiesSets = 1;
+    caps.capabilitySets = (CLIPRDR_CAPABILITY_SET *)&gen;
+    return c->ClientCapabilities(c, &caps);
+}
+
+// 向服务器广播本地剪贴板格式：有缓存文本则通告 CF_UNICODETEXT，否则空列表（表示本地无可共享内容）。
+static UINT termo_cliprdr_send_format_list(TermoRDPHandle *h) {
+    CliprdrClientContext *c = h ? h->cliprdr : NULL;
+    if (!c) return CHANNEL_RC_OK;
+    CLIPRDR_FORMAT fmt = { 0 };
+    fmt.formatId = CF_UNICODETEXT;
+    fmt.formatName = NULL;
+    CLIPRDR_FORMAT_LIST list = { 0 };
+    list.common.msgType = CB_FORMAT_LIST;
+    list.numFormats = h->clip_local ? 1 : 0;
+    list.formats = h->clip_local ? &fmt : NULL;
+    return c->ClientFormatList(c, &list);
+}
+
+// 服务器就绪 → 回送能力 + 当前本地格式列表。
+static UINT termo_cliprdr_monitor_ready(CliprdrClientContext *c, const CLIPRDR_MONITOR_READY *m) {
+    (void)m;
+    TermoRDPHandle *h = c ? (TermoRDPHandle *)c->custom : NULL;
+    termo_cliprdr_send_caps(c);
+    termo_cliprdr_send_format_list(h);
+    return CHANNEL_RC_OK;
+}
+
+// 服务器剪贴板变化：回 OK，并在其提供文本时索要 UTF-16 文本数据。
+static UINT termo_cliprdr_server_format_list(CliprdrClientContext *c, const CLIPRDR_FORMAT_LIST *list) {
+    CLIPRDR_FORMAT_LIST_RESPONSE resp = { 0 };
+    resp.common.msgType = CB_FORMAT_LIST_RESPONSE;
+    resp.common.msgFlags = CB_RESPONSE_OK;
+    c->ClientFormatListResponse(c, &resp);
+    int has_text = 0;
+    for (UINT32 i = 0; list && i < list->numFormats; i++)
+        if (list->formats[i].formatId == CF_UNICODETEXT) { has_text = 1; break; }
+    if (has_text) {
+        CLIPRDR_FORMAT_DATA_REQUEST req = { 0 };
+        req.common.msgType = CB_FORMAT_DATA_REQUEST;
+        req.requestedFormatId = CF_UNICODETEXT;
+        c->ClientFormatDataRequest(c, &req);
+    }
+    return CHANNEL_RC_OK;
+}
+
+static UINT termo_cliprdr_server_format_list_response(CliprdrClientContext *c,
+                                                      const CLIPRDR_FORMAT_LIST_RESPONSE *r) {
+    (void)c; (void)r; return CHANNEL_RC_OK;
+}
+
+// 服务器索要本地剪贴板数据：用缓存的 UTF-16 文本应答（无则 FAIL）。
+static UINT termo_cliprdr_server_format_data_request(CliprdrClientContext *c,
+                                                     const CLIPRDR_FORMAT_DATA_REQUEST *req) {
+    TermoRDPHandle *h = c ? (TermoRDPHandle *)c->custom : NULL;
+    CLIPRDR_FORMAT_DATA_RESPONSE resp = { 0 };
+    resp.common.msgType = CB_FORMAT_DATA_RESPONSE;
+    if (h && h->clip_local && req && req->requestedFormatId == CF_UNICODETEXT) {
+        resp.common.msgFlags = CB_RESPONSE_OK;
+        resp.common.dataLen = h->clip_local_bytes;
+        resp.requestedFormatData = (const BYTE *)h->clip_local;
+    } else {
+        resp.common.msgFlags = CB_RESPONSE_FAIL;
+    }
+    return c->ClientFormatDataResponse(c, &resp);
+}
+
+// 服务器送回我们请求的数据：UTF-16 → UTF-8 → 回调上层写入本地剪贴板。
+static UINT termo_cliprdr_server_format_data_response(CliprdrClientContext *c,
+                                                      const CLIPRDR_FORMAT_DATA_RESPONSE *resp) {
+    TermoRDPHandle *h = c ? (TermoRDPHandle *)c->custom : NULL;
+    if (!h || !resp || !(resp->common.msgFlags & CB_RESPONSE_OK)) return CHANNEL_RC_OK;
+    const WCHAR *w = (const WCHAR *)resp->requestedFormatData;
+    size_t wlen = resp->common.dataLen / sizeof(WCHAR);
+    if (!w || wlen == 0) return CHANNEL_RC_OK;
+    char *utf8 = ConvertWCharNToUtf8Alloc(w, wlen, NULL);   // 遇首个 null 截断
+    if (utf8) {
+        if (h->cb.on_clipboard) h->cb.on_clipboard(h->cb.userdata, utf8);
+        free(utf8);
+    }
+    return CHANNEL_RC_OK;
+}
+
+// 通道连上 → 按名捕获上下文：disp（动态分辨率）/ cliprdr（剪贴板）。
 static void termo_on_channel_connected(void *context, const ChannelConnectedEventArgs *e) {
-    if (!e || !e->name || strcmp(e->name, DISP_DVC_CHANNEL_NAME) != 0) return;
+    if (!e || !e->name) return;
     TermoRDPHandle *h = ((TermoContext *)context)->owner;
-    DispClientContext *disp = (DispClientContext *)e->pInterface;
-    if (!h || !disp) return;
-    disp->custom = h;
-    disp->DisplayControlCaps = termo_disp_caps;
-    h->disp = disp;
+    if (!h) return;
+    if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
+        DispClientContext *disp = (DispClientContext *)e->pInterface;
+        if (!disp) return;
+        disp->custom = h;
+        disp->DisplayControlCaps = termo_disp_caps;
+        h->disp = disp;
+    } else if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
+        CliprdrClientContext *c = (CliprdrClientContext *)e->pInterface;
+        if (!c) return;
+        c->custom = h;
+        c->MonitorReady = termo_cliprdr_monitor_ready;
+        c->ServerFormatList = termo_cliprdr_server_format_list;
+        c->ServerFormatListResponse = termo_cliprdr_server_format_list_response;
+        c->ServerFormatDataRequest = termo_cliprdr_server_format_data_request;
+        c->ServerFormatDataResponse = termo_cliprdr_server_format_data_response;
+        h->cliprdr = c;
+    }
 }
 
 // ── 通道加载回调（动态分辨率的关键接入点）──────────────────────────────────
@@ -170,6 +285,12 @@ static BOOL termo_load_channels(freerdp *instance) {
         "drdynvc", NULL, NULL,
         FREERDP_ADDIN_CHANNEL_STATIC | FREERDP_ADDIN_CHANNEL_ENTRYEX);
     if (ex) freerdp_channels_client_load_ex(context->channels, s, (PVIRTUALCHANNELENTRYEX)ex, NULL);
+
+    // cliprdr（剪贴板同步）：同为静态 VC 入口，连上后经 ChannelConnected 捕获 CliprdrClientContext。
+    PVIRTUALCHANNELENTRY clip = freerdp_channels_load_static_addin_entry(
+        "cliprdr", NULL, NULL,
+        FREERDP_ADDIN_CHANNEL_STATIC | FREERDP_ADDIN_CHANNEL_ENTRYEX);
+    if (clip) freerdp_channels_client_load_ex(context->channels, s, (PVIRTUALCHANNELENTRYEX)clip, NULL);
     return TRUE;
 }
 
@@ -364,6 +485,47 @@ void termo_rdp_mouse_wheel(TermoRDPHandle *h, int delta, int x, int y) {
     freerdp_input_send_mouse_event(in, flags, (UINT16)x, (UINT16)y);
 }
 
+// ── 键盘输入（从主线程发；映射参照官方 client/Mac）──────────────────────────
+// 发送一个 RDP 扫描码（含 KBDEXT 扩展位）的按下/抬起。
+static void termo_send_scancode(rdpInput *in, UINT32 rdp_scancode, int down) {
+    UINT16 flags = (rdp_scancode & KBDEXT) ? KBD_FLAGS_EXTENDED : 0;
+    flags |= down ? KBD_FLAGS_DOWN : KBD_FLAGS_RELEASE;
+    freerdp_input_send_keyboard_event(in, flags, (UINT8)(rdp_scancode & 0xFF));
+}
+
+void termo_rdp_key(TermoRDPHandle *h, int mac_keycode, int down) {
+    rdpInput *in = termo_input(h);
+    if (!in) return;
+    // Apple 虚拟键码 → Windows VK → RDP 扫描码（键盘类型 4 = IBM 增强 101/102 键）。
+    DWORD vk = GetVirtualKeyCodeFromKeycode((DWORD)mac_keycode, WINPR_KEYCODE_TYPE_APPLE);
+    DWORD sc = GetVirtualScanCodeFromVirtualKeyCode(vk, WINPR_KBD_TYPE_IBM_ENHANCED);
+    if ((sc & 0xFF) == 0) return;   // 无映射
+    termo_send_scancode(in, sc, down);
+}
+
+void termo_rdp_modifiers(TermoRDPHandle *h, int mask) {
+    rdpInput *in = termo_input(h);
+    if (!in) return;
+    static const struct { int bit; UINT32 sc; int toggle; } mods[] = {
+        { TermoRDPModShift,    RDP_SCANCODE_LSHIFT,   0 },
+        { TermoRDPModControl,  RDP_SCANCODE_LCONTROL, 0 },
+        { TermoRDPModAlt,      RDP_SCANCODE_LMENU,    0 },
+        { TermoRDPModCommand,  RDP_SCANCODE_LWIN,     0 },
+        { TermoRDPModCapsLock, RDP_SCANCODE_CAPSLOCK, 1 },   // 锁定键：状态变化即敲一下
+    };
+    int changed = mask ^ h->mod_state;
+    for (size_t i = 0; i < sizeof(mods) / sizeof(mods[0]); i++) {
+        if (!(changed & mods[i].bit)) continue;
+        if (mods[i].toggle) {
+            termo_send_scancode(in, mods[i].sc, 1);
+            termo_send_scancode(in, mods[i].sc, 0);
+        } else {
+            termo_send_scancode(in, mods[i].sc, (mask & mods[i].bit) ? 1 : 0);
+        }
+    }
+    h->mod_state = mask;
+}
+
 void termo_rdp_resize(TermoRDPHandle *h, int width, int height) {
     if (!h || width < 1 || height < 1) return;
     // 始终记下目标尺寸。通道/能力就绪即发；否则缓存，待 DisplayControlCaps 到达由 termo_disp_caps 补发。
@@ -371,6 +533,22 @@ void termo_rdp_resize(TermoRDPHandle *h, int width, int height) {
     h->want_h = (UINT32)height;
     if (h->dynresize_ready && h->disp)
         termo_disp_send_layout(h, (UINT32)width, (UINT32)height);
+}
+
+void termo_rdp_clipboard_offer_text(TermoRDPHandle *h, const char *utf8) {
+    if (!h) return;
+    free(h->clip_local);
+    h->clip_local = NULL;
+    h->clip_local_bytes = 0;
+    if (utf8 && *utf8) {
+        size_t wlen = 0;   // wcslen（不含结尾 null）
+        WCHAR *w = ConvertUtf8ToWCharAlloc(utf8, &wlen);
+        if (w) {
+            h->clip_local = w;
+            h->clip_local_bytes = (UINT32)((wlen + 1) * sizeof(WCHAR));   // CF_UNICODETEXT 含结尾 null
+        }
+    }
+    termo_cliprdr_send_format_list(h);   // 通道未就绪时为 no-op，MonitorReady 时会再发一次
 }
 
 void termo_rdp_disconnect(TermoRDPHandle *h) {
@@ -387,5 +565,6 @@ void termo_rdp_free(TermoRDPHandle *h) {
         h->instance = NULL;
         h->context = NULL;
     }
+    free(h->clip_local);
     free(h);
 }

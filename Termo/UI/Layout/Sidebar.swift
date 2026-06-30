@@ -189,7 +189,7 @@ struct Sidebar: View {
             .frame(maxWidth: .infinity)
         } else {
             ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {   // 与 SSH 主机列表(hostList)行间距一致
                     ForEach(rdpHosts) { host in
                         RDPHostRow(host: host, model: model, isActive: model.activeHostId == host.id)
                     }

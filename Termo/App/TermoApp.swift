@@ -155,6 +155,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Dock/系统发起的退出：先在 AppKit 层结束所有附着的 sheet（窗口级模态可能阻塞退出），再放行。
         for w in NSApp.windows { if let sheet = w.attachedSheet { w.endSheet(sheet) } }
         AppModel.shared.dismissAllSheets()
+        // 退出前同步关闭所有 RDP 连接并 join 后台线程：所有真正退出路径都收口于此，
+        // 避免 FreeRDP 线程在进程退出时仍运行而报错/卡顿/互斥（隐藏到托盘不经过本方法，保活不受影响）。
+        AppModel.shared.shutdownAllRDP()
         return .terminateNow
     }
 
