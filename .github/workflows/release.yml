@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-14   # Apple Silicon，与 ARCHS=arm64 一致
+    runs-on: macos-15   # Apple Silicon（arm64）；自带 Xcode 16.x，可读 xcodegen 产出的 objectVersion 77 工程
     env:
       SPARKLE_VERSION: "2.9.3"
       TEAM_ID: KTP97H9YFF
@@ -26,8 +26,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 选择 Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: 选择 Xcode（取最新稳定版；xcodegen 产出 objectVersion 77，需 Xcode 16.2+ 才能读）
+        run: |
+          XC=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$XC" ] || XC=$(ls -d /Applications/Xcode*.app 2>/dev/null | grep -iv beta | sort -V | tail -1)
+          echo "选用 Xcode: $XC"
+          sudo xcode-select -s "$XC/Contents/Developer"
+          # 传给后续步骤：package-app.sh 用 ${DEVELOPER_DIR:-...} 默认，不导出会回落到旧的默认 Xcode。
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
 
       - name: 安装构建工具
         run: brew install xcodegen create-dmg
