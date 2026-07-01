@@ -3,6 +3,26 @@
     <channel>
         <title>Termo</title>
         <item>
+            <title>0.9.2</title>
+            <pubDate>Wed, 01 Jul 2026 03:06:56 +0000</pubDate>
+            <link>https://github.com/icloudza/termo</link>
+            <sparkle:version>29</sparkle:version>
+            <sparkle:shortVersionString>0.9.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<h2>Termo 0.9.2</h2>
+release: 0.9.2（构建号 29）<br>
+<br>
+移除启动行为中未实现的「恢复上次会话」选项<br>
+RDP 打开新窗口时默认不再自动全屏<br>
+终端默认字号调整为 13<br>
+自动检查更新默认开启，检查频率提升为每小时一次<br>
+主机 / RDP 分组下拉支持再次点击取消选择<br>
+RDP 主机列表现按分组分区显示<br>
+]]></description>
+            <enclosure url="https://github.com/icloudza/termo/releases/download/v0.9.2/Termo-0.9.2.zip" length="18994797" type="application/octet-stream" sparkle:edSignature="Io984DVQM/O0MOUV4vA2+gJFnjV2TkPA8wCaIdb3zkYlgKrtaUSrTw1b3HjD1FEVAYDOYu6/wGSk9QO4v2yHAA=="/>
+        </item>
+        <item>
             <title>0.9.1.1</title>
             <pubDate>Tue, 30 Jun 2026 17:58:43 +0000</pubDate>
             <link>https://github.com/icloudza/termo</link>
