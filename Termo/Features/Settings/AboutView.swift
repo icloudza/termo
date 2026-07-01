@@ -5,6 +5,7 @@ import SwiftUI
 struct AboutContent: View {
     var showUpdateStatus: Bool = true   // 独立「关于」弹窗里置 false：不显示「上次检查」等状态文字，更精简
     @ObservedObject private var theme = ThemeManager.shared
+    @State private var showPrivacy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -28,9 +29,26 @@ struct AboutContent: View {
             infoLine(String(localized: "渲染"), value: "CoreText / AppKit")
             infoLine(String(localized: "平台"), value: "macOS 14+")
             infoLine(String(localized: "架构"), value: "Apple Silicon")
+            privacyLine
         }
         .padding(20)
         .background(Pal.fill(0.03), in: RoundedRectangle(cornerRadius: 10))
+        .sheet(isPresented: $showPrivacy) { PrivacyPolicyView() }
+    }
+
+    private var privacyLine: some View {
+        Button { showPrivacy = true } label: {
+            HStack {
+                Text(String(localized: "隐私政策")).font(.system(size: 12)).foregroundStyle(Pal.overlay)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Pal.subtext)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
     }
 
     private func infoLine(_ label: String, value: String) -> some View {

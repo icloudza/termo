@@ -902,6 +902,7 @@
         }
       }
     },
+    "Privacy Policy": {},
     "RDP 连接成功后内嵌为标签还是在新窗口打开；「每次询问」会弹出选择且可记住": {
       "localizations": {
         "en": {
@@ -2162,6 +2163,16 @@
         }
       }
     },
+    "初始化连接参数…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Initializing connection parameters…"
+          }
+        }
+      }
+    },
     "初始化配置": {
       "localizations": {
         "en": {
@@ -2598,6 +2609,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "GPU (%lld)"
+          }
+        }
+      }
+    },
+    "图形子系统已就绪，连接成功": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Graphics subsystem ready — connected"
+          }
+        }
+      }
+    },
+    "图形管线已启用（全彩）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Graphics pipeline enabled (full color)"
           }
         }
       }
@@ -3384,6 +3415,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Starting monitoring…"
+          }
+        }
+      }
+    },
+    "开始连接 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connecting %@"
           }
         }
       }
@@ -4380,6 +4421,16 @@
         }
       }
     },
+    "显示控制通道就绪（支持动态分辨率）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Display control channel ready (dynamic resolution)"
+          }
+        }
+      }
+    },
     "显示欢迎页": {
       "localizations": {
         "en": {
@@ -4816,6 +4867,16 @@
         }
       }
     },
+    "正在协商安全层并建立连接…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Negotiating security layer and connecting…"
+          }
+        }
+      }
+    },
     "正在安装，即将重启…": {
       "localizations": {
         "en": {
@@ -4952,6 +5013,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Verifying host fingerprint…"
+          }
+        }
+      }
+    },
+    "正在验证服务器证书…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifying server certificate…"
           }
         }
       }
@@ -6868,12 +6939,32 @@
         }
       }
     },
+    "连接启动失败 (%@)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to start connection (%@)"
+          }
+        }
+      }
+    },
     "连接失败": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Connection Failed"
+          }
+        }
+      }
+    },
+    "连接失败（认证失败或服务器不可达）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection failed (authentication failed or server unreachable)"
           }
         }
       }
@@ -7188,6 +7279,16 @@
         }
       }
     },
+    "隐私政策": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Privacy Policy"
+          }
+        }
+      }
+    },
     "隐藏密码": {
       "localizations": {
         "en": {
@@ -7374,96 +7475,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Default Path"
-          }
-        }
-      }
-    },
-    "初始化连接参数…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Initializing connection parameters…"
-          }
-        }
-      }
-    },
-    "图形子系统已就绪，连接成功": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Graphics subsystem ready — connected"
-          }
-        }
-      }
-    },
-    "图形管线已启用（全彩）": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Graphics pipeline enabled (full color)"
-          }
-        }
-      }
-    },
-    "显示控制通道就绪（支持动态分辨率）": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Display control channel ready (dynamic resolution)"
-          }
-        }
-      }
-    },
-    "正在协商安全层并建立连接…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Negotiating security layer and connecting…"
-          }
-        }
-      }
-    },
-    "正在验证服务器证书…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Verifying server certificate…"
-          }
-        }
-      }
-    },
-    "连接失败（认证失败或服务器不可达）": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Connection failed (authentication failed or server unreachable)"
-          }
-        }
-      }
-    },
-    "开始连接 %@": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Connecting %@"
-          }
-        }
-      }
-    },
-    "连接启动失败 (%@)": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to start connection (%@)"
           }
         }
       }

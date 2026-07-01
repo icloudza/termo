@@ -42,6 +42,7 @@
 		563B0D4BCEE69D24F6157952 /* PortForward.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88FE548D65E22CCE9FF8E686 /* PortForward.swift */; };
 		5A98EB5B5D35F85E9D0876B6 /* AskPasswordDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7EC3A802375763DAFCB55EB /* AskPasswordDialog.swift */; };
 		64558053418AA9F708CEC29A /* RDPSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30E1CDC3F60325B41E91E2B0 /* RDPSession.swift */; };
+		66D1D025912F7FCDB04ABC96 /* PrivacyPolicyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5758B8305160B2F0356D7F6 /* PrivacyPolicyView.swift */; };
 		676AA5CF6C60708F710B1EA1 /* TabScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002943114034A286D5FDC8CF /* TabScrollView.swift */; };
 		6AAC029451BD56E296343D6F /* FileUpload.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8DC617FA5929DB9BC01D25 /* FileUpload.swift */; };
 		6B0558540093B6422EBFB23A /* KeySheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5336686AD7D595B6A0F188A /* KeySheets.swift */; };
@@ -201,6 +202,7 @@
 		E24CAA38E66B6D16CA193D8B /* FileIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileIcons.swift; sourceTree = "<group>"; };
 		E34CDDD5377B936A4BD7074F /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		E3B549B96E762A0F96435705 /* TestConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestConnectionView.swift; sourceTree = "<group>"; };
+		E5758B8305160B2F0356D7F6 /* PrivacyPolicyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyPolicyView.swift; sourceTree = "<group>"; };
 		E7EC3A802375763DAFCB55EB /* AskPasswordDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskPasswordDialog.swift; sourceTree = "<group>"; };
 		E965A40BEE2746466C5F6D9E /* CFreeRDP.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = CFreeRDP.xcframework; path = Vendor/CFreeRDP.xcframework; sourceTree = "<group>"; };
 		EC2740433D28692622FE7281 /* AppInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfo.swift; sourceTree = "<group>"; };
@@ -342,6 +344,7 @@
 			isa = PBXGroup;
 			children = (
 				960BB4F03437160E388C0A01 /* AboutView.swift */,
+				E5758B8305160B2F0356D7F6 /* PrivacyPolicyView.swift */,
 				8153CA939F7EA1C538726203 /* SettingsView.swift */,
 			);
 			path = Settings;
@@ -627,6 +630,7 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				Base,
+				en,
 				"zh-Hans",
 			);
 			mainGroup = BACE1B016C10D943441DCD8E;
@@ -726,6 +730,7 @@
 				DC82E921312D10CFF921F97B /* Persistence.swift in Sources */,
 				563B0D4BCEE69D24F6157952 /* PortForward.swift in Sources */,
 				9EBF1625176E56AEFCEDB5A0 /* PortForwardView.swift in Sources */,
+				66D1D025912F7FCDB04ABC96 /* PrivacyPolicyView.swift in Sources */,
 				0E96188D36EC928349BD587C /* RDPCertDialog.swift in Sources */,
 				3ADE7CFFF1DB19E46DF5BA30 /* RDPCertTrustStore.swift in Sources */,
 				64558053418AA9F708CEC29A /* RDPSession.swift in Sources */,
