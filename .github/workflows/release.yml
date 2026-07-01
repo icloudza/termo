@@ -65,7 +65,12 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           # 把临时钥匙串加入搜索列表，让 codesign / find-identity 能找到证书。
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
-          security find-identity -v -p codesigning "$KEYCHAIN"
+          # 捕获签名身份但不打印原文；注册为 mask，使本 job 后续所有日志(含 package-app.sh)里的开发者姓名/Team 自动打码
+          DEVID=$(security find-identity -v -p codesigning "$KEYCHAIN" | grep -o 'Developer ID Application: [^"]*' | head -1 || true)
+          [ -n "$DEVID" ] || { echo "::error::未找到 Developer ID Application 证书"; exit 1; }
+          echo "::add-mask::$DEVID"
+          echo "::add-mask::${DEVID#Developer ID Application: }"
+          echo "签名身份已导入并脱敏"
           rm -f "$RUNNER_TEMP/cert.p12"
 
       # ── 配置 notarytool 凭证（package-app.sh 用 --keychain-profile termo-notary）──
@@ -164,3 +169,30 @@ jobs:
           publish_dir: ${{ steps.sparkle.outputs.dir }}
           keep_files: true   # 不删除 Pages 上其它文件（如历史 appcast 资源）
           exclude_assets: "*.zip,*.app"   # 只发布 appcast.xml / *.html，不把 zip 推到 Pages
+
+      # ── 同步 DMG 到 Cloudflare R2（官网 dl.termoi.app 直链下载）──
+      # 版本键存档 Termo-<版本>.dmg；稳定键 Termo.dmg 仅正式版更新（官网按钮永远指它）。
+      - name: 上传 DMG 到 Cloudflare R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.artifacts.outputs.dmg }}"
+          VERSION="${{ steps.artifacts.outputs.version }}"
+          BUCKET=termo-downloads
+          CT=application/x-apple-diskimage
+          BASENAME=$(basename "$DMG")
+          echo "上传 $BASENAME 到 R2 桶 $BUCKET …"
+          # 版本键：内容永不变，长期不可变缓存（重复下载走边缘，最快）
+          npx --yes wrangler@4 r2 object put "$BUCKET/$BASENAME" --file="$DMG" \
+            --content-type="$CT" --cache-control="public, max-age=31536000, immutable" --remote
+          # 稳定键仅在正式版更新；预发布（版本号含 -，如 0.9.2-beta）只存档、不覆盖官网直链
+          # 短缓存(5 分钟)：发版后官网直链最多 5 分钟就切到新版，无需手动清缓存
+          if [[ "$VERSION" != *-* ]]; then
+            npx --yes wrangler@4 r2 object put "$BUCKET/Termo.dmg" --file="$DMG" \
+              --content-type="$CT" --cache-control="public, max-age=300" --remote
+            echo "✓ 稳定键 Termo.dmg 已更新为 $VERSION"
+          else
+            echo "预发布 $VERSION：仅存档 $BASENAME，未更新稳定键 Termo.dmg"
+          fi

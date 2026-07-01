@@ -96,27 +96,44 @@ git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && die "本地已存在 ta
 git ls-remote --tags origin "$TAG" 2>/dev/null | grep -q "$TAG" && die "远端已存在 tag $TAG。"
 ok "目标版本：$NEW_MARKETING（构建号 $NEW_BUILD），tag $TAG"
 
-# ── 输入发行说明 ────────────────────────────────────────────────────────────
-section "发行说明（即用户更新弹窗中的内容）"
-NOTES_FILE="$(mktemp -t termo-release-notes)"
-trap 'rm -f "$NOTES_FILE"' EXIT
-{
-    echo ""
-    echo "# 在上方逐行输入本次更新内容，每行一条，会显示在用户的「软件更新」弹窗。"
-    echo "# 以 # 开头的行会被忽略；内容为空将中止发布。"
-    echo "# 版本 $NEW_MARKETING（构建号 $NEW_BUILD）"
-} > "$NOTES_FILE"
+# ── 发行说明（取自 CHANGELOG.md 的 [Unreleased]；空则开编辑器手写）──────────────
+section "发行说明"
+CHANGELOG="$ROOT/CHANGELOG.md"
+[ -f "$CHANGELOG" ] || die "未找到 $CHANGELOG。"
 
-if [ "$DRY_RUN" = 1 ]; then
-    info "[dry-run] 将打开 ${EDITOR:-vi} 让你编辑发行说明。"
-    NOTES="（dry-run 占位发行说明）"
+# [Unreleased] 与下一个「## [」之间的非空行
+UNREL="$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' "$CHANGELOG" | sed '/^[[:space:]]*$/d')"
+
+if [ -n "$UNREL" ]; then
+    info "取自 CHANGELOG.md 的 [Unreleased]。"
+    RAW="$UNREL"
 else
-    "${EDITOR:-vi}" "$NOTES_FILE"
-    NOTES="$(grep -v '^#' "$NOTES_FILE" | sed '/^[[:space:]]*$/d')"
-    [ -n "$NOTES" ] || die "发行说明为空，已中止。"
+    warn "CHANGELOG.md 的 [Unreleased] 为空 —— 打开 ${EDITOR:-vi} 手写本次更新。"
+    NOTES_FILE="$(mktemp -t termo-release-notes)"
+    {
+        echo ""
+        echo "# 每行一条更新，会写入 CHANGELOG.md 并显示在用户「软件更新」弹窗。"
+        echo "# 以 # 开头的行忽略；内容为空将中止。版本 $NEW_MARKETING（构建号 $NEW_BUILD）"
+    } > "$NOTES_FILE"
+    if [ "$DRY_RUN" = 1 ]; then
+        RAW="（dry-run 占位发行说明）"
+    else
+        "${EDITOR:-vi}" "$NOTES_FILE"
+        RAW="$(grep -v '^#' "$NOTES_FILE" | sed '/^[[:space:]]*$/d')"
+    fi
+    rm -f "$NOTES_FILE"
+    [ -n "$RAW" ] || die "发行说明为空，已中止。"
 fi
+
+# NOTES=纯文本（每行一条，喂 tag/Release/appcast）；BULLETS=「- 」列表（写入 CHANGELOG.md）
+NOTES="$(printf '%s\n' "$RAW" | sed 's/^[[:space:]]*-[[:space:]]*//')"
+BULLETS="$(printf '%s\n' "$NOTES" | sed 's/^/- /')"
+TAG_NOTES_FILE="$(mktemp -t termo-tag-notes)"
+trap 'rm -f "$TAG_NOTES_FILE"' EXIT
+printf '%s\n' "$NOTES" > "$TAG_NOTES_FILE"
+
 echo "$DIM------ 发行说明预览 ------$RST"
-printf '%s\n' "$NOTES"
+printf '%s\n' "$BULLETS"
 echo "$DIM-------------------------$RST"
 
 # ── 总览确认 ────────────────────────────────────────────────────────────────
@@ -135,6 +152,20 @@ run /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $NEW_MARKETING" 
 run /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD" "$PLIST"
 ok "Info.plist 已更新。"
 
+# CHANGELOG 归档：[Unreleased] 内容移到「## [版本] - 日期」，顶部保留空 [Unreleased]
+DATE="$(date +%F)"
+if [ "$DRY_RUN" = 1 ]; then
+    info "[dry-run] 将把 CHANGELOG.md 的 [Unreleased] 归档为 ## [$NEW_MARKETING] - $DATE"
+else
+    NEW_BLOCK="$(printf '## [Unreleased]\n\n## [%s] - %s\n%s\n' "$NEW_MARKETING" "$DATE" "$BULLETS")" \
+    awk 'BEGIN{blk=ENVIRON["NEW_BLOCK"]}
+         /^## \[Unreleased\]/{print blk; print ""; skip=1; next}
+         skip && /^## \[/{skip=0}
+         skip{next}
+         {print}' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
+    ok "CHANGELOG.md 已归档 $NEW_MARKETING（$DATE）。"
+fi
+
 # ── 提交 ────────────────────────────────────────────────────────────────────
 section "提交改动"
 run git add -A
@@ -152,7 +183,7 @@ ok "提交已推送。"
 
 # ── 打 tag 并推送（触发发版）────────────────────────────────────────────────
 section "打 tag 并推送"
-run git tag -a "$TAG" -F "$NOTES_FILE"
+run git tag -a "$TAG" -F "$TAG_NOTES_FILE"
 ok "已创建 tag $TAG。"
 confirm "推送 tag $TAG？（这一步会触发 CI 正式发版）"
 run git push origin "$TAG"
