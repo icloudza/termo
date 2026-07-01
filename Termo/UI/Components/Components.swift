@@ -416,7 +416,10 @@ struct SearchableSelect: View {
                             }
                         }
                         ForEach(filtered, id: \.self) { opt in
-                            DropdownOption(label: opt, selected: opt == text) { select(opt) }
+                            // 再次点击已选中的项即取消选择（回到「未分组」）；点其它项则切换选中。
+                            DropdownOption(label: opt, selected: opt == text) {
+                                if opt == text { deselect() } else { select(opt) }
+                            }
                         }
                         if filtered.isEmpty && !canCreate {
                             Text("无匹配项").font(.system(size: 12)).foregroundStyle(Pal.overlay)
@@ -438,6 +441,9 @@ struct SearchableSelect: View {
     }
 
     private func select(_ v: String) { text = v; open = false }
+
+    /// 取消选择：清空为「未分组」并收起。
+    private func deselect() { text = ""; open = false }
 
     /// 回车提交：精确匹配已有项则选中，否则在允许时按新建处理。
     private func commitQuery() {

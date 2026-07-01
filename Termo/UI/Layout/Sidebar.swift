@@ -188,10 +188,18 @@ struct Sidebar: View {
             }
             .frame(maxWidth: .infinity)
         } else {
+            let rdpGroups = rdpHosts.reduce(into: [String]()) { acc, h in
+                if !acc.contains(h.group) { acc.append(h.group) }
+            }
             ScrollView {
-                VStack(alignment: .leading, spacing: 4) {   // 与 SSH 主机列表(hostList)行间距一致
-                    ForEach(rdpHosts) { host in
-                        RDPHostRow(host: host, model: model, isActive: model.activeHostId == host.id)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(rdpGroups, id: \.self) { group in
+                        groupHeader(group)
+                        if !collapsedGroups.contains(group) {
+                            ForEach(rdpHosts.filter { $0.group == group }) { host in
+                                RDPHostRow(host: host, model: model, isActive: model.activeHostId == host.id)
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
@@ -252,7 +260,7 @@ struct Sidebar: View {
                     .foregroundStyle(Pal.overlay)
                     .frame(width: 11)
                     .rotationEffect(.degrees(collapsed ? -90 : 0))
-                Text(group)
+                Text(group.isEmpty ? "未分组" : group)
                     .font(.system(size: 11)).foregroundStyle(Pal.overlay)
                 Spacer(minLength: 0)
             }

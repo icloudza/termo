@@ -124,6 +124,8 @@ jobs:
             echo "<h2>Termo $VERSION</h2>"
             printf '%s\n' "$NOTES" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/$/<br>/'
           } > "$ARCH_DIR/Termo-$VERSION.html"
+          # 4) 同一份 NOTES 转成 markdown 列表，供 GitHub Release 正文（body_path）
+          { echo "### 本次更新"; echo; printf '%s\n' "$NOTES" | sed 's/^/- /'; } > "$RUNNER_TEMP/release-body.md"
           echo "dir=$ARCH_DIR" >> "$GITHUB_OUTPUT"
 
       # ── EdDSA 签名 + 生成 appcast（enclosure 指向本次 Release 的 zip 资产）──
@@ -147,6 +149,7 @@ jobs:
         with:
           name: Termo ${{ steps.artifacts.outputs.version }}
           tag_name: ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/release-body.md
           files: |
             ${{ steps.sparkle.outputs.dir }}/Termo-${{ steps.artifacts.outputs.version }}.zip
             ${{ steps.artifacts.outputs.dmg }}

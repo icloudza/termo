@@ -133,7 +133,7 @@ struct SettingsView: View {
 
             settingRow("启动行为", description: "应用启动时的默认操作") {
                 ThemedDropdown(
-                    options: [(StartupBehavior.welcome, "显示欢迎页"), (.terminal, "打开新终端"), (.restore, "恢复上次会话")],
+                    options: [(StartupBehavior.welcome, "显示欢迎页"), (.terminal, "打开新终端")],
                     selection: $settings.startupBehavior
                 )
                 .frame(width: 160)

@@ -1,7 +1,7 @@
 import Foundation
 
 enum StartupBehavior: String, CaseIterable, Hashable {
-    case welcome, terminal, restore
+    case welcome, terminal
 }
 
 enum DefaultShell: String, CaseIterable, Hashable {
@@ -141,7 +141,7 @@ final class AppSettings: ObservableObject {
         closeConfirm = d.object(forKey: "closeConfirm") as? Bool ?? true
         editorMinimap = d.object(forKey: "editorMinimap") as? Bool ?? true
         termFont = d.string(forKey: "termFont") ?? ""
-        termFontSize = d.object(forKey: "termFontSize") as? Int ?? 12
+        termFontSize = d.object(forKey: "termFontSize") as? Int ?? 13
         termCursorStyle = d.string(forKey: "termCursorStyle") ?? "bar"
         termCursorBlink = d.object(forKey: "termCursorBlink") as? Bool ?? true
         termScrollback = d.object(forKey: "termScrollback") as? Int ?? 1000
@@ -157,7 +157,7 @@ final class AppSettings: ObservableObject {
         snippetAction = SnippetAction(rawValue: d.string(forKey: "snippetAction") ?? "") ?? .ask
         rdpOpenMode = RDPOpenMode(rawValue: d.string(forKey: "rdpOpenMode") ?? "") ?? .ask
         rdpClipboardSync = d.object(forKey: "rdpClipboardSync") as? Bool ?? true
-        rdpWindowFullscreen = d.object(forKey: "rdpWindowFullscreen") as? Bool ?? true
+        rdpWindowFullscreen = d.object(forKey: "rdpWindowFullscreen") as? Bool ?? false   // 默认不全屏（每次强制全屏体验不佳）
     }
 
     /// 实际下载目录：设置为空则用系统下载文件夹。

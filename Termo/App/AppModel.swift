@@ -1351,8 +1351,8 @@ final class AppModel: ObservableObject {
         switch AppSettings.shared.startupBehavior {
         case .terminal:
             if AppEnv.localTerminalEnabled { openLocalTerminal() }   // MAS 沙盒下无本地终端 → 落欢迎页
-        case .welcome, .restore:
-            // 欢迎页为默认（标签为空时即显示）；会话恢复待持久化功能后实现
+        case .welcome:
+            // 欢迎页为默认（标签为空时即显示）
             break
         }
     }

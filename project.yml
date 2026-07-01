@@ -28,6 +28,9 @@ settings:
     SWIFT_VERSION: "5.9"
     DEAD_CODE_STRIPPING: YES
     ARCHS: arm64                  # 仅 Apple Silicon（放弃 Intel）：相比通用二进制约省一半体积
+    # Debug 签名会向 entitlements 注入 get-task-allow；本项目 entitlements 为空占位（Dev ID 不沙盒），
+    # 最新 Xcode 会把这次注入判为「构建期修改了 entitlements 文件」而报错中止。此设置允许该注入（官方修复项）。
+    CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: YES
     # 开发签名：自动管理，由 Xcode 用本账号的 Apple Development 证书签名 + 自动管描述文件。
     # 分发证书（直发 Developer ID Application / 上架 Apple Distribution）待创建后再按发布方式覆盖；
     # package-app.sh 归档时仍以参数覆盖为 ad-hoc，公证管线接入时再改那里。
