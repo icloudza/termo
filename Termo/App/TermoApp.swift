@@ -106,7 +106,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 过滤会连带把 NSStatusBarWindow 也 orderOut——macOS 15 不会自动救回，导致托盘图标消失。
     /// 既然图标窗口从不被隐藏、状态项也从不重建，位置与可见性天然保留，无需任何唤回/重建。
     @MainActor private func hideToTray() {
-        for w in NSApp.windows where w.isVisible && w.canBecomeMain {
+        // 先关掉所有 sheet + 结束附着 sheet：打开过设置页后其 sheet 宿主窗口可能残留在 NSApp.windows 且仍
+        // isVisible（canBecomeMain==false，被旧的 canBecomeMain 过滤漏掉）→ 切 .accessory 时仍有可见窗口，
+        // 导致 Dock 图标不消失。故 orderOut 除托盘状态栏窗口（NSStatusBarWindow，常驻不可动）外的所有可见窗口。
+        AppModel.shared.dismissAllSheets()
+        for w in NSApp.windows { if let s = w.attachedSheet { w.endSheet(s) } }
+        for w in NSApp.windows where w.isVisible && !w.className.contains("NSStatusBar") {
             w.orderOut(nil)
         }
         NSApp.setActivationPolicy(.accessory)
@@ -153,13 +158,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 自定义弹窗已在退出前做后台任务检查（见 requestQuit / QuitConfirmDialog）。
     // 系统发起的退出（注销/关机）会直接走到这里：放行退出，残留隧道由 willTerminate 的进程登记表兜底清理。
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Dock/系统发起的退出：先在 AppKit 层结束所有附着的 sheet（窗口级模态可能阻塞退出），再放行。
+        // 收口所有退出路径的清理：结束附着 sheet、复位 SwiftUI 绑定、关闭 RDP（join FreeRDP 线程）、优雅停端口转发。
         for w in NSApp.windows { if let sheet = w.attachedSheet { w.endSheet(sheet) } }
         AppModel.shared.dismissAllSheets()
-        // 退出前同步关闭所有 RDP 连接并 join 后台线程：所有真正退出路径都收口于此，
-        // 避免 FreeRDP 线程在进程退出时仍运行而报错/卡顿/互斥（隐藏到托盘不经过本方法，保活不受影响）。
         AppModel.shared.shutdownAllRDP()
-        return .terminateNow
+        ForwardProcessRegistry.shared.terminateAll()
+        UserDefaults.standard.synchronize()
+        // 关键：打开过设置页等会拉起 RemoteViewService（进程外视图）的界面后，系统在 exit() 的 atexit 阶段会卡在
+        // CoreAnalytics 退出屏障（sendExitBarrierWithTimeoutSync 同步等该 XPC flush），进程迟迟不退、被系统升级为
+        // SIGTERM（表现为「开着设置页从 Dock 退不掉/报错」）。清理已完成、数据均即时落盘，这里直接 _exit 立即结束
+        // 进程绕过该屏障；不返回。
+        _exit(0)
     }
 
     /// 自定义中文主菜单：应用菜单只保留「关于」「退出」；保留「编辑」菜单以注册

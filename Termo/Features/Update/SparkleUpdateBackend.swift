@@ -73,7 +73,15 @@ final class SparkleUpdateBackend: NSObject, UpdateBackend, ControllerBindable, S
         } else if let cont = readyContinuation {
             readyContinuation = nil
             // 待安装阶段无「跳过」语义：skip 视作稍后。
-            cont.resume(returning: choice == .install ? .install : .dismiss)
+            guard choice == .install else { cont.resume(returning: .dismiss); return }
+            // 安装会重启 App：先关掉所有 sheet（设置/关于等窗口级模态），否则会阻塞 NSApp 退出、
+            // 导致「重启被抑制」；给一拍时间让 sheet 真正消失后再让 Sparkle 接管重启。
+            DispatchQueue.main.async {
+                AppModel.shared.dismissAllSheets()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    cont.resume(returning: .install)
+                }
+            }
         }
     }
 

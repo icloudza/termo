@@ -40,8 +40,6 @@ struct AddHostView: View {
             didLoad = true
             if let editing {
                 draft.load(from: editing)
-            } else {
-                draft.group = model.groupNames.first ?? ""
             }
         }
         .sheet(isPresented: $showTest) {

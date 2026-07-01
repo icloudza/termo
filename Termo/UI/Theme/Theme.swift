@@ -114,15 +114,25 @@ final class ThemeManager: ObservableObject {
         switch mode {
         case .dark:
             isDark = true
+            NSApp?.appearance = NSAppearance(named: .darkAqua)
         case .light:
             isDark = false
+            NSApp?.appearance = NSAppearance(named: .aqua)
         case .system:
-            isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            // 关键：先清除强制外观，否则 effectiveAppearance 被上一次强制值钉死，
+            // 从深/浅切回「跟随系统」时读到的仍是旧值，导致无变化。清空后按系统全局设置判定。
+            NSApp?.appearance = nil
+            isDark = Self.systemIsDark
         }
-        colors = isDark ? .dark : .light
         // 同步 AppKit 外观：让系统默认窗口底色与各类系统控件首帧即正确明暗，配合 NSWindow.backgroundColor
         // 消除冷启动白闪；同时避免强制深色时标题栏/菜单等仍为浅色造成的明暗错配。
-        NSApp?.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        colors = isDark ? .dark : .light
+    }
+
+    /// 读系统全局外观（不受 App 自身 NSApp.appearance 覆盖影响）。
+    private static var systemIsDark: Bool {
+        let style = UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain)?["AppleInterfaceStyle"] as? String
+        return style?.lowercased().contains("dark") ?? false
     }
 }
 

@@ -303,7 +303,7 @@ struct SettingsView: View {
                 .font(.system(size: 14)).foregroundStyle(Pal.mauve)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 3) {
-                Text("\(cert.host):\(cert.port)")
+                Text(verbatim: "\(cert.host):\(cert.port)")
                     .font(.system(size: 13, design: .monospaced)).foregroundStyle(Pal.text)
                 Text(cert.fingerprint.isEmpty ? String(localized: "（无指纹）") : cert.fingerprint)
                     .font(.system(size: 11, design: .monospaced)).foregroundStyle(Pal.overlay)

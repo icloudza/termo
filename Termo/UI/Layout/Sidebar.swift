@@ -260,7 +260,7 @@ struct Sidebar: View {
                     .foregroundStyle(Pal.overlay)
                     .frame(width: 11)
                     .rotationEffect(.degrees(collapsed ? -90 : 0))
-                Text(group.isEmpty ? "未分组" : group)
+                Text(group.isEmpty ? String(localized: "未分组") : group)
                     .font(.system(size: 11)).foregroundStyle(Pal.overlay)
                 Spacer(minLength: 0)
             }

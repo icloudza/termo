@@ -90,8 +90,6 @@ struct AddRDPHostView: View {
             didLoad = true
             if let editing {
                 load(from: editing)
-            } else {
-                group = model.groupNames.first ?? ""
             }
         }
     }
