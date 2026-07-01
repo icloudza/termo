@@ -43,7 +43,7 @@ final class SSHSession: @unchecked Sendable {
     /// exec 一条命令，读回 stdout/stderr/退出码。
     func exec(_ command: String, outCap: Int = 1 << 18, errCap: Int = 8192) throws -> ExecResult {
         try queue.sync {
-            guard let h = handle else { throw SSHError(message: "会话已关闭") }
+            guard let h = handle else { throw SSHError(message: String(localized: "会话已关闭")) }
             var out = [CChar](repeating: 0, count: outCap)
             var errout = [CChar](repeating: 0, count: errCap)
             var exitCode: Int32 = 0
@@ -59,7 +59,7 @@ final class SSHSession: @unchecked Sendable {
     func execBytes(_ command: String, stdin: Data? = nil, timeout: Double,
                    outCap: Int = 1 << 20, errCap: Int = 1 << 16) throws -> ExecBytes {
         try queue.sync {
-            guard let h = handle else { throw SSHError(message: "会话已关闭") }
+            guard let h = handle else { throw SSHError(message: String(localized: "会话已关闭")) }
             var out = [CChar](repeating: 0, count: outCap)
             var errb = [CChar](repeating: 0, count: errCap)
             var outLen: Int32 = 0, errLen: Int32 = 0, code: Int32 = 0
@@ -95,7 +95,7 @@ final class SSHSession: @unchecked Sendable {
     func execUpload(_ command: String,
                     pull: @escaping (UnsafeMutablePointer<CChar>, Int32) -> Int32) throws -> (rc: Int, exitCode: Int) {
         try queue.sync {
-            guard let h = handle else { throw SSHError(message: "会话已关闭") }
+            guard let h = handle else { throw SSHError(message: String(localized: "会话已关闭")) }
             let box = Unmanaged.passRetained(PullBox(pull)).toOpaque()
             defer { Unmanaged<PullBox>.fromOpaque(box).release() }
             var exitCode: Int32 = 0

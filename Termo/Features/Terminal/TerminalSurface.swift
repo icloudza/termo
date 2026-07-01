@@ -83,27 +83,27 @@ struct TerminalSurface: NSViewRepresentable {
     private static func buildContextMenu() -> NSMenu {
         let menu = NSMenu()
 
-        let copy = NSMenuItem(title: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        let copy = NSMenuItem(title: String(localized: "复制"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         copy.keyEquivalentModifierMask = .command
         menu.addItem(copy)
 
-        let paste = NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let paste = NSMenuItem(title: String(localized: "粘贴"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         paste.keyEquivalentModifierMask = .command
         menu.addItem(paste)
 
-        let selectAll = NSMenuItem(title: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let selectAll = NSMenuItem(title: String(localized: "全选"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         selectAll.keyEquivalentModifierMask = .command
         menu.addItem(selectAll)
 
         menu.addItem(.separator())
 
-        let clear = NSMenuItem(title: "清屏", action: #selector(TerminalActions.clearTerminal(_:)), keyEquivalent: "k")
+        let clear = NSMenuItem(title: String(localized: "清屏"), action: #selector(TerminalActions.clearTerminal(_:)), keyEquivalent: "k")
         clear.keyEquivalentModifierMask = .command
         menu.addItem(clear)
 
         menu.addItem(.separator())
 
-        let search = NSMenuItem(title: "搜索", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f")
+        let search = NSMenuItem(title: String(localized: "搜索"), action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f")
         search.keyEquivalentModifierMask = .command
         search.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         menu.addItem(search)

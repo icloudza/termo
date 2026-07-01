@@ -42,7 +42,7 @@ struct Snippet: Identifiable, Codable, Hashable {
     }
 
     /// 显示用分组名（空 → 未分组）。
-    var displayGroup: String { group.trimmingCharacters(in: .whitespaces).isEmpty ? "未分组" : group }
+    var displayGroup: String { group.trimmingCharacters(in: .whitespaces).isEmpty ? String(localized: "未分组") : group }
 }
 
 extension Snippet {

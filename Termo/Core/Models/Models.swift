@@ -13,6 +13,18 @@ enum SettingsTab: String, CaseIterable, Hashable {
     case keys = "快捷键"
     case about = "关于"
 
+    var label: String {
+        switch self {
+        case .general: return String(localized: "通用")
+        case .terminal: return String(localized: "终端")
+        case .transfer: return String(localized: "传输")
+        case .monitor: return String(localized: "监控")
+        case .security: return String(localized: "安全")
+        case .keys: return String(localized: "快捷键")
+        case .about: return String(localized: "关于")
+        }
+    }
+
     var icon: String {
         switch self {
         case .general: return "gearshape"
@@ -193,10 +205,10 @@ enum RDPSecurity: String, Codable, CaseIterable {
 
     var label: String {
         switch self {
-        case .auto: return "自动协商"
-        case .nla:  return "NLA（网络级认证）"
+        case .auto: return String(localized: "自动协商")
+        case .nla:  return String(localized: "NLA（网络级认证）")
         case .tls:  return "TLS"
-        case .rdp:  return "标准 RDP"
+        case .rdp:  return String(localized: "标准 RDP")
         }
     }
 }

@@ -5,6 +5,14 @@ enum AppearanceMode: String, CaseIterable {
     case system = "跟随系统"
     case dark = "深色"
     case light = "浅色"
+
+    var label: String {
+        switch self {
+        case .system: return String(localized: "跟随系统")
+        case .dark: return String(localized: "深色")
+        case .light: return String(localized: "浅色")
+        }
+    }
 }
 
 struct ThemeColors {
@@ -177,10 +185,10 @@ enum LatencyLevel {
 
     var title: String {
         switch self {
-        case .unknown: return "未探测"
-        case .good:    return "流畅"
-        case .warning: return "延迟较高"
-        case .poor:    return "延迟很高"
+        case .unknown: return String(localized: "未探测")
+        case .good:    return String(localized: "流畅")
+        case .warning: return String(localized: "延迟较高")
+        case .poor:    return String(localized: "延迟很高")
         }
     }
 }

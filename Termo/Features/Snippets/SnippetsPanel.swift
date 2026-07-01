@@ -117,7 +117,7 @@ private struct SnippetRow: View {
                     Text(snippet.name).font(.system(size: 13)).foregroundStyle(Pal.text).lineLimit(1)
                     if hasVars {
                         Image(systemName: "curlybraces").font(.system(size: 9)).foregroundStyle(Pal.overlay)
-                            .help("含 {{变量}}，运行时填值")
+                            .help(String(localized: "含 {{变量}}，运行时填值"))
                     }
                 }
                 Text(snippet.preview)
@@ -131,7 +131,7 @@ private struct SnippetRow: View {
                         .background(Pal.mauve.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).pointerCursor().help("使用片段")
+                .buttonStyle(.plain).pointerCursor().help(String(localized: "使用片段"))
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 7)

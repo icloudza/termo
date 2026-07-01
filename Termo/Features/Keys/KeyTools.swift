@@ -36,8 +36,8 @@ enum KeyError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .generate(let m): return "生成密钥失败：\(m)"
-        case .importFail(let m): return "导入密钥失败：\(m)"
+        case .generate(let m): return String(localized: "生成密钥失败：\(m)")
+        case .importFail(let m): return String(localized: "导入密钥失败：\(m)")
         }
     }
 }
@@ -82,12 +82,12 @@ enum KeyTools {
         if pubLine.isEmpty {
             guard rc == 0 else {
                 throw KeyError.importFail(rc == 1
-                    ? "私钥已加密且无同名 .pub 文件，无法派生公钥；请连同 .pub 一起导入"
-                    : "无法读取私钥")
+                    ? String(localized: "私钥已加密且无同名 .pub 文件，无法派生公钥；请连同 .pub 一起导入")
+                    : String(localized: "无法读取私钥"))
             }
             pubLine = String(cString: outPub)
         }
-        guard !pubLine.isEmpty else { throw KeyError.importFail("无法读取公钥") }
+        guard !pubLine.isEmpty else { throw KeyError.importFail(String(localized: "无法读取公钥")) }
 
         var fp = [CChar](repeating: 0, count: 256)
         let fingerprint = termo_key_fingerprint(pubLine, &fp, 256) == 0 ? String(cString: fp) : ""

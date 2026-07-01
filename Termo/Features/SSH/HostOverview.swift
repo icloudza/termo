@@ -31,18 +31,18 @@ struct HostOverview: View {
                     // 已有连接（标签或新窗口）时「远程桌面」显示运行中 + 呼吸点，点击寻回而非新建。
                     HStack(spacing: 10) {
                         rdpAction(running: model.rdpHosts.contains(host.id)) { model.openHostRDP(host) }
-                        action("pencil", "编辑") { model.editingRDPHost = host }
+                        action("pencil", String(localized: "编辑")) { model.editingRDPHost = host }
                     }
                     .padding(.bottom, 26)
                 } else {
                     specsRow
 
                     HStack(spacing: 10) {
-                        action("terminal", "终端", primary: true) { model.openHostTerminal(host) }
+                        action("terminal", String(localized: "终端"), primary: true) { model.openHostTerminal(host) }
                             .contextMenu { Button("新建终端") { model.openHostTerminal(host, forceNew: true) } }
-                        action("folder", "文件 (SFTP)", loading: model.openingFilesHostId == host.id) { model.openHostFiles(host) }
-                        action("arrow.left.arrow.right", "端口转发", badge: model.hasRunningForward(hostId: host.id)) { model.openForwardPanel(host) }
-                        action("pencil", "编辑") { model.beginEditHost(host) }
+                        action("folder", String(localized: "文件 (SFTP)"), loading: model.openingFilesHostId == host.id) { model.openHostFiles(host) }
+                        action("arrow.left.arrow.right", String(localized: "端口转发"), badge: model.hasRunningForward(hostId: host.id)) { model.openForwardPanel(host) }
+                        action("pencil", String(localized: "编辑")) { model.beginEditHost(host) }
                     }
                     .padding(.bottom, 26)
                 }
@@ -132,15 +132,15 @@ struct HostOverview: View {
         if let r = host.rdp {
             let items: [(String, String, Bool)] = {
                 var a: [(String, String, Bool)] = []                 // (标签, 值, 是否随脱敏模糊)
-                if !host.os.isEmpty { a.append(("系统", host.os, false)) }
-                a.append(("地址", r.host, true))
-                a.append(("端口", String(r.port), false))
-                a.append(("用户名", r.user, true))
-                if !r.domain.isEmpty { a.append(("域", r.domain, false)) }
-                a.append(("默认分辨率", "\(r.width) × \(r.height)", false))
-                a.append(("色深", "\(r.colorDepth) 位", false))
-                a.append(("安全层", r.security.label, false))
-                if !host.group.isEmpty { a.append(("分组", host.group, false)) }
+                if !host.os.isEmpty { a.append((String(localized: "系统"), host.os, false)) }
+                a.append((String(localized: "地址"), r.host, true))
+                a.append((String(localized: "端口"), String(r.port), false))
+                a.append((String(localized: "用户名"), r.user, true))
+                if !r.domain.isEmpty { a.append((String(localized: "域"), r.domain, false)) }
+                a.append((String(localized: "默认分辨率"), "\(r.width) × \(r.height)", false))
+                a.append((String(localized: "色深"), "\(r.colorDepth) 位", false))
+                a.append((String(localized: "安全层"), r.security.label, false))
+                if !host.group.isEmpty { a.append((String(localized: "分组"), host.group, false)) }
                 return a
             }()
             VStack(alignment: .leading, spacing: 8) {
@@ -177,12 +177,12 @@ struct HostOverview: View {
     private var specsRow: some View {
         if let s = host.specs, !s.isEmpty {
             HStack(spacing: 24) {
-                if !s.os.isEmpty { specItem("系统", s.os) }
-                if !s.cores.isEmpty { specItem("核心", "\(s.cores) 核") }
-                if !s.memory.isEmpty { specItem("内存", s.memory) }
-                if !s.disk.isEmpty { specItem("磁盘", s.disk) }
-                if !s.vram.isEmpty { specItem("显存", s.vram) }
-                if !s.gpu.isEmpty { specItem("显卡", s.gpu) }
+                if !s.os.isEmpty { specItem(String(localized: "系统"), s.os) }
+                if !s.cores.isEmpty { specItem(String(localized: "核心"), "\(s.cores) 核") }
+                if !s.memory.isEmpty { specItem(String(localized: "内存"), s.memory) }
+                if !s.disk.isEmpty { specItem(String(localized: "磁盘"), s.disk) }
+                if !s.vram.isEmpty { specItem(String(localized: "显存"), s.vram) }
+                if !s.gpu.isEmpty { specItem(String(localized: "显卡"), s.gpu) }
             }
             .padding(.bottom, 20)
         } else if model.probingHosts.contains(host.id) {
@@ -204,9 +204,9 @@ struct HostOverview: View {
     private var statusBadge: some View {
         let (label, fg, bg): (String, Color, Color) = {
             switch host.status {
-            case .online: return ("在线", Pal.green, Pal.green.opacity(0.15))
-            case .offline: return ("离线", Pal.overlay, Pal.overlay.opacity(0.15))
-            case .unknown: return ("未知", Pal.yellow, Pal.yellow.opacity(0.15))
+            case .online: return (String(localized: "在线"), Pal.green, Pal.green.opacity(0.15))
+            case .offline: return (String(localized: "离线"), Pal.overlay, Pal.overlay.opacity(0.15))
+            case .unknown: return (String(localized: "未知"), Pal.yellow, Pal.yellow.opacity(0.15))
             }
         }()
         return Text(label).font(.system(size: 11)).foregroundStyle(fg)
@@ -254,7 +254,7 @@ struct HostOverview: View {
                     }
                 }
                 .frame(height: 24)   // 固定图标高度，避免不同字形造成卡片高度参差
-                Text(loading ? "连接中…" : label).font(.system(size: 12)).foregroundStyle(Pal.text)
+                Text(loading ? String(localized: "连接中…") : label).font(.system(size: 12)).foregroundStyle(Pal.text)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
@@ -324,7 +324,7 @@ private struct MonitorPanel: View {
                     }
                     .buttonStyle(.plain)
                     .pointerCursor()
-                    .tooltip("本次启动内不再显示；如需永久关闭，请在「设置 - 通用」开启「隐藏监控提示」。")
+                    .tooltip(String(localized: "本次启动内不再显示；如需永久关闭，请在「设置 - 通用」开启「隐藏监控提示」。"))
                     Spacer(minLength: 0)
                 }
             }
@@ -356,7 +356,7 @@ private struct MonitorPanel: View {
     // MARK: 各区
 
     private func cpuSection(_ m: HostMetrics) -> some View {
-        section("cpu", "处理器核心负载") {
+        section("cpu", String(localized: "处理器核心负载")) {
             card {
                 VStack(alignment: .leading, spacing: 11) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -366,7 +366,7 @@ private struct MonitorPanel: View {
                             Text("\(m.perCore.count) 核").font(.system(size: 11)).foregroundStyle(Pal.overlay)
                         }
                         Spacer()
-                        plainNum(String(format: "负载 %.2f / %.2f / %.2f", m.load1, m.load5, m.load15),
+                        plainNum(String(format: String(localized: "负载 %.2f / %.2f / %.2f"), m.load1, m.load5, m.load15),
                                  size: 10, design: .monospaced, color: Pal.overlay)
                     }
                     if m.perCore.isEmpty {
@@ -407,13 +407,13 @@ private struct MonitorPanel: View {
     }
 
     private func memorySection(_ m: HostMetrics) -> some View {
-        section("memorychip", "内存") {
+        section("memorychip", String(localized: "内存")) {
             card {
                 VStack(spacing: 12) {
-                    usageRow(name: "内存", percent: m.memTotalKB > 0 ? m.memPercent : 0,
+                    usageRow(name: String(localized: "内存"), percent: m.memTotalKB > 0 ? m.memPercent : 0,
                              left: "\(human(m.memUsedKB)) / \(human(m.memTotalKB))", right: "RAM", color: Self.blue)
                     if m.hasSwap {
-                        usageRow(name: "交换", percent: m.swapPercent,
+                        usageRow(name: String(localized: "交换"), percent: m.swapPercent,
                                  left: "\(human(m.swapUsedKB)) / \(human(m.swapTotalKB))", right: "SWAP", color: Self.purple)
                     }
                 }
@@ -422,7 +422,7 @@ private struct MonitorPanel: View {
     }
 
     private func diskSection(_ disks: [DiskUsage]) -> some View {
-        section("internaldrive", "存储卷") {
+        section("internaldrive", String(localized: "存储卷")) {
             card {
                 // 单盘整行（多数服务器只有根分区，半宽会显得空），多盘才用两列紧凑网格。
                 if disks.count == 1, let d = disks.first {
@@ -444,7 +444,7 @@ private struct MonitorPanel: View {
     }
 
     private func gpuSection(_ gpus: [GPUInfo]) -> some View {
-        section("bolt", "图形处理器 (\(gpus.count))") {
+        section("bolt", String(localized: "图形处理器 (\(gpus.count))")) {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], alignment: .leading, spacing: 10) {
                 ForEach(gpus) { g in gpuCard(g) }
             }
@@ -492,7 +492,7 @@ private struct MonitorPanel: View {
     }
 
     private func networkSection(_ m: HostMetrics) -> some View {
-        section("network", "网络") {
+        section("network", String(localized: "网络")) {
             VStack(spacing: 10) {
                 card {
                     GeometryReader { geo in
@@ -640,9 +640,9 @@ private struct MonitorPanel: View {
     private func uptimeText(_ secs: Double) -> String {
         let s = Int(secs)
         let d = s / 86400, h = (s % 86400) / 3600, m = (s % 3600) / 60
-        if d > 0 { return "运行 \(d)天 \(h)时 \(m)分" }
-        if h > 0 { return "运行 \(h)时 \(m)分" }
-        return "运行 \(m) 分"
+        if d > 0 { return String(localized: "运行 \(d)天 \(h)时 \(m)分") }
+        if h > 0 { return String(localized: "运行 \(h)时 \(m)分") }
+        return String(localized: "运行 \(m) 分")
     }
 }
 

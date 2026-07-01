@@ -167,9 +167,9 @@ final class FileTreeState: ObservableObject, FileOpsTarget {
         if path == "/" || path.isEmpty {
             let r = await fs.list("/")
             if case .success(let files) = r { roots = files.map { FileTreeNode(file: $0) }; rebuild(); return .ok }
-            return await fs.exists("/") ? .failed("无法刷新") : .gone
+            return await fs.exists("/") ? .failed(String(localized: "无法刷新")) : .gone
         }
-        guard let node = node(at: path), node.file.isDir else { return .failed("不是目录") }
+        guard let node = node(at: path), node.file.isDir else { return .failed(String(localized: "不是目录")) }
         let r = await fs.list(path)
         switch r {
         case .success(let files):

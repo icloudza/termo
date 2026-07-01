@@ -44,7 +44,7 @@ struct SnippetEditView: View {
                     labeled("分组") {
                         VStack(alignment: .leading, spacing: 6) {
                             SearchableSelect(options: model.snippetGroupNames, text: $group,
-                                             placeholder: "搜索或新建分组…")
+                                             placeholder: String(localized: "搜索或新建分组…"))
                             Text("在侧栏按分组折叠归类（可留空，归入「未分组」）。")
                                 .font(.system(size: 11)).foregroundStyle(Pal.overlay)
                         }

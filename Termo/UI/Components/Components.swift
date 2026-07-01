@@ -73,19 +73,32 @@ struct TruncatableText: View {
 
 /// 自定义分段控件，风格统一、主题自适应。
 struct SegmentedControl<T: Hashable>: View {
-    let options: [(value: T, label: String)]
+    let options: [(value: T, label: Text)]
     @Binding var selection: T
     @ObservedObject private var theme = ThemeManager.shared
     @Namespace private var ns
+
+    // 静态 UI 文案：LocalizedStringKey，字面量自动进 String Catalog。
+    init(options: [(value: T, label: LocalizedStringKey)], selection: Binding<T>) {
+        self.options = options.map { ($0.value, Text($0.label)) }
+        self._selection = selection
+    }
+    // 动态数据（枚举 rawValue/title 等）：verbatim，不本地化。
+    init(options: [(value: T, verbatim: String)], selection: Binding<T>) {
+        self.options = options.map { ($0.value, Text(verbatim: $0.verbatim)) }
+        self._selection = selection
+    }
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(options, id: \.value) { opt in
                 let selected = selection == opt.value
-                Text(opt.label)
+                opt.label
                     .font(.system(size: 12, weight: selected ? .semibold : .regular))
                     .foregroundStyle(selected ? Pal.text : Pal.subtext)
-                    .padding(.horizontal, 14)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)   // 长文案（如英文）缩放保持单行，不换行撑高
+                    .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity)
                     .background {
@@ -125,15 +138,24 @@ extension Binding where Value == String {
 }
 
 struct ThemedTextField: View {
-    let placeholder: String
+    private let prompt: Text
     @Binding var text: String
     var autofocus: Bool = false
     var onSubmit: (() -> Void)? = nil
     @FocusState private var focused: Bool
     @ObservedObject private var theme = ThemeManager.shared
 
+    // 静态 UI 文案：LocalizedStringKey，字面量自动进 String Catalog。
+    init(placeholder: LocalizedStringKey, text: Binding<String>, autofocus: Bool = false, onSubmit: (() -> Void)? = nil) {
+        self.prompt = Text(placeholder); self._text = text; self.autofocus = autofocus; self.onSubmit = onSubmit
+    }
+    // 动态数据（片段变量名等）：verbatim，不本地化。
+    init(verbatim placeholder: String, text: Binding<String>, autofocus: Bool = false, onSubmit: (() -> Void)? = nil) {
+        self.prompt = Text(verbatim: placeholder); self._text = text; self.autofocus = autofocus; self.onSubmit = onSubmit
+    }
+
     var body: some View {
-        TextField(placeholder, text: $text.singleLine)
+        TextField(text: $text.singleLine, prompt: prompt) { EmptyView() }
             .textFieldStyle(.plain)
             .lineLimit(1)
             .noNativeFocusRing()
@@ -155,7 +177,7 @@ struct ThemedTextField: View {
 
 /// 多行输入框。
 struct ThemedTextEditor: View {
-    let placeholder: String
+    let placeholder: LocalizedStringKey
     @Binding var text: String
     @FocusState private var focused: Bool
     @ObservedObject private var theme = ThemeManager.shared
@@ -191,7 +213,7 @@ struct ThemedTextEditor: View {
 
 /// 密码输入框（带显示/隐藏小眼睛）。
 struct ThemedSecureField: View {
-    let placeholder: String
+    let placeholder: LocalizedStringKey
     @Binding var text: String
     @State private var reveal = false
     @FocusState private var focusedField: Field?
@@ -250,22 +272,36 @@ struct ThemedSecureField: View {
 
 /// 主题自适应下拉菜单（基于 popover 全自定义实现）。
 struct ThemedDropdown<T: Hashable>: View {
-    let options: [(value: T, label: String)]
+    let options: [(value: T, label: Text)]
     @Binding var selection: T
     @State private var open = false
     @ObservedObject private var theme = ThemeManager.shared
 
-    private var currentLabel: String {
-        options.first(where: { $0.value == selection })?.label ?? ""
+    // 静态 UI 文案：LocalizedStringKey，字面量自动进 String Catalog。
+    init(options: [(value: T, label: LocalizedStringKey)], selection: Binding<T>) {
+        self.options = options.map { ($0.value, Text($0.label)) }
+        self._selection = selection
+    }
+    // 动态数据（编码/算法/枚举 rawValue 等）：verbatim，不本地化。
+    init(options: [(value: T, verbatim: String)], selection: Binding<T>) {
+        self.options = options.map { ($0.value, Text(verbatim: $0.verbatim)) }
+        self._selection = selection
+    }
+
+    private var currentLabel: Text {
+        options.first(where: { $0.value == selection })?.label ?? Text(verbatim: "")
     }
 
     var body: some View {
         Button { open.toggle() } label: {
             HStack(spacing: 8) {
-                Text(currentLabel)
+                currentLabel
                     .font(.system(size: 13))
                     .foregroundStyle(Pal.text)
-                Spacer()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)   // 英文较长时缩字号保持单行，不换行变胖
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Pal.overlay)
@@ -287,7 +323,7 @@ struct ThemedDropdown<T: Hashable>: View {
             VStack(spacing: 1) {
                 ForEach(options, id: \.value) { opt in
                     DropdownOption(
-                        label: opt.label,
+                        text: opt.label,
                         selected: opt.value == selection
                     ) {
                         selection = opt.value
@@ -303,11 +339,24 @@ struct ThemedDropdown<T: Hashable>: View {
 }
 
 private struct DropdownOption: View {
-    let label: String
+    let label: Text
     let selected: Bool
     var leadingSymbol: String? = nil      // 非 nil 时在标签前画一个强调色小图标（如「新建」的 plus）
     let action: () -> Void
     @State private var hover = false
+
+    // 静态 UI 文案：走 LocalizedStringKey，字面量自动进 String Catalog。
+    init(label: LocalizedStringKey, selected: Bool, leadingSymbol: String? = nil, action: @escaping () -> Void) {
+        self.label = Text(label); self.selected = selected; self.leadingSymbol = leadingSymbol; self.action = action
+    }
+    // 动态数据（分组名/用户输入）：verbatim，不本地化。
+    init(verbatim label: String, selected: Bool, leadingSymbol: String? = nil, action: @escaping () -> Void) {
+        self.label = Text(verbatim: label); self.selected = selected; self.leadingSymbol = leadingSymbol; self.action = action
+    }
+    // 由上游（ThemedDropdown）预构建好的 Text 直接透传。
+    init(text label: Text, selected: Bool, leadingSymbol: String? = nil, action: @escaping () -> Void) {
+        self.label = label; self.selected = selected; self.leadingSymbol = leadingSymbol; self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
@@ -317,7 +366,7 @@ private struct DropdownOption: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Pal.mauve)
                 }
-                Text(label)
+                label
                     .font(.system(size: 13))
                     .foregroundStyle(leadingSymbol != nil ? Pal.mauve : (selected ? Pal.mauve : Pal.text))
                     .lineLimit(1)
@@ -411,13 +460,13 @@ struct SearchableSelect: View {
                 ScrollView {
                     VStack(spacing: 1) {
                         if canCreate {
-                            DropdownOption(label: "新建「\(trimmedQuery)」", selected: false, leadingSymbol: "plus") {
+                            DropdownOption(verbatim: "新建「\(trimmedQuery)」", selected: false, leadingSymbol: "plus") {
                                 select(trimmedQuery)
                             }
                         }
                         ForEach(filtered, id: \.self) { opt in
                             // 再次点击已选中的项即取消选择（回到「未分组」）；点其它项则切换选中。
-                            DropdownOption(label: opt, selected: opt == text) {
+                            DropdownOption(verbatim: opt, selected: opt == text) {
                                 if opt == text { deselect() } else { select(opt) }
                             }
                         }
@@ -567,16 +616,37 @@ struct ThemedCheckbox: View {
 
 /// 居中确认对话框（带半透明遮罩），替代系统模态弹窗。
 struct ConfirmDialog: View {
-    let title: String
-    let message: String
-    var confirmTitle: String = "确认"
-    var cancelTitle: String = "取消"
+    private let title: Text
+    private let message: Text
+    var confirmTitle: LocalizedStringKey = "确认"
+    var cancelTitle: LocalizedStringKey = "取消"
     var destructive: Bool = false
     var showCancel: Bool = true   // 纯提示型弹窗设 false，仅保留确认按钮
     var busy: Bool = false         // 确认操作进行中：确认键旁显示转圈并禁用，取消键仍可点（中途取消）
     let onConfirm: () -> Void
     let onCancel: () -> Void
     @ObservedObject private var theme = ThemeManager.shared
+
+    // 静态 UI 文案：title/message 走 LocalizedStringKey，字面量自动进 String Catalog。
+    init(title: LocalizedStringKey, message: LocalizedStringKey,
+         confirmTitle: LocalizedStringKey = "确认", cancelTitle: LocalizedStringKey = "取消",
+         destructive: Bool = false, showCancel: Bool = true, busy: Bool = false,
+         onConfirm: @escaping () -> Void, onCancel: @escaping () -> Void) {
+        self.title = Text(title); self.message = Text(message)
+        self.confirmTitle = confirmTitle; self.cancelTitle = cancelTitle
+        self.destructive = destructive; self.showCancel = showCancel; self.busy = busy
+        self.onConfirm = onConfirm; self.onCancel = onCancel
+    }
+    // 动态数据（含标签名/数量等运行时字符串）：title/message 走 verbatim，不本地化。
+    init(verbatimTitle title: String, verbatimMessage message: String,
+         confirmTitle: LocalizedStringKey = "确认", cancelTitle: LocalizedStringKey = "取消",
+         destructive: Bool = false, showCancel: Bool = true, busy: Bool = false,
+         onConfirm: @escaping () -> Void, onCancel: @escaping () -> Void) {
+        self.title = Text(verbatim: title); self.message = Text(verbatim: message)
+        self.confirmTitle = confirmTitle; self.cancelTitle = cancelTitle
+        self.destructive = destructive; self.showCancel = showCancel; self.busy = busy
+        self.onConfirm = onConfirm; self.onCancel = onCancel
+    }
 
     var body: some View {
         ZStack {
@@ -585,10 +655,10 @@ struct ConfirmDialog: View {
                 .onTapGesture(perform: onCancel)
 
             VStack(alignment: .leading, spacing: 14) {
-                Text(title)
+                title
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Pal.text)
-                Text(message)
+                message
                     .font(.system(size: 13))
                     .foregroundStyle(Pal.subtext)
                     .fixedSize(horizontal: false, vertical: true)
@@ -622,7 +692,7 @@ struct ConfirmDialog: View {
 
 /// 主要操作按钮（强调色填充）。
 struct PrimaryButton: View {
-    let title: String
+    let title: LocalizedStringKey
     var enabled: Bool = true
     let action: () -> Void
     @ObservedObject private var theme = ThemeManager.shared
@@ -632,6 +702,7 @@ struct PrimaryButton: View {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.white)
+                .lineLimit(1).fixedSize()
                 .padding(.horizontal, 16).padding(.vertical, 7)
                 .background(Pal.mauve.opacity(enabled ? 1 : 0.4), in: RoundedRectangle(cornerRadius: 7))
                 .contentShape(Rectangle())
@@ -644,7 +715,7 @@ struct PrimaryButton: View {
 
 /// 次要操作按钮。
 struct SecondaryButton: View {
-    let title: String
+    let title: LocalizedStringKey
     let action: () -> Void
     @ObservedObject private var theme = ThemeManager.shared
 
@@ -653,6 +724,7 @@ struct SecondaryButton: View {
             Text(title)
                 .font(.system(size: 13))
                 .foregroundStyle(Pal.subtext)
+                .lineLimit(1).fixedSize()
                 .padding(.horizontal, 16).padding(.vertical, 7)
                 .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 7))
                 .contentShape(Rectangle())

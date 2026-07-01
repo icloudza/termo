@@ -27,12 +27,12 @@ struct GenerateKeyView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     labeled("名称") { ThemedTextField(placeholder: "我的密钥", text: $name) }
-                    labeled("类型") {
+                    labeled(String(localized: "类型")) {
                         ThemedDropdown(options: SSHKeyType.allCases.map { (value: $0, label: $0.label) },
                                        selection: $type)
                     }
                     labeled("注释") { ThemedTextField(placeholder: "user@host（可选，写入公钥尾部）", text: $comment) }
-                    labeled("口令") { ThemedSecureField(placeholder: "（可选，给私钥加密）", text: $passphrase) }
+                    labeled(String(localized: "口令")) { ThemedSecureField(placeholder: "（可选，给私钥加密）", text: $passphrase) }
                     Text("私钥安全存入系统钥匙串，绝不落盘明文；公钥可随时复制到服务器 authorized_keys。")
                         .font(.system(size: 11)).foregroundStyle(Pal.overlay)
                 }
@@ -103,11 +103,11 @@ struct KeyDetailView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    info("类型", key.type.label)
-                    info("指纹", key.fingerprint.isEmpty ? "—" : key.fingerprint)
-                    info("口令保护", key.hasPassphrase ? "已加密" : "无")
-                    info("创建于", Self.dateFormatter.string(from: key.createdAt))
-                    if !key.comment.isEmpty { info("注释", key.comment) }
+                    info(String(localized: "类型"), key.type.label)
+                    info(String(localized: "指纹"), key.fingerprint.isEmpty ? "—" : key.fingerprint)
+                    info(String(localized: "口令保护"), key.hasPassphrase ? String(localized: "已加密") : String(localized: "无"))
+                    info(String(localized: "创建于"), Self.dateFormatter.string(from: key.createdAt))
+                    if !key.comment.isEmpty { info(String(localized: "注释"), key.comment) }
 
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {

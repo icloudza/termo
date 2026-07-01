@@ -130,7 +130,7 @@ final class RemoteFS {
                 let s: SSHSession
                 do { s = try pool.take(conn) }      // 借暖连接（认证只在首次摊销，替代 ControlMaster）
                 catch {
-                    let msg = (error as? SSHSession.SSHError)?.message ?? "连接失败"
+                    let msg = (error as? SSHSession.SSHError)?.message ?? String(localized: "连接失败")
                     cont.resume(returning: OpResult(data: Data(), stderr: Data(msg.utf8), code: -1))
                     return
                 }
@@ -142,7 +142,7 @@ final class RemoteFS {
                     cont.resume(returning: OpResult(data: r.stdout, stderr: r.stderr, code: code))
                 } catch {
                     pool.discard(s)                 // 通道级错误（可能断线）→ 弃用，不污染池
-                    let msg = (error as? SSHSession.SSHError)?.message ?? "执行失败"
+                    let msg = (error as? SSHSession.SSHError)?.message ?? String(localized: "执行失败")
                     cont.resume(returning: OpResult(data: Data(), stderr: Data(msg.utf8), code: -1))
                 }
             }
@@ -194,7 +194,7 @@ final class RemoteFS {
             do { try await sftpFinalize(remotePath); return .success(()) }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
             catch let e as SFTPError { return .failure(RemoteFSError(message: e.message)) }
-            catch { return .failure(RemoteFSError(message: "落地失败")) }
+            catch { return .failure(RemoteFSError(message: String(localized: "落地失败"))) }
         }
         return await finalizeUploadViaShell(remotePath: remotePath)
     }
@@ -218,7 +218,7 @@ final class RemoteFS {
             "chmod \"$(stat -f %Lp \"$P\" 2>/dev/null)\" \"$T\" 2>/dev/null; fi; " +
             "mv -f \"$T\" \"$P\""
         let r = await run(cmd, timeout: 30)
-        return r.code == 0 ? .success(()) : .failure(RemoteFSError(message: "落地失败（退出码 \(r.code)）"))
+        return r.code == 0 ? .success(()) : .failure(RemoteFSError(message: String(localized: "落地失败（退出码 \(r.code)）")))
     }
 
     /// 删除远端 .part（取消并放弃时）。best-effort，失败靠下次 probe 自愈。
@@ -240,41 +240,41 @@ final class RemoteFS {
             do { try await session().mkdir(path); return .success(()) }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
             catch let e as SFTPError {
-                return .failure(RemoteFSError(message: e.isPermission ? "没有创建权限" : e.message))
+                return .failure(RemoteFSError(message: e.isPermission ? String(localized: "没有创建权限") : e.message))
             }
-            catch { return .failure(RemoteFSError(message: "新建文件夹失败")) }
+            catch { return .failure(RemoteFSError(message: String(localized: "新建文件夹失败"))) }
         }
         let b64 = Data(path.utf8).base64EncodedString()
         let r = await run("P=$(printf %s '\(b64)'|base64 -d); mkdir -- \"$P\"")
-        return r.code == 0 ? .success(()) : .failure(Self.shellErr(r, "新建文件夹失败"))
+        return r.code == 0 ? .success(()) : .failure(Self.shellErr(r, String(localized: "新建文件夹失败")))
     }
 
     /// 新建空文件（noclobber 防覆盖已有）。
     func createFile(_ path: String) async -> Result<Void, RemoteFSError> {
         let b64 = Data(path.utf8).base64EncodedString()
         let r = await run("P=$(printf %s '\(b64)'|base64 -d); set -C; : > \"$P\"")
-        return r.code == 0 ? .success(()) : .failure(RemoteFSError(message: "新建文件失败（可能已存在或无权限）"))
+        return r.code == 0 ? .success(()) : .failure(RemoteFSError(message: String(localized: "新建文件失败（可能已存在或无权限）")))
     }
 
     /// 下载远端文件到本地：SFTP 流式分块读 → 写本地，避免整文件进内存；经 control 上报进度、响应取消。
     /// 须经独立 RemoteFS 实例调用（自带 SFTP 通道，不阻塞文件浏览所用的会话）。
     /// 下载到本地文件。startOffset>0 表示续传：从本地已有半截续写、远端从该偏移继续读（暂停恢复用）。
     func download(_ remotePath: String, to localURL: URL, startOffset: Int64 = 0, control: UploadControl) async -> UploadOutcome {
-        guard isSftpUsable else { return .failed("需要 SFTP 连接") }
+        guard isSftpUsable else { return .failed(String(localized: "需要 SFTP 连接")) }
         do {
             let handle = try await session().open(remotePath, pflags: SFTPFlag.READ)
             let fh: FileHandle
             if startOffset > 0, FileManager.default.fileExists(atPath: localURL.path) {
                 // 续传：追加到本地半截。打不开则报错（绝不退回截断重建，否则会丢掉已下载部分造成空洞）。
                 guard let h = try? FileHandle(forWritingTo: localURL) else {
-                    await session().closeHandle(handle); return .failed("无法写入本地文件")
+                    await session().closeHandle(handle); return .failed(String(localized: "无法写入本地文件"))
                 }
                 _ = try? h.seekToEnd()
                 fh = h
             } else {
                 FileManager.default.createFile(atPath: localURL.path, contents: nil)
                 guard let h = try? FileHandle(forWritingTo: localURL) else {
-                    await session().closeHandle(handle); return .failed("无法写入本地文件")
+                    await session().closeHandle(handle); return .failed(String(localized: "无法写入本地文件"))
                 }
                 fh = h
             }
@@ -294,11 +294,11 @@ final class RemoteFS {
             await session().closeHandle(handle)
             return .completed
         } catch let e as SFTPError where e.isTransport {
-            markSftpDown(); return .failed("连接中断")
+            markSftpDown(); return .failed(String(localized: "连接中断"))
         } catch let e as SFTPError {
-            return .failed(e.isPermission ? "没有读取权限" : e.message)
+            return .failed(e.isPermission ? String(localized: "没有读取权限") : e.message)
         } catch {
-            return .failed("下载失败")
+            return .failed(String(localized: "下载失败"))
         }
     }
 
@@ -332,7 +332,7 @@ final class RemoteFS {
                 off = min(UInt64(startOffset), real)      // 续传偏移以远端 .part 实际大小为准（R4）
             }
             guard let input = try? FileHandle(forReadingFrom: localURL) else {
-                await s.closeHandle(h); return .failed("无法读取本地文件")
+                await s.closeHandle(h); return .failed(String(localized: "无法读取本地文件"))
             }
             if off > 0 { try? input.seek(toOffset: off) }
             var sent = Int64(off)
@@ -345,13 +345,13 @@ final class RemoteFS {
                 do {
                     guard let c = try input.read(upToCount: 32 * 1024), !c.isEmpty else { break }   // EOF
                     chunk = c
-                } catch { try? input.close(); await s.closeHandle(h); return .failed("读取本地文件出错") }
+                } catch { try? input.close(); await s.closeHandle(h); return .failed(String(localized: "读取本地文件出错")) }
                 do { try await s.write(h, offset: UInt64(sent), data: chunk) }
                 catch let e as SFTPError where e.isTransport {
-                    try? input.close(); await s.closeHandle(h); markSftpDown(); return .failed("连接中断")
+                    try? input.close(); await s.closeHandle(h); markSftpDown(); return .failed(String(localized: "连接中断"))
                 } catch let e as SFTPError {
                     try? input.close(); await s.closeHandle(h)
-                    return .failed(e.isPermission ? "没有写入权限" : e.message)
+                    return .failed(e.isPermission ? String(localized: "没有写入权限") : e.message)
                 }
                 sent += Int64(chunk.count)
                 control.setSent(sent)
@@ -360,11 +360,11 @@ final class RemoteFS {
             await s.closeHandle(h)
             return .completed
         } catch let e as SFTPError where e.isTransport {
-            markSftpDown(); return .failed("连接中断")
+            markSftpDown(); return .failed(String(localized: "连接中断"))
         } catch let e as SFTPError {
-            return .failed(e.isPermission ? "没有写入权限" : e.message)
+            return .failed(e.isPermission ? String(localized: "没有写入权限") : e.message)
         } catch {
-            return .failed("上传失败")
+            return .failed(String(localized: "上传失败"))
         }
     }
 
@@ -384,12 +384,12 @@ final class RemoteFS {
                 let session: SSHSession
                 do { session = try SSHSessionPool.shared.dedicated(conn) }
                 catch {
-                    cont.resume(returning: .failed((error as? SSHSession.SSHError)?.message ?? "无法连接"))
+                    cont.resume(returning: .failed((error as? SSHSession.SSHError)?.message ?? String(localized: "无法连接")))
                     return
                 }
                 defer { session.close() }
                 guard let input = try? FileHandle(forReadingFrom: localURL) else {
-                    cont.resume(returning: .failed("无法读取本地文件")); return
+                    cont.resume(returning: .failed(String(localized: "无法读取本地文件"))); return
                 }
                 defer { try? input.close() }
                 if startOffset > 0 { try? input.seek(toOffset: UInt64(startOffset)) }
@@ -421,11 +421,11 @@ final class RemoteFS {
                     let r = try session.execUpload(remoteCmd, pull: pull)
                     if reason == 1 { outcome = .cancelled }
                     else if reason == 2 { outcome = .paused }                 // 保留远端 .part 供续传
-                    else if reason == 3 { outcome = .failed("读取本地文件出错") }
+                    else if reason == 3 { outcome = .failed(String(localized: "读取本地文件出错")) }
                     else if r.rc == 0 && r.exitCode == 0 { outcome = .completed }
-                    else { outcome = .failed("上传中断（退出码 \(r.exitCode)）") }
+                    else { outcome = .failed(String(localized: "上传中断（退出码 \(r.exitCode)）")) }
                 } catch {
-                    outcome = .failed((error as? SSHSession.SSHError)?.message ?? "连接中断")
+                    outcome = .failed((error as? SSHSession.SSHError)?.message ?? String(localized: "连接中断"))
                 }
                 cont.resume(returning: outcome)
             }
@@ -439,10 +439,10 @@ final class RemoteFS {
             do { return .success(try await sftpRead(path, limit: limit)) }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
             catch let e as SFTPError {
-                return .failure(RemoteFSError(message: e.isNoSuchFile ? "文件不存在"
-                    : (e.isPermission ? "没有读取权限" : e.message)))
+                return .failure(RemoteFSError(message: e.isNoSuchFile ? String(localized: "文件不存在")
+                    : (e.isPermission ? String(localized: "没有读取权限") : e.message)))
             }
-            catch { return .failure(RemoteFSError(message: "无法读取文件")) }
+            catch { return .failure(RemoteFSError(message: String(localized: "无法读取文件"))) }
         }
         return await readViaShell(path, limit: limit)
     }
@@ -480,10 +480,10 @@ final class RemoteFS {
         if r.code != 0 {
             let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let msg: String
-            if err.contains("__TERMO_NOENT__") { msg = "文件不存在" }
-            else if err.contains("__TERMO_ISDIR__") { msg = "这是一个目录" }
-            else if err.contains("Permission denied") || err.contains("permission") { msg = "没有读取权限" }
-            else { msg = err.isEmpty ? "无法读取文件（退出码 \(r.code)）" : err }
+            if err.contains("__TERMO_NOENT__") { msg = String(localized: "文件不存在") }
+            else if err.contains("__TERMO_ISDIR__") { msg = String(localized: "这是一个目录") }
+            else if err.contains("Permission denied") || err.contains("permission") { msg = String(localized: "没有读取权限") }
+            else { msg = err.isEmpty ? String(localized: "无法读取文件（退出码 \(r.code)）") : err }
             return .failure(RemoteFSError(message: msg))
         }
         // 拆首行（版本）与正文（base64）
@@ -498,7 +498,7 @@ final class RemoteFS {
             }
         }
         guard let decoded = Data(base64Encoded: body, options: .ignoreUnknownCharacters) else {
-            return .failure(RemoteFSError(message: "内容解码失败"))
+            return .failure(RemoteFSError(message: String(localized: "内容解码失败")))
         }
         return .success((decoded, version))
     }
@@ -513,8 +513,8 @@ final class RemoteFS {
             do { return .success(try await sftpWrite(path, data: data, expectedVersion: expectedVersion)) }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
             catch let e as RemoteFSError { return .failure(e) }                // 冲突等已映射
-            catch let e as SFTPError { return .failure(RemoteFSError(message: e.isPermission ? "没有写入权限" : e.message)) }
-            catch { return .failure(RemoteFSError(message: "保存失败")) }
+            catch let e as SFTPError { return .failure(RemoteFSError(message: e.isPermission ? String(localized: "没有写入权限") : e.message)) }
+            catch { return .failure(RemoteFSError(message: String(localized: "保存失败"))) }
         }
         return await writeViaShell(path, data: data, expectedVersion: expectedVersion)
     }
@@ -525,9 +525,9 @@ final class RemoteFS {
         let existing = try await sftpStatOrNil(path)        // 不存在→nil；transport→抛
         if let st = existing, let exp = expectedVersion, !exp.isEmpty {
             if let token = st.versionToken {
-                if token != exp { throw RemoteFSError(message: "文件已被其他程序或会话修改", isConflict: true) }
+                if token != exp { throw RemoteFSError(message: String(localized: "文件已被其他程序或会话修改"), isConflict: true) }
             } else {
-                throw RemoteFSError(message: "无法校验文件版本", isConflict: true)   // 存在但属性不全（审查 R6）
+                throw RemoteFSError(message: String(localized: "无法校验文件版本"), isConflict: true)   // 存在但属性不全（审查 R6）
             }
         }
         let tmp = path + ".termo-tmp"
@@ -574,12 +574,12 @@ final class RemoteFS {
         if r.code != 0 {
             let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if err.contains("__TERMO_CONFLICT__") {
-                return .failure(RemoteFSError(message: "文件已被其他程序或会话修改", isConflict: true))
+                return .failure(RemoteFSError(message: String(localized: "文件已被其他程序或会话修改"), isConflict: true))
             }
             let msg: String
-            if err.contains("__TERMO_WRITEFAIL__") || err.contains("Permission denied") { msg = "没有写入权限" }
-            else if err.contains("__TERMO_TMPFAIL__") { msg = "无法在目标目录创建临时文件" }
-            else { msg = err.isEmpty ? "保存失败（退出码 \(r.code)）" : err }
+            if err.contains("__TERMO_WRITEFAIL__") || err.contains("Permission denied") { msg = String(localized: "没有写入权限") }
+            else if err.contains("__TERMO_TMPFAIL__") { msg = String(localized: "无法在目标目录创建临时文件") }
+            else { msg = err.isEmpty ? String(localized: "保存失败（退出码 \(r.code)）") : err }
             return .failure(RemoteFSError(message: msg))
         }
         let newVer = String(data: r.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -596,10 +596,10 @@ final class RemoteFS {
             do { try await session().remove(path); return .success(()) }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
             catch let e as SFTPError {
-                return .failure(RemoteFSError(message: e.isPermission ? "没有删除权限"
-                    : (e.isNoSuchFile ? "文件不存在" : e.message)))
+                return .failure(RemoteFSError(message: e.isPermission ? String(localized: "没有删除权限")
+                    : (e.isNoSuchFile ? String(localized: "文件不存在") : e.message)))
             }
-            catch { return .failure(RemoteFSError(message: "删除失败")) }
+            catch { return .failure(RemoteFSError(message: String(localized: "删除失败"))) }
         }
         return await deleteViaShell(path, isDir: false, handle: handle)
     }
@@ -611,8 +611,8 @@ final class RemoteFS {
         let r = await run(cmd, handle: handle)
         if r.code != 0 {
             let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let msg = err.localizedCaseInsensitiveContains("permission") ? "没有删除权限"
-                : (err.isEmpty ? "删除失败（退出码 \(r.code)）" : err)
+            let msg = err.localizedCaseInsensitiveContains("permission") ? String(localized: "没有删除权限")
+                : (err.isEmpty ? String(localized: "删除失败（退出码 \(r.code)）") : err)
             return .failure(RemoteFSError(message: msg))
         }
         return .success(())
@@ -622,16 +622,16 @@ final class RemoteFS {
     func rename(_ from: String, to: String) async -> Result<Void, RemoteFSError> {
         if isSftpUsable {
             do {
-                if try await sftpStatOrNil(to) != nil { return .failure(RemoteFSError(message: "目标名称已存在")) }
+                if try await sftpStatOrNil(to) != nil { return .failure(RemoteFSError(message: String(localized: "目标名称已存在"))) }
                 try await session().rename(from: from, to: to)
                 return .success(())
             }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
             catch let e as SFTPError {
                 // RENAME v3 不覆盖：目标已存在通常回 FAILURE
-                return .failure(RemoteFSError(message: e.isPermission ? "没有重命名权限" : "目标名称已存在"))
+                return .failure(RemoteFSError(message: e.isPermission ? String(localized: "没有重命名权限") : String(localized: "目标名称已存在")))
             }
-            catch { return .failure(RemoteFSError(message: "重命名失败")) }
+            catch { return .failure(RemoteFSError(message: String(localized: "重命名失败"))) }
         }
         return await renameViaShell(from, to: to)
     }
@@ -644,9 +644,9 @@ final class RemoteFS {
         if r.code != 0 {
             let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let msg: String
-            if err.contains("__TERMO_EXISTS__") { msg = "目标名称已存在" }
-            else if err.localizedCaseInsensitiveContains("permission") { msg = "没有重命名权限" }
-            else { msg = err.isEmpty ? "重命名失败（退出码 \(r.code)）" : err }
+            if err.contains("__TERMO_EXISTS__") { msg = String(localized: "目标名称已存在") }
+            else if err.localizedCaseInsensitiveContains("permission") { msg = String(localized: "没有重命名权限") }
+            else { msg = err.isEmpty ? String(localized: "重命名失败（退出码 \(r.code)）") : err }
             return .failure(RemoteFSError(message: msg))
         }
         return .success(())
@@ -655,11 +655,11 @@ final class RemoteFS {
     /// 修改权限（mode = 八进制字符串，如 "755"）。
     func chmod(_ path: String, mode: String) async -> Result<Void, RemoteFSError> {
         if isSftpUsable {
-            guard let m = UInt32(mode, radix: 8) else { return .failure(RemoteFSError(message: "权限值无效")) }
+            guard let m = UInt32(mode, radix: 8) else { return .failure(RemoteFSError(message: String(localized: "权限值无效"))) }
             do { try await session().setPermissions(path, m); return .success(()) }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
-            catch let e as SFTPError { return .failure(RemoteFSError(message: e.isPermission ? "没有修改权限的权限" : e.message)) }
-            catch { return .failure(RemoteFSError(message: "修改权限失败")) }
+            catch let e as SFTPError { return .failure(RemoteFSError(message: e.isPermission ? String(localized: "没有修改权限的权限") : e.message)) }
+            catch { return .failure(RemoteFSError(message: String(localized: "修改权限失败"))) }
         }
         return await chmodViaShell(path, mode: mode)
     }
@@ -669,8 +669,8 @@ final class RemoteFS {
         let r = await run(cmd)
         if r.code != 0 {
             let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let msg = err.localizedCaseInsensitiveContains("permission") ? "没有修改权限的权限"
-                : (err.isEmpty ? "修改权限失败（退出码 \(r.code)）" : err)
+            let msg = err.localizedCaseInsensitiveContains("permission") ? String(localized: "没有修改权限的权限")
+                : (err.isEmpty ? String(localized: "修改权限失败（退出码 \(r.code)）") : err)
             return .failure(RemoteFSError(message: msg))
         }
         return .success(())
@@ -697,12 +697,12 @@ final class RemoteFS {
         if isSftpUsable {
             do {
                 guard let p = (try await session().stat(path)).permissions else {
-                    return .failure(RemoteFSError(message: "无法读取权限"))
+                    return .failure(RemoteFSError(message: String(localized: "无法读取权限")))
                 }
                 return .success(Int(p & 0o7777))
             }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
-            catch { return .failure(RemoteFSError(message: "无法读取权限")) }
+            catch { return .failure(RemoteFSError(message: String(localized: "无法读取权限"))) }
         }
         return await statPermsViaShell(path)
     }
@@ -712,7 +712,7 @@ final class RemoteFS {
         let r = await run(cmd)
         let s = String(data: r.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard r.code == 0, let v = Int(s, radix: 8) else {
-            return .failure(RemoteFSError(message: "无法读取权限"))
+            return .failure(RemoteFSError(message: String(localized: "无法读取权限")))
         }
         return .success(v)
     }
@@ -745,10 +745,10 @@ final class RemoteFS {
             do { return .success(try await sftpList(path)) }
             catch let e as SFTPError where e.isTransport { markSftpDown() }
             catch let e as SFTPError {
-                return .failure(RemoteFSError(message: e.isNoSuchFile ? "目录不存在"
-                    : (e.isPermission ? "没有访问权限" : e.message)))
+                return .failure(RemoteFSError(message: e.isNoSuchFile ? String(localized: "目录不存在")
+                    : (e.isPermission ? String(localized: "没有访问权限") : e.message)))
             }
-            catch { return .failure(RemoteFSError(message: "列目录失败")) }
+            catch { return .failure(RemoteFSError(message: String(localized: "列目录失败"))) }
         }
         return await listViaShell(path)
     }
@@ -794,7 +794,7 @@ final class RemoteFS {
             return .success(sorted(parseLs(r.data, base: path)))
         }
         let err = String(data: r.stderr, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return .failure(RemoteFSError(message: err.isEmpty ? "无法列出目录（退出码 \(r.code)）" : err))
+        return .failure(RemoteFSError(message: err.isEmpty ? String(localized: "无法列出目录（退出码 \(r.code)）") : err))
     }
 
     // MARK: - 解析

@@ -32,15 +32,15 @@ struct RDPCertDialog: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 16)
 
-                infoRow("目标", "\(prompt.host):\(prompt.port)", mono: true)
-                if let s = prompt.subject, !s.isEmpty { infoRow("主体", s) }
-                if let i = prompt.issuer, !i.isEmpty { infoRow("颁发者", i) }
+                infoRow(String(localized: "目标"), "\(prompt.host):\(prompt.port)", mono: true)
+                if let s = prompt.subject, !s.isEmpty { infoRow(String(localized: "主体"), s) }
+                if let i = prompt.issuer, !i.isEmpty { infoRow(String(localized: "颁发者"), i) }
 
                 HStack {
                     Text("证书指纹（建议与服务器核对）")
                         .font(.system(size: 13, weight: .medium)).foregroundStyle(Pal.text)
                     Spacer()
-                    copyButton("复制指纹", prompt.fingerprint)
+                    copyButton(String(localized: "复制指纹"), prompt.fingerprint)
                 }
                 .padding(.top, 6).padding(.bottom, 8)
 

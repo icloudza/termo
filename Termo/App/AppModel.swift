@@ -111,7 +111,7 @@ final class AppModel: ObservableObject {
     @Published var pendingAskAuth: Host? = nil     // 「每次询问」主机的密码弹窗（连接前）
     private var pendingAskContinuation: (() -> Void)?   // 密码确认后要执行的动作（终端/文件/转发等）
     private var connectingContinuation: (() -> Void)?   // 「正在连接」验证弹窗成功后要执行的原动作
-    var connectingActionHint = "正在进入终端…"          // 连接弹窗成功提示，按动作变化（ContentView 读取）
+    var connectingActionHint = String(localized: "正在进入终端…")          // 连接弹窗成功提示，按动作变化（ContentView 读取）
     private var askVerifiedHosts: Set<String> = []      // 「每次询问」本会话已成功验证过密码的主机（之后文件/转发直连，不再弹连接弹窗）
     @Published var pendingHostKey: PendingHostKey? = nil   // 首次连接待验证的主机指纹
     @Published var connectingHost: Host? = nil   // 正在连接的主机（展示连接进度弹窗）
@@ -177,7 +177,7 @@ final class AppModel: ObservableObject {
             addr: addr,
             group: draft.resolvedGroup,
             status: .unknown,
-            os: "未知",
+            os: String(localized: "未知"),
             port: conn.port,
             ssh: conn,
             notes: draft.notes.trimmingCharacters(in: .whitespaces)
@@ -296,7 +296,7 @@ final class AppModel: ObservableObject {
     func generateKey(name: String, type: SSHKeyType, comment: String, passphrase: String) {
         do {
             let g = try KeyTools.generate(type: type, comment: comment, passphrase: passphrase)
-            let key = SSHKey(name: name.isEmpty ? "未命名密钥" : name, type: type,
+            let key = SSHKey(name: name.isEmpty ? String(localized: "未命名密钥") : name, type: type,
                              publicKey: g.publicKey, fingerprint: g.fingerprint,
                              comment: comment, hasPassphrase: !passphrase.isEmpty)
             KeyKeychain.set(key.id, g.privateKey)
@@ -310,7 +310,7 @@ final class AppModel: ObservableObject {
     /// 弹文件选择器导入已有私钥。
     func presentImportKey() {
         let panel = NSOpenPanel()
-        panel.title = "导入私钥"
+        panel.title = String(localized: "导入私钥")
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -372,7 +372,7 @@ final class AppModel: ObservableObject {
     }
 
     func addSnippet(name: String, content: String, group: String) {
-        snippets.append(Snippet(name: name.isEmpty ? "未命名片段" : name, content: content, group: group))
+        snippets.append(Snippet(name: name.isEmpty ? String(localized: "未命名片段") : name, content: content, group: group))
         SnippetStore.save(snippets)
     }
 
@@ -450,7 +450,7 @@ final class AppModel: ObservableObject {
 
     private func deliverSnippet(_ text: String, run: Bool) {
         guard let id = snippetTargetTabId(), let tv = terminals[id] else {
-            snippetNotice = "请先打开并切到一个终端，再运行片段。"
+            snippetNotice = String(localized: "请先打开并切到一个终端，再运行片段。")
             return
         }
         let line = run ? text + "\n" : text
@@ -677,7 +677,7 @@ final class AppModel: ObservableObject {
     private func proceedForward(_ hostId: String) {
         guard let host = hosts.first(where: { $0.id == hostId }) else { return }
         if host.ssh?.authMethod == .ask, !askVerifiedHosts.contains(hostId) {
-            connectThen(hostId, hint: "正在打开端口转发…") { [weak self] in
+            connectThen(hostId, hint: String(localized: "正在打开端口转发…")) { [weak self] in
                 self?.forwardPanelHost = self?.hosts.first(where: { $0.id == hostId })
             }
         } else {
@@ -731,9 +731,9 @@ final class AppModel: ObservableObject {
     /// 逐指标判定阈值告警：持续越界且过冷却期才发一条系统通知。按 id 取最新 host，改名后告警用新名。
     private func evaluateAlerts(hostId: String, _ m: HostMetrics) {
         guard AppSettings.shared.resourceAlerts, let host = hosts.first(where: { $0.id == hostId }) else { return }
-        checkAlert(host: host, metric: "cpu", label: "CPU 使用率", value: m.cpuPercent)
-        checkAlert(host: host, metric: "mem", label: "内存占用", value: m.memTotalKB > 0 ? m.memPercent : nil)
-        checkAlert(host: host, metric: "disk", label: "磁盘占用", value: m.disks.map(\.percent).max())   // 最满的分区
+        checkAlert(host: host, metric: "cpu", label: String(localized: "CPU 使用率"), value: m.cpuPercent)
+        checkAlert(host: host, metric: "mem", label: String(localized: "内存占用"), value: m.memTotalKB > 0 ? m.memPercent : nil)
+        checkAlert(host: host, metric: "disk", label: String(localized: "磁盘占用"), value: m.disks.map(\.percent).max())   // 最满的分区
     }
 
     private func checkAlert(host: Host, metric: String, label: String, value: Double?) {
@@ -746,8 +746,8 @@ final class AppModel: ObservableObject {
         let last = alertLast[key] ?? .distantPast
         guard Date().timeIntervalSince(last) >= Self.alertCooldown else { return }
         alertLast[key] = Date()
-        Notifier.notify(title: "\(host.name) 资源告警",
-                        body: "\(label) \(Int(v))%，已持续约 \(Self.alertSustainFrames * 2) 秒")
+        Notifier.notify(title: String(localized: "\(host.name) 资源告警"),
+                        body: String(localized: "\(label) \(Int(v))%，已持续约 \(Self.alertSustainFrames * 2) 秒"))
     }
 
     // ---------- 系统信息探测 ----------
@@ -1059,15 +1059,15 @@ final class AppModel: ObservableObject {
     var runningBackgroundSummaries: [String] {
         var out: [String] = []
         for rule in forwards where forwardManagers[rule.hostId]?.status(rule.id).isRunning == true {
-            let host = hosts.first(where: { $0.id == rule.hostId })?.name ?? "主机"
-            out.append("端口转发 · \(host) · \(rule.summary)")
+            let host = hosts.first(where: { $0.id == rule.hostId })?.name ?? String(localized: "主机")
+            out.append(String(localized: "端口转发 · \(host) · \(rule.summary)"))
         }
         for t in transfers where t.phase == .running || t.phase == .queued || t.phase == .paused {
-            let verb = t.direction == .upload ? "上传" : "下载"
-            out.append("\(verb) · \(t.hostName) · \(t.items.count) 项")
+            let verb = t.direction == .upload ? String(localized: "上传") : String(localized: "下载")
+            out.append(String(localized: "\(verb) · \(t.hostName) · \(t.items.count) 项"))
         }
         if let e = extractTask, e.phase == .running {
-            out.append("解压 · \(e.hostName) · \(e.archive.name)")
+            out.append(String(localized: "解压 · \(e.hostName) · \(e.archive.name)"))
         }
         return out
     }
@@ -1373,7 +1373,7 @@ final class AppModel: ObservableObject {
 
     // ---------- 标签操作 ----------
     func openLocalTerminal() {
-        let title = uniqueTabTitle("终端") { $0.kind == .terminal && $0.hostId == nil }
+        let title = uniqueTabTitle(String(localized: "终端")) { $0.kind == .terminal && $0.hostId == nil }
         addTab(.terminal, title: title, hostId: nil)
     }
 
@@ -1392,14 +1392,14 @@ final class AppModel: ObservableObject {
             return
         }
         requireAuth(host) { [weak self] in
-            self?.connectThen(host.id, hint: "正在进入终端…") { self?.openTerminalTab(host.id) }
+            self?.connectThen(host.id, hint: String(localized: "正在进入终端…")) { self?.openTerminalTab(host.id) }
         }
     }
 
     /// 仅为监控等场景验证连接（「每次询问」输密码 → 走连接验证弹窗）：成功后不开任何标签，
     /// 概览据此切到实时监控；失败则清密码。供概览监控占位的「连接」按钮使用。
     func verifyConnect(_ host: Host) {
-        requireAuth(host) { [weak self] in self?.connectThen(host.id, hint: "开始监控…") { } }
+        requireAuth(host) { [weak self] in self?.connectThen(host.id, hint: String(localized: "开始监控…")) { } }
     }
 
     /// 闸门：若是「每次询问」且本会话还没输入过密码 → 先弹密码框（确认后执行 action）；否则直接执行。
@@ -1432,7 +1432,7 @@ final class AppModel: ObservableObject {
 
     /// 启动「正在连接」验证弹窗（用 askpass 密码真实认证 + 展示连接日志），成功后执行 then。
     /// 「每次询问」从任意入口（终端/文件/转发/监控）确认密码后都经此验证；密码/密钥的终端连接亦走此弹窗。
-    private func connectThen(_ hostId: String, hint: String = "正在进入终端…", _ then: @escaping () -> Void) {
+    private func connectThen(_ hostId: String, hint: String = String(localized: "正在进入终端…"), _ then: @escaping () -> Void) {
         guard let host = hosts.first(where: { $0.id == hostId }) else { return }
         connectingActionHint = hint
         connectingContinuation = then
@@ -1444,7 +1444,7 @@ final class AppModel: ObservableObject {
         guard let host = hosts.first(where: { $0.id == hostId }) else { return }
         let title = uniqueTabTitle(host.name) { $0.kind == .terminal && $0.hostId == host.id }
         addTab(.terminal, title: title, hostId: host.id)
-        recordSession(hostId: host.id, kind: .terminal, detail: "终端会话")
+        recordSession(hostId: host.id, kind: .terminal, detail: String(localized: "终端会话"))
         prewarmExplorer(for: host)
     }
 
@@ -1535,7 +1535,7 @@ final class AppModel: ObservableObject {
         let host = session.host
         let id = addTab(.rdp, title: host.name, hostId: host.id)
         rdpSessions[id] = session
-        recordSession(hostId: host.id, kind: .rdp, detail: "远程桌面")
+        recordSession(hostId: host.id, kind: .rdp, detail: String(localized: "远程桌面"))
         refreshRDPHosts()
     }
 
@@ -1550,7 +1550,7 @@ final class AppModel: ObservableObject {
             }
         }
         rdpWindowControllers.append(c)
-        recordSession(hostId: session.host.id, kind: .rdp, detail: "远程桌面（窗口）")
+        recordSession(hostId: session.host.id, kind: .rdp, detail: String(localized: "远程桌面（窗口）"))
         refreshRDPHosts()
         c.present(fullscreen: AppSettings.shared.rdpWindowFullscreen)
     }
@@ -1616,7 +1616,7 @@ final class AppModel: ObservableObject {
     private func proceedFiles(_ hostId: String) {
         guard let host = hosts.first(where: { $0.id == hostId }) else { return }
         if host.ssh?.authMethod == .ask, !askVerifiedHosts.contains(hostId) {
-            connectThen(hostId, hint: "正在打开文件…") { [weak self] in self?.startOpenHostFiles(hostId) }
+            connectThen(hostId, hint: String(localized: "正在打开文件…")) { [weak self] in self?.startOpenHostFiles(hostId) }
         } else {
             startOpenHostFiles(hostId)
         }
@@ -1630,7 +1630,7 @@ final class AppModel: ObservableObject {
             defer { openingFilesHostId = nil }   // 成功开标签 / 取消 / 失败都清除加载态
             guard await verifyHostKey(host) else { return }
             addTab(.files, title: host.name, hostId: host.id)
-            recordSession(hostId: host.id, kind: .files, detail: "文件浏览")
+            recordSession(hostId: host.id, kind: .files, detail: String(localized: "文件浏览"))
             prewarmExplorer(for: host)
         }
     }
@@ -1791,13 +1791,13 @@ final class AppModel: ObservableObject {
         case .gone:
             if isDir {
                 tree.removeAndSelectParent(path)
-                pendingFileInfo = FileInfoContext(title: "目录已被删除",
-                    message: "「\(name)」在远端已不存在，已为你移除并定位到上级目录。")
+                pendingFileInfo = FileInfoContext(title: String(localized: "目录已被删除"),
+                    message: String(localized: "「\(name)」在远端已不存在，已为你移除并定位到上级目录。"))
             } else {
-                pendingFileInfo = FileInfoContext(title: "目录不存在", message: "该文件所在的目录在远端已不存在。")
+                pendingFileInfo = FileInfoContext(title: String(localized: "目录不存在"), message: String(localized: "该文件所在的目录在远端已不存在。"))
             }
         case .failed(let msg):
-            pendingFileInfo = FileInfoContext(title: "刷新失败", message: msg)
+            pendingFileInfo = FileInfoContext(title: String(localized: "刷新失败"), message: msg)
         }
     }
 
@@ -1932,8 +1932,8 @@ final class AppModel: ObservableObject {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        panel.prompt = "上传"
-        panel.message = "选择要上传到「\(folder.name)」的文件"
+        panel.prompt = String(localized: "上传")
+        panel.message = String(localized: "选择要上传到「\(folder.name)」的文件")
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         startUpload(files: panel.urls, destDir: folder.path, host: host)
     }
@@ -1945,7 +1945,7 @@ final class AppModel: ObservableObject {
         // 只传文件，跳过目录
         let files = urls.filter { !((try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false) }
         guard !files.isEmpty else {
-            pendingFileInfo = FileInfoContext(title: "无法上传", message: "暂不支持拖拽文件夹，请拖入文件。")
+            pendingFileInfo = FileInfoContext(title: String(localized: "无法上传"), message: String(localized: "暂不支持拖拽文件夹，请拖入文件。"))
             return
         }
         Task { @MainActor in
@@ -1960,7 +1960,7 @@ final class AppModel: ObservableObject {
         guard let ssh = host.ssh, !ssh.host.isEmpty, !dir.isEmpty else { return }
         let files = urls.filter { !((try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false) }
         guard !files.isEmpty else {
-            pendingFileInfo = FileInfoContext(title: "无法上传", message: "暂不支持拖拽文件夹，请拖入文件。")
+            pendingFileInfo = FileInfoContext(title: String(localized: "无法上传"), message: String(localized: "暂不支持拖拽文件夹，请拖入文件。"))
             return
         }
         startUpload(files: files, destDir: dir, host: host)
@@ -2020,7 +2020,7 @@ final class AppModel: ObservableObject {
             }
             pendingFileDelete = nil
             if case .failure(let e) = r {
-                pendingFileInfo = FileInfoContext(title: "删除失败", message: e.message)
+                pendingFileInfo = FileInfoContext(title: String(localized: "删除失败"), message: e.message)
             }
         }
     }
@@ -2051,8 +2051,8 @@ final class AppModel: ObservableObject {
             pendingBatchDelete = nil
             if !failed.isEmpty {
                 let shown = failed.prefix(8).joined(separator: "、")
-                pendingFileInfo = FileInfoContext(title: "部分删除失败",
-                                                  message: "未能删除：\(shown)\(failed.count > 8 ? " 等" : "")")
+                pendingFileInfo = FileInfoContext(title: String(localized: "部分删除失败"),
+                                                  message: String(localized: "未能删除：\(shown)\(failed.count > 8 ? String(localized: " 等") : "")"))
             }
         }
     }
@@ -2068,7 +2068,7 @@ final class AppModel: ObservableObject {
         pendingFileRename = nil
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains("/") else {
-            pendingFileInfo = FileInfoContext(title: "名称无效", message: "名称不能为空或包含「/」。")
+            pendingFileInfo = FileInfoContext(title: String(localized: "名称无效"), message: String(localized: "名称不能为空或包含「/」。"))
             return
         }
         if trimmed == ctx.file.name { return }
@@ -2080,7 +2080,7 @@ final class AppModel: ObservableObject {
                                      kind: ctx.file.kind, size: ctx.file.size, modified: ctx.file.modified,
                                      host: ctx.host)
             case .failure(let e):
-                pendingFileInfo = FileInfoContext(title: "重命名失败", message: e.message)
+                pendingFileInfo = FileInfoContext(title: String(localized: "重命名失败"), message: e.message)
             }
         }
     }
@@ -2093,8 +2093,8 @@ final class AppModel: ObservableObject {
         }) else { return }   // 没在编辑器打开 → 仅树已刷新即可
         let tabId = tabs[idx].id
         if editorStates[tabId]?.isDirty == true {
-            pendingFileInfo = FileInfoContext(title: "已重命名",
-                message: "该文件在编辑器中有未保存的修改，标签未同步——保存仍会写到原文件名，建议先保存或关闭后再重命名。")
+            pendingFileInfo = FileInfoContext(title: String(localized: "已重命名"),
+                message: String(localized: "该文件在编辑器中有未保存的修改，标签未同步——保存仍会写到原文件名，建议先保存或关闭后再重命名。"))
             return
         }
         let newFile = RemoteFile(name: newName, path: newPath, kind: kind, size: size, modified: modified)
@@ -2115,7 +2115,7 @@ final class AppModel: ObservableObject {
         pendingFileChmod = nil
         Task { @MainActor in
             if case .failure(let e) = await ctx.target.performChmod(ctx.file, mode: String(mode, radix: 8)) {
-                pendingFileInfo = FileInfoContext(title: "修改权限失败", message: e.message)
+                pendingFileInfo = FileInfoContext(title: String(localized: "修改权限失败"), message: e.message)
             }
         }
     }
@@ -2131,12 +2131,12 @@ final class AppModel: ObservableObject {
         pendingFileCreate = nil
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains("/") else {
-            pendingFileInfo = FileInfoContext(title: "名称无效", message: "名称不能为空或包含「/」。")
+            pendingFileInfo = FileInfoContext(title: String(localized: "名称无效"), message: String(localized: "名称不能为空或包含「/」。"))
             return
         }
         Task { @MainActor in
             if case .failure(let e) = await ctx.target.performCreate(trimmed, isDir: ctx.isDir, inDir: ctx.dir) {
-                pendingFileInfo = FileInfoContext(title: ctx.isDir ? "新建文件夹失败" : "新建文件失败", message: e.message)
+                pendingFileInfo = FileInfoContext(title: ctx.isDir ? String(localized: "新建文件夹失败") : String(localized: "新建文件失败"), message: e.message)
             }
         }
     }
@@ -2154,8 +2154,8 @@ final class AppModel: ObservableObject {
             panel.canChooseFiles = false
             panel.canChooseDirectories = true
             panel.allowsMultipleSelection = false
-            panel.prompt = "下载到此处"
-            panel.message = "选择下载保存到的文件夹"
+            panel.prompt = String(localized: "下载到此处")
+            panel.message = String(localized: "选择下载保存到的文件夹")
             panel.directoryURL = AppSettings.shared.resolvedDownloadDir
             guard panel.runModal() == .OK, let u = panel.url else { return }
             dir = u
@@ -2208,8 +2208,8 @@ final class AppModel: ObservableObject {
         guard !file.isDir, let kind = ArchiveKind.detect(file.name),
               let ssh = host.ssh, !ssh.host.isEmpty else { return }
         if let t = extractTask, t.phase == .running {
-            pendingFileInfo = FileInfoContext(title: "已有解压进行中",
-                                              message: "请等当前解压结束后再开始新的解压。")
+            pendingFileInfo = FileInfoContext(title: String(localized: "已有解压进行中"),
+                                              message: String(localized: "请等当前解压结束后再开始新的解压。"))
             return
         }
         let parent = (file.path as NSString).deletingLastPathComponent
@@ -2311,8 +2311,8 @@ final class AppModel: ObservableObject {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         if tabs.contains(where: { $0.id != id && $0.title == trimmed }) {
-            pendingFileInfo = FileInfoContext(title: "名称已被占用",
-                message: "已有标签使用「\(trimmed)」，换一个名称以便区分。")
+            pendingFileInfo = FileInfoContext(title: String(localized: "名称已被占用"),
+                message: String(localized: "已有标签使用「\(trimmed)」，换一个名称以便区分。"))
             return
         }
         tabs[idx].title = trimmed
@@ -2404,11 +2404,11 @@ final class AppModel: ObservableObject {
     /// 关闭确认弹窗标题（按标签类型区分）。
     var pendingCloseDialogTitle: String {
         guard let id = pendingCloseTabId,
-              let tab = tabs.first(where: { $0.id == id }) else { return "关闭此标签？" }
+              let tab = tabs.first(where: { $0.id == id }) else { return String(localized: "关闭此标签？") }
         switch tab.kind {
-        case .editor: return "放弃未保存的修改？"
-        case .rdp:    return "断开远程桌面？"
-        default:      return "关闭此终端？"
+        case .editor: return String(localized: "放弃未保存的修改？")
+        case .rdp:    return String(localized: "断开远程桌面？")
+        default:      return String(localized: "关闭此终端？")
         }
     }
 
@@ -2417,9 +2417,9 @@ final class AppModel: ObservableObject {
         guard let id = pendingCloseTabId,
               let tab = tabs.first(where: { $0.id == id }) else { return "" }
         switch tab.kind {
-        case .editor: return "「\(tab.title)」有尚未保存的修改，关闭后修改将丢失。"
-        case .rdp:    return "「\(tab.title)」是一个远程桌面会话，关闭后将断开连接。"
-        default:      return "「\(tab.title)」有正在运行的进程，关闭后进程将被终止。"
+        case .editor: return String(localized: "「\(tab.title)」有尚未保存的修改，关闭后修改将丢失。")
+        case .rdp:    return String(localized: "「\(tab.title)」是一个远程桌面会话，关闭后将断开连接。")
+        default:      return String(localized: "「\(tab.title)」有正在运行的进程，关闭后进程将被终止。")
         }
     }
 }

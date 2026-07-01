@@ -293,7 +293,7 @@ final class UploadTask: ObservableObject {
                 if startOffset >= item.localSize, item.localSize > 0 {   // .part 已完整 → 直接落地
                     item.sent = item.localSize
                     item.state = (try? await fs.finalizeUpload(remotePath: item.remotePath).get()) != nil
-                        ? .done : .failed("落地失败")
+                        ? .done : .failed(String(localized: "落地失败"))
                     index += 1; continue
                 }
             }
@@ -310,7 +310,7 @@ final class UploadTask: ObservableObject {
                 item.sent = item.localSize
                 item.interrupted = false
                 item.state = (try? await fs.finalizeUpload(remotePath: item.remotePath).get()) != nil
-                    ? .done : .failed("落地失败")
+                    ? .done : .failed(String(localized: "落地失败"))
                 index += 1
             case .cancelled:
                 control.set(.cancel)
@@ -402,12 +402,12 @@ final class UploadTask: ObservableObject {
     }
 
     private func postCompletionNotification() {
-        let verb = direction == .upload ? "上传" : "下载"
+        let verb = String(localized: direction == .upload ? "上传" : "下载")
         let done = items.filter { $0.state == .done }.count
         if hasFailures {
-            Notifier.notify(title: "\(verb)部分失败", body: "成功 \(done)/\(items.count) 个文件")
+            Notifier.notify(title: String(localized: "\(verb)部分失败"), body: String(localized: "成功 \(done)/\(items.count) 个文件"))
         } else {
-            Notifier.notify(title: "\(verb)完成", body: "\(done) 个文件 · \(humanSize(totalBytes))")
+            Notifier.notify(title: String(localized: "\(verb)完成"), body: String(localized: "\(done) 个文件 · \(humanSize(totalBytes))"))
         }
     }
 
@@ -525,18 +525,18 @@ struct UploadDialog: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .help("后台运行（在左下角继续显示进度）")
+            .help(String(localized: "后台运行（在左下角继续显示进度）"))
         }
     }
 
     @ViewBuilder private var statusBadge: some View {
         let (label, fg): (String, Color) = {
             switch task.phase {
-            case .queued:    return ("排队中", Pal.overlay)
+            case .queued:    return (String(localized: "排队中"), Pal.overlay)
             case .running:   return ("\(min(task.index + 1, task.items.count))/\(task.items.count)", Pal.mauve)
-            case .paused:    return ("已暂停", Pal.yellow)
-            case .done:      return task.hasFailures ? ("部分失败", Pal.yellow) : ("完成", Pal.green)
-            case .cancelled: return ("已取消", Pal.overlay)
+            case .paused:    return (String(localized: "已暂停"), Pal.yellow)
+            case .done:      return task.hasFailures ? (String(localized: "部分失败"), Pal.yellow) : (String(localized: "完成"), Pal.green)
+            case .cancelled: return (String(localized: "已取消"), Pal.overlay)
             }
         }()
         Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(fg)
@@ -576,11 +576,11 @@ struct UploadDialog: View {
             Text("远端 \(humanSize(ask.remoteSize)) · 本地 \(humanSize(ask.localSize))")
                 .font(.system(size: 11)).foregroundStyle(Pal.subtext)
             HStack(spacing: 8) {
-                pill("覆盖", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.resolveAsk(.overwrite) }
-                pill("跳过", fg: Pal.subtext, base: Pal.fill(0.07)) { task.resolveAsk(.skip) }
+                pill(String(localized: "覆盖"), fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.resolveAsk(.overwrite) }
+                pill(String(localized: "跳过"), fg: Pal.subtext, base: Pal.fill(0.07)) { task.resolveAsk(.skip) }
                 Spacer()
-                pill("全部覆盖", fg: Pal.overlay, base: Pal.fill(0.07)) { task.resolveAsk(.overwriteAll) }
-                pill("全部跳过", fg: Pal.overlay, base: Pal.fill(0.07)) { task.resolveAsk(.skipAll) }
+                pill(String(localized: "全部覆盖"), fg: Pal.overlay, base: Pal.fill(0.07)) { task.resolveAsk(.overwriteAll) }
+                pill(String(localized: "全部跳过"), fg: Pal.overlay, base: Pal.fill(0.07)) { task.resolveAsk(.skipAll) }
             }
         }
         .padding(10)
@@ -593,26 +593,26 @@ struct UploadDialog: View {
             Spacer()
             switch task.phase {
             case .queued:
-                pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
+                pill(String(localized: "取消"), fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
             case .running:
-                pill("暂停", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { AppModel.shared.pauseTransfer(task) }
-                pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
+                pill(String(localized: "暂停"), fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { AppModel.shared.pauseTransfer(task) }
+                pill(String(localized: "取消"), fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
             case .paused:
-                pill(task.awaitingSlot ? "等待名额…" : "继续", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) {
+                pill(task.awaitingSlot ? String(localized: "等待名额…") : String(localized: "继续"), fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) {
                     AppModel.shared.resumeTransfer(task)
                 }
-                pill("取消", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
+                pill(String(localized: "取消"), fg: Pal.subtext, base: Pal.fill(0.07)) { task.cancel() }
             case .done where task.hasFailures:
                 if task.direction == .upload {   // 续传仅上传支持（远端 .part）
-                    pill("续传失败项", fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.retryFailed(resume: true) }
+                    pill(String(localized: "续传失败项"), fg: Pal.mauve, base: Pal.mauve.opacity(0.14)) { task.retryFailed(resume: true) }
                 }
-                pill("重试", fg: Pal.subtext, base: Pal.fill(0.07)) { task.retryFailed(resume: false) }
-                pill("关闭", fg: Pal.overlay, base: Pal.fill(0.07), action: onClose)
+                pill(String(localized: "重试"), fg: Pal.subtext, base: Pal.fill(0.07)) { task.retryFailed(resume: false) }
+                pill(String(localized: "关闭"), fg: Pal.overlay, base: Pal.fill(0.07), action: onClose)
             case .cancelled where task.hasPartials:
-                pill("保留残留（下次续传）", fg: Pal.mauve, base: Pal.mauve.opacity(0.14), action: onClose)
-                pill("删除残留", fg: Pal.subtext, base: Pal.fill(0.07)) { task.cleanupPartials(); onClose() }
+                pill(String(localized: "保留残留（下次续传）"), fg: Pal.mauve, base: Pal.mauve.opacity(0.14), action: onClose)
+                pill(String(localized: "删除残留"), fg: Pal.subtext, base: Pal.fill(0.07)) { task.cleanupPartials(); onClose() }
             case .done, .cancelled:
-                pill(task.phase == .done ? "完成" : "关闭",
+                pill(task.phase == .done ? String(localized: "完成") : String(localized: "关闭"),
                      fg: Pal.mauve, base: Pal.mauve.opacity(0.14), action: onClose)
             }
         }
@@ -693,14 +693,14 @@ struct UploadRow: View {
     }
     private var label: String {
         switch item.state {
-        case .waiting:   return "待传"
-        case .checking:  return "检测中"
-        case .asking:    return "待决策"
+        case .waiting:   return String(localized: "待传")
+        case .checking:  return String(localized: "检测中")
+        case .asking:    return String(localized: "待决策")
         case .uploading: return "\(Int(item.fraction * 100))%"
-        case .done:      return "完成"
-        case .skipped:   return "已跳过"
-        case .failed(let m): return m.isEmpty ? "失败" : m
-        case .cancelled: return "已取消"
+        case .done:      return String(localized: "完成")
+        case .skipped:   return String(localized: "已跳过")
+        case .failed(let m): return m.isEmpty ? String(localized: "失败") : m
+        case .cancelled: return String(localized: "已取消")
         }
     }
 }

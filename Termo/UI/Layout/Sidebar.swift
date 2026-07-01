@@ -35,11 +35,11 @@ struct Sidebar: View {
                     Button { model.presentImportKey() } label: {
                         Image(systemName: "square.and.arrow.down").font(.system(size: 13)).foregroundStyle(Pal.mauve)
                     }
-                    .buttonStyle(.plain).pointerCursor().help("导入已有私钥")
+                    .buttonStyle(.plain).pointerCursor().help(String(localized: "导入已有私钥"))
                     Button { model.showGenerateKey = true } label: {
                         Image(systemName: "plus").font(.system(size: 14)).foregroundStyle(Pal.mauve)
                     }
-                    .buttonStyle(.plain).pointerCursor().help("生成新密钥")
+                    .buttonStyle(.plain).pointerCursor().help(String(localized: "生成新密钥"))
                 } else if model.section == .hosts || model.section == .rdp {
                     Button {
                         if model.section == .rdp { model.showAddRDPHost = true }
@@ -53,7 +53,7 @@ struct Sidebar: View {
                     Button { model.showCreateSnippet = true } label: {
                         Image(systemName: "plus").font(.system(size: 14)).foregroundStyle(Pal.mauve)
                     }
-                    .buttonStyle(.plain).pointerCursor().help("新建片段")
+                    .buttonStyle(.plain).pointerCursor().help(String(localized: "新建片段"))
                 }
             }
             .padding(.horizontal, 14)
@@ -76,11 +76,11 @@ struct Sidebar: View {
                 rdpPanel
             } else if model.section == .sshKeys {
                 Spacer().frame(height: 10)
-                searchBox("搜索密钥…")
+                searchBox(String(localized: "搜索密钥…"))
                 KeysPanel(model: model)
             } else if model.section == .snippets {
                 Spacer().frame(height: 10)
-                searchBox("搜索片段…")
+                searchBox(String(localized: "搜索片段…"))
                 SnippetsPanel(model: model, tabs: tabs)
             } else {
                 Spacer()
@@ -101,16 +101,16 @@ struct Sidebar: View {
 
     private var sectionTitle: String {
         switch model.section {
-        case .hosts: return "主机"
-        case .files: return "文件"
-        case .sshKeys: return "密钥"
+        case .hosts: return String(localized: "主机")
+        case .files: return String(localized: "文件")
+        case .sshKeys: return String(localized: "密钥")
         case .rdp: return "RDP"
-        case .snippets: return "代码片段"
-        case .settings: return "设置"
+        case .snippets: return String(localized: "代码片段")
+        case .settings: return String(localized: "设置")
         }
     }
 
-    private func searchBox(_ placeholder: String = "搜索主机…") -> some View {
+    private func searchBox(_ placeholder: String = String(localized: "搜索主机…")) -> some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Pal.overlay)
             TextField(placeholder, text: $model.query)
@@ -127,7 +127,7 @@ struct Sidebar: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .help(model.privacyMode ? "显示真实信息" : "脱敏显示(隐藏 IP / 主机名)")
+            .help(model.privacyMode ? String(localized: "显示真实信息") : String(localized: "脱敏显示(隐藏 IP / 主机名)"))
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)

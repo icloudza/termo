@@ -253,7 +253,7 @@ struct FileBrowser: View {
                     }
                     .buttonStyle(.plain)
                     .pointerCursor()
-                    .help("下载选中的文件")
+                    .help(String(localized: "下载选中的文件"))
                 }
                 Button { model.requestBatchDelete(state.selectedFiles, host: host, target: state) } label: {
                     HStack(spacing: 5) {
@@ -267,7 +267,7 @@ struct FileBrowser: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help("删除选中的项目")
+                .help(String(localized: "删除选中的项目"))
             }
 
             Button { model.beginUpload(into: currentDir, host: host) } label: {
@@ -277,7 +277,7 @@ struct FileBrowser: View {
             }
             .buttonStyle(.plain)
             .pointerCursor(!state.path.isEmpty)
-            .help("上传文件到当前目录")
+            .help(String(localized: "上传文件到当前目录"))
             .disabled(state.path.isEmpty)
 
             Button { state.showHidden.toggle() } label: {
@@ -287,7 +287,7 @@ struct FileBrowser: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .help(state.showHidden ? "隐藏点文件" : "显示点文件")
+            .help(state.showHidden ? String(localized: "隐藏点文件") : String(localized: "显示点文件"))
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
     }
@@ -402,12 +402,12 @@ struct FileBrowser: View {
                 let sel = state.selectedFiles
                 let dl = sel.filter { !$0.isDir }
                 if !dl.isEmpty {
-                    menu.addItem(ClosureMenuItem(title: "下载选中 (\(dl.count))", systemImage: "square.and.arrow.down") {
+                    menu.addItem(ClosureMenuItem(title: String(localized: "下载选中 (\(dl.count))"), systemImage: "square.and.arrow.down") {
                         model.downloadFiles(dl, host: host)
                     })
                     menu.addItem(.separator())
                 }
-                menu.addItem(ClosureMenuItem(title: "删除选中 (\(sel.count))", systemImage: "trash") {
+                menu.addItem(ClosureMenuItem(title: String(localized: "删除选中 (\(sel.count))"), systemImage: "trash") {
                     model.requestBatchDelete(sel, host: host, target: state)
                 })
             } else {
@@ -421,53 +421,53 @@ struct FileBrowser: View {
 
     private func addSingleFileItems(to menu: NSMenu, file: RemoteFile) {
         if file.isDir {
-            menu.addItem(ClosureMenuItem(title: "上传文件…", systemImage: "square.and.arrow.up") {
+            menu.addItem(ClosureMenuItem(title: String(localized: "上传文件…"), systemImage: "square.and.arrow.up") {
                 model.beginUpload(into: file, host: host)
             })
-            menu.addItem(ClosureMenuItem(title: "新建文件", systemImage: "doc.badge.plus") {
+            menu.addItem(ClosureMenuItem(title: String(localized: "新建文件"), systemImage: "doc.badge.plus") {
                 model.fileMenuRequestCreate(isDir: false, inDir: file.path, host: host, target: state)
             })
-            menu.addItem(ClosureMenuItem(title: "新建文件夹", systemImage: "folder.badge.plus") {
+            menu.addItem(ClosureMenuItem(title: String(localized: "新建文件夹"), systemImage: "folder.badge.plus") {
                 model.fileMenuRequestCreate(isDir: true, inDir: file.path, host: host, target: state)
             })
             menu.addItem(.separator())
         } else {
-            menu.addItem(ClosureMenuItem(title: "下载", systemImage: "square.and.arrow.down") {
+            menu.addItem(ClosureMenuItem(title: String(localized: "下载"), systemImage: "square.and.arrow.down") {
                 model.downloadFiles([file], host: host)
             })
             if ArchiveKind.detect(file.name) != nil {
-                menu.addItem(ClosureMenuItem(title: "解压", systemImage: "doc.zipper") {
+                menu.addItem(ClosureMenuItem(title: String(localized: "解压"), systemImage: "doc.zipper") {
                     model.requestExtract(file, host: host)
                 })
             }
             menu.addItem(.separator())
         }
-        menu.addItem(ClosureMenuItem(title: "刷新", systemImage: "arrow.clockwise") { state.reload() })
+        menu.addItem(ClosureMenuItem(title: String(localized: "刷新"), systemImage: "arrow.clockwise") { state.reload() })
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem(title: "重命名", systemImage: "pencil") {
+        menu.addItem(ClosureMenuItem(title: String(localized: "重命名"), systemImage: "pencil") {
             model.fileMenuRequestRename(file, host: host, target: state)
         })
-        menu.addItem(ClosureMenuItem(title: "权限", systemImage: "lock") {
+        menu.addItem(ClosureMenuItem(title: String(localized: "权限"), systemImage: "lock") {
             model.fileMenuRequestChmod(file, host: host, target: state)
         })
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem(title: "删除", systemImage: "trash") {
+        menu.addItem(ClosureMenuItem(title: String(localized: "删除"), systemImage: "trash") {
             model.fileMenuRequestDelete(file, host: host, target: state)
         })
     }
 
     private func addBlankItems(to menu: NSMenu) {
-        menu.addItem(ClosureMenuItem(title: "上传文件到此处", systemImage: "square.and.arrow.up") {
+        menu.addItem(ClosureMenuItem(title: String(localized: "上传文件到此处"), systemImage: "square.and.arrow.up") {
             model.beginUpload(into: currentDir, host: host)
         })
-        menu.addItem(ClosureMenuItem(title: "新建文件", systemImage: "doc.badge.plus") {
+        menu.addItem(ClosureMenuItem(title: String(localized: "新建文件"), systemImage: "doc.badge.plus") {
             model.fileMenuRequestCreate(isDir: false, inDir: state.path, host: host, target: state)
         })
-        menu.addItem(ClosureMenuItem(title: "新建文件夹", systemImage: "folder.badge.plus") {
+        menu.addItem(ClosureMenuItem(title: String(localized: "新建文件夹"), systemImage: "folder.badge.plus") {
             model.fileMenuRequestCreate(isDir: true, inDir: state.path, host: host, target: state)
         })
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem(title: "刷新", systemImage: "arrow.clockwise") { state.reload() })
+        menu.addItem(ClosureMenuItem(title: String(localized: "刷新"), systemImage: "arrow.clockwise") { state.reload() })
     }
 
     private func centered<C: View>(@ViewBuilder _ c: () -> C) -> some View {

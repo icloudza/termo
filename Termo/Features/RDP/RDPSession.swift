@@ -162,7 +162,7 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
         case 0: phase = .connecting
         case 1: phase = .connected; startClipboardSync()
         case 2: phase = .disconnected; stopClipboardSync()
-        default: phase = .failed(message ?? "连接失败"); stopClipboardSync()
+        default: phase = .failed(message ?? String(localized: "连接失败")); stopClipboardSync()
         }
     }
 
@@ -239,23 +239,23 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
         let fp = fingerprint ?? ""
         let p = Int(port)
         if RDPCertTrustStore.shared.isTrusted(host: host, port: p, fingerprint: fp) {
-            appendLog("服务器证书已信任，继续连接")
+            appendLog(String(localized: "服务器证书已信任，继续连接"))
             completion(2); return   // 已信任，无需打扰
         }
-        appendLog(changed ? "服务器证书已更改，等待用户确认…" : "未信任的服务器证书，等待用户确认…", level: 1)
+        appendLog(changed ? String(localized: "服务器证书已更改，等待用户确认…") : String(localized: "未信任的服务器证书，等待用户确认…"), level: 1)
         certPrompt = RDPCertPrompt(host: host, port: p, fingerprint: fp,
                                    subject: subject, issuer: issuer,
                                    changed: changed, oldFingerprint: oldFingerprint) { [weak self] decision in
             self?.certPrompt = nil
             switch decision {
             case .reject:
-                self?.appendLog("用户已拒绝证书，连接取消", level: 2)
+                self?.appendLog(String(localized: "用户已拒绝证书，连接取消"), level: 2)
                 completion(0)
             case .once:
-                self?.appendLog("用户接受证书（仅本次），继续连接")
+                self?.appendLog(String(localized: "用户接受证书（仅本次），继续连接"))
                 completion(2)
             case .trust:
-                self?.appendLog("用户选择始终信任此电脑，继续连接")
+                self?.appendLog(String(localized: "用户选择始终信任此电脑，继续连接"))
                 RDPCertTrustStore.shared.trust(host: host, port: p, fingerprint: fp,
                                                subject: subject, issuer: issuer)
                 completion(2)
@@ -266,7 +266,29 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
     /// 连接日志（桥已派发到主线程）。显式 selector，规避可选协议方法 @objc 自动推断不稳。
     @objc(rdpSession:didLog:level:)
     func rdpSession(_ session: TermoRDPSession, didLog text: String, level: Int) {
-        appendLog(text, level: level)
+        appendLog(Self.localizeCoreLog(text), level: level)
+    }
+
+    /// C 桥接层（FreeRDP）用中文常量打日志、显示在连接面板，此处按已知集合本地化；动态行按前缀处理。
+    private static func localizeCoreLog(_ text: String) -> String {
+        switch text {
+        case "初始化连接参数…":              return String(localized: "初始化连接参数…")
+        case "图形子系统已就绪，连接成功":      return String(localized: "图形子系统已就绪，连接成功")
+        case "图形管线已启用（全彩）":         return String(localized: "图形管线已启用（全彩）")
+        case "显示控制通道就绪（支持动态分辨率）": return String(localized: "显示控制通道就绪（支持动态分辨率）")
+        case "正在协商安全层并建立连接…":       return String(localized: "正在协商安全层并建立连接…")
+        case "正在验证服务器证书…":           return String(localized: "正在验证服务器证书…")
+        case "连接失败（认证失败或服务器不可达）": return String(localized: "连接失败（认证失败或服务器不可达）")
+        case "连接已断开":                  return String(localized: "连接已断开")
+        default: break
+        }
+        if text.hasPrefix("开始连接 ") {
+            return String(localized: "开始连接 \(String(text.dropFirst("开始连接 ".count)))")
+        }
+        if text.hasPrefix("连接启动失败 ("), text.hasSuffix(")") {
+            return String(localized: "连接启动失败 (\(String(text.dropFirst("连接启动失败 (".count).dropLast())))")
+        }
+        return text
     }
 
     private static let logTimeFormatter: DateFormatter = {
@@ -293,7 +315,7 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
 
     /// 连接步骤与状态。三步覆盖关键阶段；细节由实时日志补充。
     var connectSteps: [RDPConnectStep] {
-        let titles = ["初始化配置", "建立安全连接", "连接成功"]
+        let titles = [String(localized: "初始化配置"), String(localized: "建立安全连接"), String(localized: "连接成功")]
         let states: [RDPConnectStep.State]
         switch phase {
         case .pending:      states = [.running, .pending, .pending]
@@ -307,10 +329,10 @@ final class RDPSession: NSObject, ObservableObject, TermoRDPSessionDelegate {
 
     var connectStatusText: String {
         switch phase {
-        case .pending, .connecting: return "连接中…"
-        case .connected:            return "连接成功"
-        case .failed:               return "连接失败"
-        case .disconnected:         return "已断开"
+        case .pending, .connecting: return String(localized: "连接中…")
+        case .connected:            return String(localized: "连接成功")
+        case .failed:               return String(localized: "连接失败")
+        case .disconnected:         return String(localized: "已断开")
         }
     }
 

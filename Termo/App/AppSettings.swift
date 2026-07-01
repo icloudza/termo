@@ -13,9 +13,9 @@ enum SnippetAction: String, CaseIterable, Hashable {
     case ask, insert, run
     var label: String {
         switch self {
-        case .ask: return "每次询问"
-        case .insert: return "仅插入命令行"
-        case .run: return "直接运行"
+        case .ask: return String(localized: "每次询问")
+        case .insert: return String(localized: "仅插入命令行")
+        case .run: return String(localized: "直接运行")
         }
     }
 }
@@ -25,9 +25,29 @@ enum RDPOpenMode: String, CaseIterable, Hashable {
     case ask, embedded, window
     var label: String {
         switch self {
-        case .ask: return "每次询问"
-        case .embedded: return "内嵌标签"
-        case .window: return "新窗口"
+        case .ask: return String(localized: "每次询问")
+        case .embedded: return String(localized: "内嵌标签")
+        case .window: return String(localized: "新窗口")
+        }
+    }
+}
+
+/// 界面语言：跟随系统 / 简体中文 / English。默认简体中文。
+enum AppLanguage: String, CaseIterable, Hashable {
+    case system, zh, en
+    var label: String {
+        switch self {
+        case .system: return String(localized: "跟随系统")
+        case .zh: return "简体中文"
+        case .en: return "English"
+        }
+    }
+    /// 写入 AppleLanguages 的语言码；system 返回 nil 表示不覆盖、跟随系统。
+    var appleCode: String? {
+        switch self {
+        case .system: return nil
+        case .zh: return "zh-Hans"
+        case .en: return "en"
         }
     }
 }
@@ -39,6 +59,10 @@ final class AppSettings: ObservableObject {
 
     @Published var startupBehavior: StartupBehavior {
         didSet { d.set(startupBehavior.rawValue, forKey: "startupBehavior") }
+    }
+    // 覆盖 AppleLanguages，重启后生效（本地化在启动早期加载，无法热切换）。
+    @Published var appLanguage: AppLanguage {
+        didSet { d.set(appLanguage.rawValue, forKey: "appLanguage"); Self.applyLanguageOverride(appLanguage) }
     }
     @Published var defaultShell: DefaultShell {
         didSet { d.set(defaultShell.rawValue, forKey: "defaultShell") }
@@ -158,6 +182,18 @@ final class AppSettings: ObservableObject {
         rdpOpenMode = RDPOpenMode(rawValue: d.string(forKey: "rdpOpenMode") ?? "") ?? .ask
         rdpClipboardSync = d.object(forKey: "rdpClipboardSync") as? Bool ?? true
         rdpWindowFullscreen = d.object(forKey: "rdpWindowFullscreen") as? Bool ?? false   // 默认不全屏（每次强制全屏体验不佳）
+        appLanguage = AppLanguage(rawValue: d.string(forKey: "appLanguage") ?? "") ?? .zh
+        Self.applyLanguageOverride(appLanguage)
+    }
+
+    /// 把界面语言写进 AppleLanguages（下次启动生效）；system 则移除覆盖、跟随系统。
+    static func applyLanguageOverride(_ lang: AppLanguage) {
+        let d = UserDefaults.standard
+        if let code = lang.appleCode {
+            d.set([code], forKey: "AppleLanguages")
+        } else {
+            d.removeObject(forKey: "AppleLanguages")
+        }
     }
 
     /// 实际下载目录：设置为空则用系统下载文件夹。

@@ -3,42 +3,42 @@ import SwiftUI
 /// OpenSSH 算法与编码选项。空字符串表示「默认（自动协商）」。
 enum SSHOptions {
     static let encodings: [(value: String, label: String)] = [
-        ("", "默认（UTF-8）"),
+        ("", String(localized: "默认（UTF-8）")),
         ("UTF-8", "UTF-8"), ("GBK", "GBK"), ("GB2312", "GB2312"), ("GB18030", "GB18030"),
-        ("Big5", "Big5 (繁体)"), ("Shift_JIS", "Shift_JIS (日文)"), ("EUC-JP", "EUC-JP (日文)"),
-        ("EUC-KR", "EUC-KR (韩文)"), ("KOI8-R", "KOI8-R (俄文)"),
-        ("ISO-8859-1", "ISO-8859-1 (西欧)"), ("ISO-8859-15", "ISO-8859-15"),
-        ("Windows-1251", "Windows-1251 (西里尔)"), ("Windows-1252", "Windows-1252"),
+        ("Big5", String(localized: "Big5 (繁体)")), ("Shift_JIS", String(localized: "Shift_JIS (日文)")), ("EUC-JP", String(localized: "EUC-JP (日文)")),
+        ("EUC-KR", String(localized: "EUC-KR (韩文)")), ("KOI8-R", String(localized: "KOI8-R (俄文)")),
+        ("ISO-8859-1", String(localized: "ISO-8859-1 (西欧)")), ("ISO-8859-15", "ISO-8859-15"),
+        ("Windows-1251", String(localized: "Windows-1251 (西里尔)")), ("Windows-1252", "Windows-1252"),
         ("ASCII", "US-ASCII"),
     ]
 
     static let hostKeyAlgos: [(value: String, label: String)] = [
-        ("", "默认（自动协商）"),
+        ("", String(localized: "默认（自动协商）")),
         ("ssh-ed25519", "ssh-ed25519"),
         ("rsa-sha2-512", "rsa-sha2-512"),
         ("rsa-sha2-256", "rsa-sha2-256"),
         ("ecdsa-sha2-nistp256", "ecdsa-sha2-nistp256"),
         ("ecdsa-sha2-nistp384", "ecdsa-sha2-nistp384"),
         ("ecdsa-sha2-nistp521", "ecdsa-sha2-nistp521"),
-        ("ssh-rsa", "ssh-rsa (旧)"),
-        ("ssh-dss", "ssh-dss (旧)"),
+        ("ssh-rsa", String(localized: "ssh-rsa (旧)")),
+        ("ssh-dss", String(localized: "ssh-dss (旧)")),
     ]
 
     static let ciphers: [(value: String, label: String)] = [
-        ("", "默认（自动协商）"),
+        ("", String(localized: "默认（自动协商）")),
         ("chacha20-poly1305@openssh.com", "chacha20-poly1305"),
         ("aes256-gcm@openssh.com", "aes256-gcm"),
         ("aes128-gcm@openssh.com", "aes128-gcm"),
         ("aes256-ctr", "aes256-ctr"),
         ("aes192-ctr", "aes192-ctr"),
         ("aes128-ctr", "aes128-ctr"),
-        ("aes256-cbc", "aes256-cbc (旧)"),
-        ("aes128-cbc", "aes128-cbc (旧)"),
-        ("3des-cbc", "3des-cbc (旧)"),
+        ("aes256-cbc", String(localized: "aes256-cbc (旧)")),
+        ("aes128-cbc", String(localized: "aes128-cbc (旧)")),
+        ("3des-cbc", String(localized: "3des-cbc (旧)")),
     ]
 
     static let kexAlgos: [(value: String, label: String)] = [
-        ("", "默认（自动协商）"),
+        ("", String(localized: "默认（自动协商）")),
         ("curve25519-sha256", "curve25519-sha256"),
         ("curve25519-sha256@libssh.org", "curve25519-sha256@libssh.org"),
         ("ecdh-sha2-nistp256", "ecdh-sha2-nistp256"),
@@ -47,7 +47,7 @@ enum SSHOptions {
         ("diffie-hellman-group-exchange-sha256", "dh-group-exchange-sha256"),
         ("diffie-hellman-group16-sha512", "dh-group16-sha512"),
         ("diffie-hellman-group14-sha256", "dh-group14-sha256"),
-        ("diffie-hellman-group14-sha1", "dh-group14-sha1 (旧)"),
+        ("diffie-hellman-group14-sha1", String(localized: "dh-group14-sha1 (旧)")),
     ]
 }
 
@@ -55,6 +55,15 @@ enum AuthMethod: String, CaseIterable, Hashable, Codable {
     case password = "密码"
     case key = "密钥"
     case ask = "每次询问"           // 每次连接时弹窗输入本次密码，不保存任何凭证
+
+    // rawValue 已持久化进主机，不能改；显示用本地化 label。
+    var label: String {
+        switch self {
+        case .password: return String(localized: "密码")
+        case .key: return String(localized: "密钥")
+        case .ask: return String(localized: "每次询问")
+        }
+    }
 }
 
 enum HostFormSection: String, CaseIterable, Hashable {
@@ -63,6 +72,16 @@ enum HostFormSection: String, CaseIterable, Hashable {
     case initial = "初始选项"
     case proxy = "代理设置"
     case advanced = "高级设置"
+
+    var label: String {
+        switch self {
+        case .basic: return String(localized: "基本信息")
+        case .connection: return String(localized: "连接设置")
+        case .initial: return String(localized: "初始选项")
+        case .proxy: return String(localized: "代理设置")
+        case .advanced: return String(localized: "高级设置")
+        }
+    }
 
     var icon: String {
         switch self {
@@ -117,7 +136,7 @@ final class HostDraft: ObservableObject {
 
     var resolvedGroup: String {
         let g = group.trimmingCharacters(in: .whitespaces)
-        return g.isEmpty ? "未分组" : g
+        return g.isEmpty ? String(localized: "未分组") : g
     }
 
     /// 从已有主机回填表单（编辑模式）。

@@ -64,17 +64,29 @@ enum HostKeychain {
     }
 
     /// 覆盖写入合并条目（map 为空则删除该条目）。
+    /// 用 upsert（先 update 已有条目、无则 add）而非 delete+add：后者在跨代码签名场景下 delete 会被 ACL
+    /// 拒绝、随后 add 报重复而静默失败（开发期切换不同签名构建的经典坑）。update 原地改数据更可靠。
     static func saveAll(_ map: [String: String]) {
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: combinedService,
             kSecAttrAccount as String: combinedAccount,
         ]
-        SecItemDelete(base as CFDictionary)
-        guard !map.isEmpty, let data = try? JSONEncoder().encode(map) else { return }
-        var q = base
-        q[kSecValueData as String] = data
-        SecItemAdd(q as CFDictionary, nil)
+        guard !map.isEmpty, let data = try? JSONEncoder().encode(map) else {
+            SecItemDelete(base as CFDictionary)   // 全空 → 移除条目
+            return
+        }
+        let updateStatus = SecItemUpdate(base as CFDictionary,
+                                         [kSecValueData as String: data] as CFDictionary)
+        if updateStatus == errSecItemNotFound {
+            var add = base
+            add[kSecValueData as String] = data
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            let addStatus = SecItemAdd(add as CFDictionary, nil)
+            if addStatus != errSecSuccess { NSLog("[Keychain] 密码保存失败（add=\(addStatus)）") }
+        } else if updateStatus != errSecSuccess {
+            NSLog("[Keychain] 密码保存失败（update=\(updateStatus)）——可能是钥匙串条目由其它签名的构建创建，需先删除旧条目")
+        }
     }
 
     static func load(_ hostId: String) -> String {

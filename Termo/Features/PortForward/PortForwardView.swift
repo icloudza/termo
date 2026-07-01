@@ -64,7 +64,7 @@ struct PortForwardView: View {
     /// 删除确认弹窗（含「不再询问」复用设置里的自定义 checkbox；勾选只在本次运行生效）。
     @ViewBuilder
     private func deleteConfirm(_ rule: ForwardRule) -> some View {
-        let name = rule.name.isEmpty ? (rule.kind.title + "转发") : rule.name
+        let name = rule.name.isEmpty ? (rule.kind.title + String(localized: "转发")) : rule.name
         ZStack {
             Color.black.opacity(0.35).ignoresSafeArea()
                 .onTapGesture { pendingDelete = nil }
@@ -224,7 +224,7 @@ private struct ForwardRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
-                    Text(rule.name.isEmpty ? rule.kind.title + "转发" : rule.name)
+                    Text(rule.name.isEmpty ? rule.kind.title + String(localized: "转发") : rule.name)
                         .font(.system(size: 13, weight: .medium)).foregroundStyle(Pal.text)
                     kindBadge
                 }
@@ -251,7 +251,7 @@ private struct ForwardRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain).pointerCursor()
-            .help(status.isRunning ? "停止" : "启动")
+            .help(status.isRunning ? String(localized: "停止") : String(localized: "启动"))
 
             // 编辑（运行中不可改）
             Button(action: onEdit) {
@@ -263,7 +263,7 @@ private struct ForwardRow: View {
             .buttonStyle(.plain).pointerCursor()
             .disabled(status.isRunning)
             .opacity(status.isRunning ? 0.4 : 1)
-            .help(status.isRunning ? "请先停止再编辑" : "编辑")
+            .help(status.isRunning ? String(localized: "请先停止再编辑") : String(localized: "编辑"))
 
             Button(action: onDelete) {
                 Image(systemName: "trash").font(.system(size: 11)).foregroundStyle(Pal.subtext)
@@ -272,7 +272,7 @@ private struct ForwardRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain).pointerCursor()
-            .help("删除")
+            .help(String(localized: "删除"))
         }
         .padding(.horizontal, 12).padding(.vertical, 11)
         .background(hover ? Pal.fill(0.05) : Pal.fill(0.03), in: RoundedRectangle(cornerRadius: 10))
@@ -298,10 +298,10 @@ private struct ForwardRow: View {
     }
     private var statusText: String {
         switch status {
-        case .stopped:  return "已停止"
-        case .starting: return "连接中"
-        case .active:   return "运行中"
-        case .failed:   return "失败"
+        case .stopped:  return String(localized: "已停止")
+        case .starting: return String(localized: "连接中")
+        case .active:   return String(localized: "运行中")
+        case .failed:   return String(localized: "失败")
         }
     }
 }
@@ -340,34 +340,34 @@ private struct ForwardRuleForm: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                labeled("类型", hint: kind.hint) {
+                labeled(String(localized: "类型"), hint: kind.hint) {
                     SegmentedControl(
-                        options: ForwardKind.allCases.map { ($0, $0.title) },
+                        options: ForwardKind.allCases.map { (value: $0, verbatim: $0.title) },
                         selection: $kind
                     )
                     .frame(width: 240)
                 }
 
-                labeled("别名（可选）", hint: "便于识别，如「生产库」。留空则显示类型。") {
+                labeled(String(localized: "别名（可选）"), hint: String(localized: "便于识别，如「生产库」。留空则显示类型。")) {
                     ThemedTextField(placeholder: "可选", text: $name).frame(maxWidth: 280)
                 }
 
                 HStack(alignment: .top, spacing: 16) {
-                    labeled("绑定地址", hint: "监听端绑定的网卡地址。仅本机访问填 127.0.0.1；开放给局域网填 0.0.0.0。") {
+                    labeled(String(localized: "绑定地址"), hint: String(localized: "监听端绑定的网卡地址。仅本机访问填 127.0.0.1；开放给局域网填 0.0.0.0。")) {
                         ThemedTextField(placeholder: "127.0.0.1", text: $bind).frame(width: 150)
                     }
-                    labeled(kind == .dynamic ? "代理端口" : "监听端口",
-                            hint: "在监听端开放的端口，连接它的流量进入隧道。") {
+                    labeled(kind == .dynamic ? String(localized: "代理端口") : String(localized: "监听端口"),
+                            hint: String(localized: "在监听端开放的端口，连接它的流量进入隧道。")) {
                         ThemedTextField(placeholder: "如 8080", text: $listen).frame(width: 110)
                     }
                 }
 
                 if kind != .dynamic {
                     HStack(alignment: .top, spacing: 16) {
-                        labeled("目标主机", hint: destHostHint) {
+                        labeled(String(localized: "目标主机"), hint: destHostHint) {
                             ThemedTextField(placeholder: "localhost", text: $destHost).frame(width: 220)
                         }
-                        labeled("目标端口", hint: "目标服务监听的端口。") {
+                        labeled(String(localized: "目标端口"), hint: String(localized: "目标服务监听的端口。")) {
                             ThemedTextField(placeholder: "如 3306", text: $destPort).frame(width: 110)
                         }
                     }
@@ -392,8 +392,8 @@ private struct ForwardRuleForm: View {
 
     private var destHostHint: String {
         kind == .remote
-            ? "从本机视角解析的地址。localhost 指本机自身。"
-            : "从服务器视角解析的地址。localhost 指服务器自身——这正是访问只监听内网的远程数据库的用法。"
+            ? String(localized: "从本机视角解析的地址。localhost 指本机自身。")
+            : String(localized: "从服务器视角解析的地址。localhost 指服务器自身——这正是访问只监听内网的远程数据库的用法。")
     }
 
     // 实时预览将要执行的 ssh 转发参数，帮助理解方向。

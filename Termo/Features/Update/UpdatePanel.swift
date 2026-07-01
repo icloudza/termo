@@ -97,8 +97,8 @@ struct UpdatePanel: View {
         case .checking:    checking
         case .upToDate:    upToDate
         case .found:       found
-        case .downloading: progressBlock(title: "正在下载更新…", label: controller.progressLabel, fraction: controller.progressFraction, cancellable: true)
-        case .extracting:  progressBlock(title: "正在解压更新…", label: "", fraction: controller.progressFraction, cancellable: false)
+        case .downloading: progressBlock(title: String(localized: "正在下载更新…"), label: controller.progressLabel, fraction: controller.progressFraction, cancellable: true)
+        case .extracting:  progressBlock(title: String(localized: "正在解压更新…"), label: "", fraction: controller.progressFraction, cancellable: false)
         case .readyToInstall: ready
         case .installing:  installing
         case .error(let msg): errorBlock(msg)
@@ -267,7 +267,7 @@ final class UpdateWindowPresenter {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 200),
                          styleMask: [.titled, .closable],
                          backing: .buffered, defer: false)
-        w.title = "软件更新"
+        w.title = String(localized: "软件更新")
         w.isReleasedWhenClosed = false
         w.backgroundColor = NSColor(Pal.solidBase)
         w.contentView = host

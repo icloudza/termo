@@ -191,7 +191,7 @@ struct BackgroundCenterButton: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .onHover { hover = $0 }
-        .help("后台任务")
+        .help(String(localized: "后台任务"))
         .popover(isPresented: $open, arrowEdge: .trailing) {
             BackgroundCenterPanel(model: model, dismiss: { open = false })
         }
@@ -263,7 +263,7 @@ struct BackgroundCenterPanel: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help("清理所有已完成 / 已取消的任务")
+                .help(String(localized: "清理所有已完成 / 已取消的任务"))
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
@@ -409,8 +409,8 @@ struct QuitConfirmDialog: View {
     // 是否走「隐藏到菜单栏」语义：仅常规模式且已开启设置时；彻底退出模式恒为退出。
     private var hidesOnConfirm: Bool { !forceMode && settings.closeToTray }
     private var confirmTitle: String {
-        if forceMode { return hasTasks ? "停止任务并退出" : "退出" }
-        return settings.closeToTray ? "确定" : (hasTasks ? "关闭任务并退出" : "退出")
+        if forceMode { return hasTasks ? String(localized: "停止任务并退出") : String(localized: "退出") }
+        return settings.closeToTray ? String(localized: "确定") : (hasTasks ? String(localized: "关闭任务并退出") : String(localized: "退出"))
     }
 
     var body: some View {
@@ -501,13 +501,13 @@ private struct HubForwardRow: View {
     var body: some View {
         rowShell(
             icon: "arrow.left.arrow.right", iconColor: Pal.mauve,
-            title: rule.name.isEmpty ? rule.kind.title + "转发" : rule.name,
+            title: rule.name.isEmpty ? rule.kind.title + String(localized: "转发") : rule.name,
             subtitle: rule.summary,
             statusDot: statusColor, statusText: statusText
         ) {
             if !readOnly {
-                iconButton("stop.fill", color: Pal.red, help: "停止", action: onToggle)
-                iconButton("slider.horizontal.3", color: Pal.subtext, help: "管理", action: onManage)
+                iconButton("stop.fill", color: Pal.red, help: String(localized: "停止"), action: onToggle)
+                iconButton("slider.horizontal.3", color: Pal.subtext, help: String(localized: "管理"), action: onManage)
             }
         }
     }
@@ -522,10 +522,10 @@ private struct HubForwardRow: View {
     }
     private var statusText: String {
         switch status {
-        case .active:   return "运行中"
-        case .starting: return "连接中"
+        case .active:   return String(localized: "运行中")
+        case .starting: return String(localized: "连接中")
         case .failed(let r): return r
-        case .stopped:  return "已停止"
+        case .stopped:  return String(localized: "已停止")
         }
     }
 }
@@ -540,13 +540,13 @@ private struct HubTransferRow: View {
     private var fraction: Double {
         task.totalBytes > 0 ? min(1, Double(task.overallSent) / Double(task.totalBytes)) : 0
     }
-    private var verb: String { task.direction == .upload ? "上传" : "下载" }
+    private var verb: String { task.direction == .upload ? String(localized: "上传") : String(localized: "下载") }
 
     var body: some View {
         rowShell(
             icon: task.direction == .upload ? "arrow.up.circle" : "arrow.down.circle",
             iconColor: transferBlue,
-            title: "\(verb) \(task.items.count) 项",
+            title: String(localized: "\(verb) \(task.items.count) 项"),
             subtitle: subtitle,
             statusDot: statusColor, statusText: statusText,
             progress: (task.phase == .running || task.phase == .paused) ? fraction : nil,
@@ -555,20 +555,20 @@ private struct HubTransferRow: View {
             if !readOnly {
                 switch task.phase {
                 case .running:
-                    iconButton("pause.fill", color: Pal.mauve, help: "暂停") { AppModel.shared.pauseTransfer(task) }
-                    iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
+                    iconButton("pause.fill", color: Pal.mauve, help: String(localized: "暂停")) { AppModel.shared.pauseTransfer(task) }
+                    iconButton("xmark", color: Pal.red, help: String(localized: "取消")) { task.cancel() }
                 case .paused:
                     let waiting = task.awaitingSlot
                     iconButton(waiting ? "clock" : "play.fill",
                                color: waiting ? Pal.subtext : Pal.green,
-                               help: waiting ? "等待名额…" : "继续") { AppModel.shared.resumeTransfer(task) }
-                    iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
+                               help: waiting ? String(localized: "等待名额…") : String(localized: "继续")) { AppModel.shared.resumeTransfer(task) }
+                    iconButton("xmark", color: Pal.red, help: String(localized: "取消")) { task.cancel() }
                 case .queued:
-                    iconButton("xmark", color: Pal.red, help: "取消") { task.cancel() }
+                    iconButton("xmark", color: Pal.red, help: String(localized: "取消")) { task.cancel() }
                 case .done, .cancelled:
-                    iconButton("trash", color: Pal.red, help: "清除记录", action: onClear)
+                    iconButton("trash", color: Pal.red, help: String(localized: "清除记录"), action: onClear)
                 }
-                iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: "展开", action: onOpen)
+                iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: String(localized: "展开"), action: onOpen)
             }
         }
     }
@@ -591,13 +591,13 @@ private struct HubTransferRow: View {
         }
     }
     private var statusText: String {
-        if task.pendingAsk != nil { return "待确认" }
+        if task.pendingAsk != nil { return String(localized: "待确认") }
         switch task.phase {
-        case .queued:    return "排队中"
-        case .running:   return "\(verb)中"
-        case .paused:    return task.awaitingSlot ? "等待名额" : "已暂停"
-        case .done:      return task.hasFailures ? "部分失败" : "完成"
-        case .cancelled: return "已取消"
+        case .queued:    return String(localized: "排队中")
+        case .running:   return task.direction == .upload ? String(localized: "上传中") : String(localized: "下载中")
+        case .paused:    return task.awaitingSlot ? String(localized: "等待名额") : String(localized: "已暂停")
+        case .done:      return task.hasFailures ? String(localized: "部分失败") : String(localized: "完成")
+        case .cancelled: return String(localized: "已取消")
         }
     }
 
@@ -624,7 +624,7 @@ private struct HubExtractRow: View {
     var body: some View {
         rowShell(
             icon: "doc.zipper", iconColor: Pal.mauve,
-            title: "解压 \(task.archive.name)",
+            title: String(localized: "解压 \(task.archive.name)"),
             subtitle: task.destDir,
             statusDot: statusColor, statusText: statusText,
             progress: nil,
@@ -632,9 +632,9 @@ private struct HubExtractRow: View {
         ) {
             if !readOnly {
                 if isTerminal {
-                    iconButton("trash", color: Pal.red, help: "清除记录", action: onClear)
+                    iconButton("trash", color: Pal.red, help: String(localized: "清除记录"), action: onClear)
                 }
-                iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: "展开", action: onOpen)
+                iconButton("arrow.up.left.and.arrow.down.right", color: Pal.subtext, help: String(localized: "展开"), action: onOpen)
             }
         }
     }
@@ -649,10 +649,10 @@ private struct HubExtractRow: View {
     }
     private var statusText: String {
         switch task.phase {
-        case .ready:   return "待解压"
-        case .running: return "解压中"
-        case .done:    return "完成"
-        case .failed:  return "失败"
+        case .ready:   return String(localized: "待解压")
+        case .running: return String(localized: "解压中")
+        case .done:    return String(localized: "完成")
+        case .failed:  return String(localized: "失败")
         }
     }
 }
@@ -688,11 +688,14 @@ private func rowShell<Actions: View>(
             }
             HStack(spacing: 5) {
                 Circle().fill(statusDot).frame(width: 6, height: 6)
-                Text(statusText).font(.system(size: 10.5)).foregroundStyle(Pal.subtext).fixedSize()
+                // 状态词让位（英文更长时先截断它）；副标题优先级更高：短的速率/进度完整显示，
+                // 长的路径仍按中间截断 + 悬停看全。
+                Text(statusText).font(.system(size: 10.5)).foregroundStyle(Pal.subtext)
+                    .lineLimit(1).truncationMode(.tail)
                 if !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Pal.overlay)
-                        .lineLimit(1).truncationMode(.middle)
+                        .lineLimit(1).truncationMode(.middle).layoutPriority(1)
                         .tooltip(subtitleTooltip ?? "", when: subtitleTooltip?.isEmpty == false)
                 }
             }

@@ -257,10 +257,10 @@ struct FileViewerView: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help(settings.editorMinimap ? "隐藏缩略图" : "显示缩略图")
+                .help(settings.editorMinimap ? String(localized: "隐藏缩略图") : String(localized: "显示缩略图"))
             }
 
-            iconButton("arrow.clockwise", help: "重新加载") { state.reload() }
+            iconButton("arrow.clockwise", help: String(localized: "重新加载")) { state.reload() }
 
             if state.mode == .text {
                 Button { state.save() } label: {
@@ -459,7 +459,7 @@ private struct HostPill: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .onHover { hover = $0 }
-        .help("跳到根目录")
+        .help(String(localized: "跳到根目录"))
     }
 }
 
@@ -490,7 +490,7 @@ private struct CrumbText: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .onHover { hover = $0 }
-        .help(isLast ? "在文件树中定位" : "跳转到此目录")
+        .help(isLast ? String(localized: "在文件树中定位") : String(localized: "跳转到此目录"))
     }
 }
 
@@ -630,11 +630,11 @@ struct SaveConflictDialog: View {
 
                 HStack(spacing: 8) {
                     Spacer()
-                    pill(0, "取消", fg: Pal.subtext,
+                    pill(0, String(localized: "取消"), fg: Pal.subtext,
                          base: .clear, hover: Pal.fill(0.07), border: .clear, action: onCancel)
-                    pill(1, "重新加载", fg: Pal.text,
+                    pill(1, String(localized: "重新加载"), fg: Pal.text,
                          base: Pal.fill(0.07), hover: Pal.fill(0.13), border: Pal.fill(0.10), action: onReload)
-                    pill(2, "覆盖", fg: Pal.red,
+                    pill(2, String(localized: "覆盖"), fg: Pal.red,
                          base: Pal.red.opacity(0.12), hover: Pal.red.opacity(0.20),
                          border: Pal.red.opacity(0.28), action: onOverwrite)
                 }

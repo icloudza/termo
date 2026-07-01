@@ -26,7 +26,7 @@ struct SnippetRunDialog: View {
                     ForEach(request.variables, id: \.self) { v in
                         VStack(alignment: .leading, spacing: 5) {
                             Text(v).font(.system(size: 12)).foregroundStyle(Pal.subtext)
-                            ThemedTextField(placeholder: v, text: Binding(
+                            ThemedTextField(verbatim: v, text: Binding(
                                 get: { values[v] ?? "" },
                                 set: { values[v] = $0 }
                             ))

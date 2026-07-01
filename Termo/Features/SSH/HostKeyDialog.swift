@@ -43,8 +43,8 @@ struct HostKeyDialog: View {
                     Text("当前指纹（建议核对 SHA256）：")
                         .font(.system(size: 13, weight: .medium)).foregroundStyle(Pal.text)
                     Spacer()
-                    copyButton("复制 SHA256", info.sha256)
-                    copyButton("复制 MD5", info.md5)
+                    copyButton(String(localized: "复制 SHA256"), info.sha256)
+                    copyButton(String(localized: "复制 MD5"), info.md5)
                 }
                 .padding(.bottom, 10)
 

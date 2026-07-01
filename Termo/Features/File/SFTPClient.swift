@@ -79,13 +79,13 @@ final class SFTPSession: @unchecked Sendable {
                                            password: a.password, keyPath: a.keyPath, keyPassphrase: a.keyPassphrase)
             guard let raw = c.rawHandle, let sp = termo_sftp_init(raw) else {
                 c.close()
-                let e = SFTPError(code: 0xF001, message: "SFTP 初始化失败", isTransport: true)
+                let e = SFTPError(code: 0xF001, message: String(localized: "SFTP 初始化失败"), isTransport: true)
                 failure = e; return e
             }
             conn = c; sftp = sp
             return nil
         } catch {
-            let msg = (error as? SSHSession.SSHError)?.message ?? "SFTP 连接失败"
+            let msg = (error as? SSHSession.SSHError)?.message ?? String(localized: "SFTP 连接失败")
             let e = SFTPError(code: 0xF002, message: msg, isTransport: true)
             failure = e; return e
         }
@@ -95,11 +95,11 @@ final class SFTPSession: @unchecked Sendable {
     private func makeError(_ code: Int32) -> SFTPError {
         let c = UInt32(bitPattern: code)
         if c >= 0xF000 {
-            let e = SFTPError(code: c, message: "SFTP 连接错误", isTransport: true)
+            let e = SFTPError(code: c, message: String(localized: "SFTP 连接错误"), isTransport: true)
             failure = e
             return e
         }
-        return SFTPError(code: c, message: "SFTP 错误 \(c)")
+        return SFTPError(code: c, message: String(localized: "SFTP 错误 \(c)"))
     }
 
     // MARK: 句柄编解码（8 字节小端 id）
@@ -118,7 +118,7 @@ final class SFTPSession: @unchecked Sendable {
         guard let id = handleId(data) else { return nil }
         return handles[id]
     }
-    private func badHandle() -> SFTPError { SFTPError(code: 0xF011, message: "无效 SFTP 句柄", isTransport: true) }
+    private func badHandle() -> SFTPError { SFTPError(code: 0xF011, message: String(localized: "无效 SFTP 句柄"), isTransport: true) }
 
     // MARK: 生命周期
 
@@ -129,7 +129,7 @@ final class SFTPSession: @unchecked Sendable {
             self.handles.removeAll()
             if let sftp = self.sftp { termo_sftp_shutdown(sftp); self.sftp = nil }
             self.conn?.close(); self.conn = nil
-            if self.failure == nil { self.failure = SFTPError(code: 0xF007, message: "SFTP 已关闭", isTransport: true) }
+            if self.failure == nil { self.failure = SFTPError(code: 0xF007, message: String(localized: "SFTP 已关闭"), isTransport: true) }
         }
     }
 
@@ -174,7 +174,7 @@ final class SFTPSession: @unchecked Sendable {
                 }
                 if n > 0 { items.append((String(cString: nameBuf), SFTPAttrs(a))) }
                 else if n == 0 { break }                       // EOF
-                else { return .failure(SFTPError(code: 0xF000, message: "SFTP 目录读取失败", isTransport: true)) }
+                else { return .failure(SFTPError(code: 0xF000, message: String(localized: "SFTP 目录读取失败"), isTransport: true)) }
             }
             return .success(items)
         }
@@ -241,7 +241,7 @@ final class SFTPSession: @unchecked Sendable {
             }
             if n > 0 { return .success(Data(buf.prefix(n))) }
             if n == 0 { return .success(nil) }                 // EOF
-            return .failure(SFTPError(code: 0xF000, message: "SFTP 读取失败", isTransport: true))
+            return .failure(SFTPError(code: 0xF000, message: String(localized: "SFTP 读取失败"), isTransport: true))
         }
         return try r.get()
     }
@@ -253,7 +253,7 @@ final class SFTPSession: @unchecked Sendable {
             let n = data.withUnsafeBytes { rb in
                 termo_sftp_write(hp, offset, rb.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(data.count))
             }
-            return n == data.count ? nil : SFTPError(code: 0xF000, message: "SFTP 写入失败", isTransport: true)
+            return n == data.count ? nil : SFTPError(code: 0xF000, message: String(localized: "SFTP 写入失败"), isTransport: true)
         }
         if let r { throw r }
     }

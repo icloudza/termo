@@ -24,10 +24,10 @@ struct AboutContent: View {
             }
             Divider().background(Pal.fill(0.06)).padding(.vertical, 6)
             linkLine("GitHub", "github.com/icloudza/termo", url: "https://github.com/icloudza/termo")
-            infoLine("终端引擎", value: "SwiftTerm 1.13")
-            infoLine("渲染", value: "CoreText / AppKit")
-            infoLine("平台", value: "macOS 14+")
-            infoLine("架构", value: "Apple Silicon")
+            infoLine(String(localized: "终端引擎"), value: "SwiftTerm 1.13")
+            infoLine(String(localized: "渲染"), value: "CoreText / AppKit")
+            infoLine(String(localized: "平台"), value: "macOS 14+")
+            infoLine(String(localized: "架构"), value: "Apple Silicon")
         }
         .padding(20)
         .background(Pal.fill(0.03), in: RoundedRectangle(cornerRadius: 10))

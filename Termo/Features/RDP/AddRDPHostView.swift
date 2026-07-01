@@ -31,7 +31,7 @@ struct AddRDPHostView: View {
 
     private var resolvedGroup: String {
         let g = group.trimmingCharacters(in: .whitespaces)
-        return g.isEmpty ? "未分组" : g
+        return g.isEmpty ? String(localized: "未分组") : g
     }
 
     var body: some View {
@@ -41,22 +41,22 @@ struct AddRDPHostView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     groupSelector
-                    field("名称", "我的 Windows 服务器", $name)
+                    field(String(localized: "名称"), "我的 Windows 服务器", $name)
                     HStack(spacing: 12) {
-                        field("地址", "192.168.1.10 或 host.example.com", $address)
-                        field("端口", "3389", $port).frame(width: 90)
+                        field(String(localized: "地址"), "192.168.1.10 或 host.example.com", $address)
+                        field(String(localized: "端口"), "3389", $port).frame(width: 90)
                     }
-                    field("登录用户", "Administrator", $user)
-                    labeled("登录密码", optional: true) {
+                    field(String(localized: "登录用户"), "Administrator", $user)
+                    labeled(String(localized: "登录密码"), optional: true) {
                         ThemedSecureField(placeholder: "（可选，保存到系统钥匙串）", text: $password)
                     }
-                    labeled("域", optional: true) {
+                    labeled(String(localized: "域"), optional: true) {
                         ThemedTextField(placeholder: "WORKGROUP / 域名", text: $domain)
                     }
                     HStack(alignment: .bottom, spacing: 12) {
-                        field("宽", "1920", $width).frame(width: 100)
-                        field("高", "1080", $height).frame(width: 100)
-                        labeled("色深") {
+                        field(String(localized: "宽"), "1920", $width).frame(width: 100)
+                        field(String(localized: "高"), "1080", $height).frame(width: 100)
+                        labeled(String(localized: "色深")) {
                             ThemedDropdown(
                                 options: [(value: 16, label: "16 位"), (value: 24, label: "24 位"), (value: 32, label: "32 位")],
                                 selection: $colorDepth
@@ -64,14 +64,14 @@ struct AddRDPHostView: View {
                             .frame(width: 110)
                         }
                     }
-                    labeled("安全级别", hint: "一般用「自动协商」；Windows 默认启用 NLA") {
+                    labeled(String(localized: "安全级别"), hint: String(localized: "一般用「自动协商」；Windows 默认启用 NLA")) {
                         ThemedDropdown(
-                            options: RDPSecurity.allCases.map { ($0, $0.label) },
+                            options: RDPSecurity.allCases.map { (value: $0, verbatim: $0.label) },
                             selection: $security
                         )
                         .frame(width: 240)
                     }
-                    labeled("主机备注") {
+                    labeled(String(localized: "主机备注")) {
                         ThemedTextEditor(placeholder: "备注信息…", text: $notes)
                     }
                 }
@@ -172,7 +172,7 @@ struct AddRDPHostView: View {
 
     // MARK: - 组件
 
-    private func field(_ label: String, _ placeholder: String, _ text: Binding<String>) -> some View {
+    private func field(_ label: String, _ placeholder: LocalizedStringKey, _ text: Binding<String>) -> some View {
         labeled(label) { ThemedTextField(placeholder: placeholder, text: text) }
     }
 
@@ -188,8 +188,8 @@ struct AddRDPHostView: View {
     }
 
     private var groupSelector: some View {
-        labeled("分组") {
-            SearchableSelect(options: model.groupNames, text: $group, placeholder: "搜索或新建分组…")
+        labeled(String(localized: "分组")) {
+            SearchableSelect(options: model.groupNames, text: $group, placeholder: String(localized: "搜索或新建分组…"))
         }
     }
 }

@@ -88,7 +88,7 @@ struct AddHostView: View {
                             .font(.system(size: 13))
                             .foregroundStyle(selected ? Pal.mauve : Pal.overlay)
                             .frame(width: 18)
-                        Text(s.rawValue)
+                        Text(s.label)
                             .font(.system(size: 13))
                             .foregroundStyle(selected ? Pal.text : Pal.subtext)
                         Spacer()
@@ -158,7 +158,7 @@ struct AddHostView: View {
         panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true   // ~/.ssh 为隐藏目录，需显示隐藏文件才能选到密钥
         panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh")
-        panel.prompt = "选择"
+        panel.prompt = String(localized: "选择")
         if panel.runModal() == .OK, let url = panel.url {
             if AppEnv.isMAS {
                 // 沙盒下不能长期持有容器外路径 → 选中即导入密钥库，改用 keyId。
@@ -171,7 +171,7 @@ struct AddHostView: View {
 
     /// 「密钥来源」下拉选项：手动文件 + 密钥库中的每把密钥。
     private var keySourceOptions: [(value: String, label: String)] {
-        [(value: "", label: "手动指定文件…")]
+        [(value: "", label: String(localized: "手动指定文件…"))]
             + model.sshKeys.map { (value: $0.id, label: "\($0.name)（\($0.type.label)）") }
     }
 
@@ -190,27 +190,27 @@ struct AddHostView: View {
 
     private var basicSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionTitle("基本信息")
+            sectionTitle(String(localized: "基本信息"))
             groupSelector
-            field("名称", placeholder: "我的服务器", text: $draft.name)
+            field(String(localized: "名称"), placeholder: "我的服务器", text: $draft.name)
             HStack(spacing: 12) {
-                field("地址", placeholder: "192.168.1.1 或 example.com", text: $draft.address)
-                field("端口", placeholder: "22", text: $draft.port).frame(width: 90)
+                field(String(localized: "地址"), placeholder: "192.168.1.1 或 example.com", text: $draft.address)
+                field(String(localized: "端口"), placeholder: "22", text: $draft.port).frame(width: 90)
             }
-            labeled("验证方式") {
+            labeled(String(localized: "验证方式")) {
                 ThemedDropdown(
-                    options: AuthMethod.allCases.map { ($0, $0.rawValue) },
+                    options: AuthMethod.allCases.map { (value: $0, verbatim: $0.label) },
                     selection: $draft.authMethod
                 )
                 .frame(width: 200)
             }
-            field("登录用户", placeholder: "root", text: $draft.user)
+            field(String(localized: "登录用户"), placeholder: "root", text: $draft.user)
             if draft.authMethod == .key {
-                labeled("密钥来源") {
-                    ThemedDropdown(options: keySourceOptions, selection: $draft.keyId)
+                labeled(String(localized: "密钥来源")) {
+                    ThemedDropdown(options: keySourceOptions.map { (value: $0.value, verbatim: $0.label) }, selection: $draft.keyId)
                 }
                 if draft.keyId.isEmpty {
-                    labeled("私钥文件") {
+                    labeled(String(localized: "私钥文件")) {
                         if AppEnv.isMAS {
                             // 沙盒下不接受手填路径（容器外读不到）：选文件即导入密钥库。
                             SecondaryButton(title: "选择文件并导入密钥库…") { chooseKeyFile() }
@@ -222,11 +222,11 @@ struct AddHostView: View {
                         }
                     }
                 }
-                labeled("私钥密码", optional: true) {
+                labeled(String(localized: "私钥密码"), optional: true) {
                     ThemedSecureField(placeholder: "（私钥有 passphrase 时填写）", text: $draft.password)
                 }
             } else if draft.authMethod == .password {
-                labeled("登录密码", optional: true) {
+                labeled(String(localized: "登录密码"), optional: true) {
                     ThemedSecureField(placeholder: "（可选）", text: $draft.password)
                 }
             } else {
@@ -235,7 +235,7 @@ struct AddHostView: View {
                     .font(.system(size: 11)).foregroundStyle(Pal.overlay)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            labeled("主机备注") {
+            labeled(String(localized: "主机备注")) {
                 ThemedTextEditor(placeholder: "备注信息…", text: $draft.notes)
             }
         }
@@ -243,17 +243,17 @@ struct AddHostView: View {
 
     private var connectionSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionTitle("连接设置")
-            field("超时时间 (ms)", placeholder: "10000", text: $draft.timeout)
-            field("心跳时间 (ms)", placeholder: "5000", text: $draft.heartbeat)
+            sectionTitle(String(localized: "连接设置"))
+            field(String(localized: "超时时间 (ms)"), placeholder: "10000", text: $draft.timeout)
+            field(String(localized: "心跳时间 (ms)"), placeholder: "5000", text: $draft.heartbeat)
         }
     }
 
     private var initialSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionTitle("初始选项")
-            field("默认路径", placeholder: "~", text: $draft.defaultPath)
-            labeled("初始执行") {
+            sectionTitle(String(localized: "初始选项"))
+            field(String(localized: "默认路径"), placeholder: "~", text: $draft.defaultPath)
+            labeled(String(localized: "初始执行")) {
                 ThemedTextEditor(placeholder: "#!/bin/bash", text: $draft.initialCommand)
             }
         }
@@ -261,16 +261,16 @@ struct AddHostView: View {
 
     private var proxySection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionTitle("代理设置")
+            sectionTitle(String(localized: "代理设置"))
             hintBox([
-                "选择此选项后，数据将会通过代理进行中转传输。",
-                "支持 socks4/socks5 代理，如：socks5://127.0.0.1:10808（鉴权：socks5://user:pass@host:port）",
-                "支持 http 代理，如：http://127.0.0.1:10809（鉴权：http://user:pass@host:port）",
-                "支持 https 代理，如：https://127.0.0.1:10809（鉴权：https://user:pass@host:port）",
-                "若此处留空且在系统设置中开启“使用系统代理”，将自动尝试使用系统代理。",
+                String(localized: "选择此选项后，数据将会通过代理进行中转传输。"),
+                String(localized: "支持 socks4/socks5 代理，如：socks5://127.0.0.1:10808（鉴权：socks5://user:pass@host:port）"),
+                String(localized: "支持 http 代理，如：http://127.0.0.1:10809（鉴权：http://user:pass@host:port）"),
+                String(localized: "支持 https 代理，如：https://127.0.0.1:10809（鉴权：https://user:pass@host:port）"),
+                String(localized: "若此处留空且在系统设置中开启“使用系统代理”，将自动尝试使用系统代理。"),
             ])
-            toggleRow("禁用代理", isOn: $draft.disableProxy)
-            labeled("代理设置") {
+            toggleRow(String(localized: "禁用代理"), isOn: $draft.disableProxy)
+            labeled(String(localized: "代理设置")) {
                 ThemedTextField(placeholder: "socks5://127.0.0.1:10808", text: $draft.proxyURL)
             }
             .opacity(draft.disableProxy ? 0.4 : 1)
@@ -280,21 +280,21 @@ struct AddHostView: View {
 
     private var advancedSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionTitle("高级设置")
-            labeled("终端显示编码", hint: "作为 LC_ALL 转发给服务器；非 UTF-8 的最终显示受终端渲染限制") {
-                ThemedDropdown(options: SSHOptions.encodings, selection: $draft.encoding)
+            sectionTitle(String(localized: "高级设置"))
+            labeled(String(localized: "终端显示编码"), hint: String(localized: "作为 LC_ALL 转发给服务器；非 UTF-8 的最终显示受终端渲染限制")) {
+                ThemedDropdown(options: SSHOptions.encodings.map { (value: $0.value, verbatim: $0.label) }, selection: $draft.encoding)
                     .frame(width: 240)
             }
-            labeled("主机密钥算法", hint: "一般为空（让 SSH 自动协商）") {
-                ThemedDropdown(options: SSHOptions.hostKeyAlgos, selection: $draft.hostKeyAlgos)
+            labeled(String(localized: "主机密钥算法"), hint: String(localized: "一般为空（让 SSH 自动协商）")) {
+                ThemedDropdown(options: SSHOptions.hostKeyAlgos.map { (value: $0.value, verbatim: $0.label) }, selection: $draft.hostKeyAlgos)
                     .frame(width: 280)
             }
-            labeled("Cipher 算法", hint: "一般为空（让 SSH 自动协商）") {
-                ThemedDropdown(options: SSHOptions.ciphers, selection: $draft.ciphers)
+            labeled(String(localized: "Cipher 算法"), hint: String(localized: "一般为空（让 SSH 自动协商）")) {
+                ThemedDropdown(options: SSHOptions.ciphers.map { (value: $0.value, verbatim: $0.label) }, selection: $draft.ciphers)
                     .frame(width: 280)
             }
-            labeled("密钥交换算法", hint: "一般为空（让 SSH 自动协商）") {
-                ThemedDropdown(options: SSHOptions.kexAlgos, selection: $draft.kexAlgos)
+            labeled(String(localized: "密钥交换算法"), hint: String(localized: "一般为空（让 SSH 自动协商）")) {
+                ThemedDropdown(options: SSHOptions.kexAlgos.map { (value: $0.value, verbatim: $0.label) }, selection: $draft.kexAlgos)
                     .frame(width: 320)
             }
         }
@@ -309,7 +309,7 @@ struct AddHostView: View {
             .padding(.bottom, 2)
     }
 
-    private func field(_ label: String, placeholder: String, text: Binding<String>) -> some View {
+    private func field(_ label: String, placeholder: LocalizedStringKey, text: Binding<String>) -> some View {
         labeled(label) { ThemedTextField(placeholder: placeholder, text: text) }
     }
 
@@ -352,8 +352,8 @@ struct AddHostView: View {
     }
 
     private var groupSelector: some View {
-        labeled("服务器分组") {
-            SearchableSelect(options: model.groupNames, text: $draft.group, placeholder: "搜索或新建分组…")
+        labeled(String(localized: "服务器分组")) {
+            SearchableSelect(options: model.groupNames, text: $draft.group, placeholder: String(localized: "搜索或新建分组…"))
         }
     }
 }

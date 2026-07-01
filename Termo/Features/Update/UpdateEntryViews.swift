@@ -33,15 +33,15 @@ struct UpdateInlineControls: View {
             case .checking, .downloading, .extracting, .installing:
                 HStack(spacing: 5) {
                     ProgressView().controlSize(.small).scaleEffect(0.8)
-                    miniButton("查看") { UpdateWindowPresenter.shared.present() }
+                    miniButton(String(localized: "查看")) { UpdateWindowPresenter.shared.present() }
                 }
             case .found, .readyToInstall:
-                miniButton("查看更新", primary: true) { UpdateWindowPresenter.shared.present() }
+                miniButton(String(localized: "查看更新"), primary: true) { UpdateWindowPresenter.shared.present() }
             default:
-                miniButton("检查更新") { u.checkForUpdates(surfaceTransient: false) }
+                miniButton(String(localized: "检查更新")) { u.checkForUpdates(surfaceTransient: false) }
             }
         } else {
-            miniButton("在 App Store 中检查") { u.checkForUpdates() }
+            miniButton(String(localized: "在 App Store 中检查")) { u.checkForUpdates() }
         }
     }
 
@@ -51,6 +51,7 @@ struct UpdateInlineControls: View {
             Text(title)
                 .font(.system(size: 11, weight: primary ? .medium : .regular))
                 .foregroundStyle(primary ? .white : Pal.subtext)
+                .lineLimit(1).fixedSize()   // 按钮文字始终单行贴合，不换行变胖
                 .padding(.horizontal, 9).padding(.vertical, 3)
                 .background(primary ? Pal.mauve : Pal.fill(0.08), in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
@@ -59,19 +60,19 @@ struct UpdateInlineControls: View {
     }
 
     private var statusText: String {
-        if !u.supportsInApp { return "通过 App Store 接收更新" }
+        if !u.supportsInApp { return String(localized: "通过 App Store 接收更新") }
         switch u.phase {
-        case .checking:      return "正在检查更新…"
-        case .found:         return "发现新版本" + (u.info.map { " \($0.displayVersion)" } ?? "")
-        case .downloading, .extracting: return "正在更新…"
-        case .readyToInstall: return "更新已就绪，待重启安装"
-        case .installing:    return "正在安装…"
-        case .upToDate:      return "已是最新版本"
-        case .error:         return "上次检查失败"
+        case .checking:      return String(localized: "正在检查更新…")
+        case .found:         return String(localized: "发现新版本") + (u.info.map { " \($0.displayVersion)" } ?? "")
+        case .downloading, .extracting: return String(localized: "正在更新…")
+        case .readyToInstall: return String(localized: "更新已就绪，待重启安装")
+        case .installing:    return String(localized: "正在安装…")
+        case .upToDate:      return String(localized: "已是最新版本")
+        case .error:         return String(localized: "上次检查失败")
         case .idle:
-            guard let d = u.lastCheckDate else { return "尚未检查更新" }
-            if Date().timeIntervalSince(d) < 60 { return "上次检查：刚刚" }   // 避免「0秒后」这类四舍五入错向
-            return "上次检查：" + Self.relative.localizedString(for: d, relativeTo: Date())
+            guard let d = u.lastCheckDate else { return String(localized: "尚未检查更新") }
+            if Date().timeIntervalSince(d) < 60 { return String(localized: "上次检查：刚刚") }   // 避免「0秒后」这类四舍五入错向
+            return String(localized: "上次检查：") + Self.relative.localizedString(for: d, relativeTo: Date())
         }
     }
 

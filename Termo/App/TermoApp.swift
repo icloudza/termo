@@ -172,14 +172,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         main.addItem(appItem)
         let appMenu = NSMenu()
         appItem.submenu = appMenu
-        let about = NSMenuItem(title: "关于 Termo", action: #selector(showAbout), keyEquivalent: "")
+        let about = NSMenuItem(title: String(localized: "关于 Termo"), action: #selector(showAbout), keyEquivalent: "")
         about.target = self
         appMenu.addItem(about)
-        let checkUpdate = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+        let checkUpdate = NSMenuItem(title: String(localized: "检查更新…"), action: #selector(checkForUpdates), keyEquivalent: "")
         checkUpdate.target = self
         appMenu.addItem(checkUpdate)
         appMenu.addItem(.separator())
-        let quit = NSMenuItem(title: "退出 Termo", action: #selector(requestQuit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: String(localized: "退出 Termo"), action: #selector(requestQuit), keyEquivalent: "q")
         quit.target = self   // 经退出流程检查后台任务，而非直接 terminate
         appMenu.addItem(quit)
 
@@ -187,9 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 父项必须有标题，否则菜单栏显示为空；每项显式设 keyEquivalentModifierMask = ⌘（与代码库其它菜单一致），
         // 避免默认修饰键在自定义主菜单下未被识别导致 ⌘X/⌘C/⌘V/⌘A 失效。
         let editItem = NSMenuItem()
-        editItem.title = "编辑"
+        editItem.title = String(localized: "编辑")
         main.addItem(editItem)
-        let edit = NSMenu(title: "编辑")
+        let edit = NSMenu(title: String(localized: "编辑"))
         editItem.submenu = edit
         func addEdit(_ title: String, _ action: Selector, _ key: String,
                      _ mask: NSEvent.ModifierFlags = .command) {
@@ -197,13 +197,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             item.keyEquivalentModifierMask = mask
             edit.addItem(item)
         }
-        addEdit("撤销", Selector(("undo:")), "z")
-        addEdit("重做", Selector(("redo:")), "z", [.command, .shift])
+        addEdit(String(localized: "撤销"), Selector(("undo:")), "z")
+        addEdit(String(localized: "重做"), Selector(("redo:")), "z", [.command, .shift])
         edit.addItem(.separator())
-        addEdit("剪切", #selector(NSText.cut(_:)), "x")
-        addEdit("复制", #selector(NSText.copy(_:)), "c")
-        addEdit("粘贴", #selector(NSText.paste(_:)), "v")
-        addEdit("全选", #selector(NSText.selectAll(_:)), "a")
+        addEdit(String(localized: "剪切"), #selector(NSText.cut(_:)), "x")
+        addEdit(String(localized: "复制"), #selector(NSText.copy(_:)), "c")
+        addEdit(String(localized: "粘贴"), #selector(NSText.paste(_:)), "v")
+        addEdit(String(localized: "全选"), #selector(NSText.selectAll(_:)), "a")
 
         NSApp.mainMenu = main
     }
@@ -219,7 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 contentRect: NSRect(x: 0, y: 0, width: 460, height: 260),
                 styleMask: [.titled, .closable],
                 backing: .buffered, defer: false)
-            w.title = "关于 Termo"
+            w.title = String(localized: "关于 Termo")
             w.isReleasedWhenClosed = false
             w.contentView = hosting
             w.setContentSize(NSSize(width: 460, height: hosting.fittingSize.height))
@@ -284,8 +284,8 @@ struct ContentView: View {
             ZStack {
                 if model.pendingCloseTabId != nil {
                     ConfirmDialog(
-                        title: model.pendingCloseDialogTitle,
-                        message: model.pendingCloseDialogMessage,
+                        verbatimTitle: model.pendingCloseDialogTitle,
+                        verbatimMessage: model.pendingCloseDialogMessage,
                         confirmTitle: "关闭",
                         destructive: true,
                         onConfirm: { model.confirmPendingClose() },
@@ -443,7 +443,7 @@ struct ContentView: View {
             }
             if let info = model.pendingFileInfo {
                 ConfirmDialog(
-                    title: info.title, message: info.message,
+                    verbatimTitle: info.title, verbatimMessage: info.message,
                     confirmTitle: "好的", showCancel: false,
                     onConfirm: { model.pendingFileInfo = nil },
                     onCancel: { model.pendingFileInfo = nil }

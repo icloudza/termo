@@ -9,7 +9,7 @@ struct RenameDialog: View {
     @State private var name: String
     @ObservedObject private var theme = ThemeManager.shared
 
-    init(originalName: String, title: String = "重命名",
+    init(originalName: String, title: String = String(localized: "重命名"),
          onConfirm: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
         self.originalName = originalName
         self.title = title
@@ -61,8 +61,8 @@ struct ChmodDialog: View {
         _octalText = State(initialValue: String(format: "%03o", initialMode & 0o777))
     }
 
-    private let groups: [(label: String, shift: Int)] = [("属主", 6), ("用户组", 3), ("其他", 0)]
-    private let perms: [(label: String, bit: Int)] = [("读", 4), ("写", 2), ("执行", 1)]
+    private let groups: [(label: String, shift: Int)] = [(String(localized: "属主"), 6), (String(localized: "用户组"), 3), (String(localized: "其他"), 0)]
+    private let perms: [(label: String, bit: Int)] = [(String(localized: "读"), 4), (String(localized: "写"), 2), (String(localized: "执行"), 1)]
 
     private func isOn(_ shift: Int, _ bit: Int) -> Bool { (mode >> shift) & bit != 0 }
     private func toggle(_ shift: Int, _ bit: Int) {

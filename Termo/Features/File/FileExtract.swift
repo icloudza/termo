@@ -106,13 +106,13 @@ final class ExtractTask: ObservableObject {
             let r = await fs.run(cmd, timeout: 1800)
             if r.code == 0 {
                 phase = .done
-                Notifier.notify(title: "解压完成", body: "\(archive.name) → \(destDir)")
+                Notifier.notify(title: String(localized: "解压完成"), body: "\(archive.name) → \(destDir)")
                 onDone()
             } else {
                 let err = String(data: r.stderr, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                phase = .failed(err.isEmpty ? "解压失败（退出码 \(r.code)）" : err)
-                Notifier.notify(title: "解压失败", body: archive.name)
+                phase = .failed(err.isEmpty ? String(localized: "解压失败（退出码 \(r.code)）") : err)
+                Notifier.notify(title: String(localized: "解压失败"), body: archive.name)
             }
         }
     }
@@ -215,7 +215,7 @@ struct ExtractDialog: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help("后台运行（在左下角继续显示进度）")
+                .help(String(localized: "后台运行（在左下角继续显示进度）"))
             }
         }
     }
@@ -223,10 +223,10 @@ struct ExtractDialog: View {
     @ViewBuilder private var statusBadge: some View {
         let (label, fg): (String, Color) = {
             switch task.phase {
-            case .ready:     return ("待解压", Pal.overlay)
-            case .running:   return ("解压中", Pal.mauve)
-            case .done:      return ("完成", Pal.green)
-            case .failed:    return ("失败", Pal.red)
+            case .ready:     return (String(localized: "待解压"), Pal.overlay)
+            case .running:   return (String(localized: "解压中"), Pal.mauve)
+            case .done:      return (String(localized: "完成"), Pal.green)
+            case .failed:    return (String(localized: "失败"), Pal.red)
             }
         }()
         Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(fg)
@@ -250,8 +250,8 @@ struct ExtractDialog: View {
     @ViewBuilder private func stageView(_ phase: ExtractPhase) -> some View {
         switch phase {
         case .ready:          destinationPicker
-        case .running:        statusLine(icon: nil, "正在解压…", color: Pal.mauve)
-        case .done:           statusLine(icon: "checkmark.circle.fill", "已解压到 \(task.destDir)", color: Pal.green)
+        case .running:        statusLine(icon: nil, String(localized: "正在解压…"), color: Pal.mauve)
+        case .done:           statusLine(icon: "checkmark.circle.fill", String(localized: "已解压到 \(task.destDir)"), color: Pal.green)
         case .failed(let m):  failed(m)
         }
     }
@@ -260,8 +260,8 @@ struct ExtractDialog: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("解压到").font(.system(size: 11)).foregroundStyle(Pal.overlay)
             HStack(spacing: 8) {
-                destOption("新文件夹「\(task.folderName)」", selected: task.toSubfolder) { task.toSubfolder = true }
-                destOption("当前目录", selected: !task.toSubfolder) { task.toSubfolder = false }
+                destOption(String(localized: "新文件夹「\(task.folderName)」"), selected: task.toSubfolder) { task.toSubfolder = true }
+                destOption(String(localized: "当前目录"), selected: !task.toSubfolder) { task.toSubfolder = false }
                 Spacer(minLength: 0)
             }
             Text(task.destDir)

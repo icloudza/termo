@@ -154,7 +154,7 @@ struct ConnectionProgressView: View {
 /// 连接主机时的进度弹窗（复用 ConnectionProgressView），成功后回调进入终端。
 struct ConnectingDialog: View {
     let host: Host
-    var successHint: String = "正在进入终端…"   // 成功后的提示，按动作变化（终端/文件/转发/监控）
+    var successHint: String = String(localized: "正在进入终端…")   // 成功后的提示，按动作变化（终端/文件/转发/监控）
     let verify: () async -> Bool   // 指纹验证（可能弹出指纹核对框）；返回是否继续连接
     let onConnected: () -> Void
     let onCancel: () -> Void
@@ -282,7 +282,14 @@ final class ConnectionTester: ObservableObject {
     @Published var isRunning = false
     @Published var failed = false
 
-    private let stepTitles = ["初始化配置", "解析主机地址", "建立 TCP 连接", "SSH 协议握手", "身份验证", "连接成功"]
+    private let stepTitles = [
+        String(localized: "初始化配置"),
+        String(localized: "解析主机地址"),
+        String(localized: "建立 TCP 连接"),
+        String(localized: "SSH 协议握手"),
+        String(localized: "身份验证"),
+        String(localized: "连接成功"),
+    ]
     private var cancelled = false
     private var concluded = false
     /// C 回调闭包载体（Unmanaged 跨 @convention(c) 边界传递）。
@@ -300,10 +307,10 @@ final class ConnectionTester: ObservableObject {
     }
 
     var overallStatusText: String {
-        if isRunning { return "连接中…" }
-        if failed { return "连接失败" }
-        if !steps.isEmpty && steps.allSatisfy({ $0.state == .success }) { return "连接成功" }
-        return "等待中"
+        if isRunning { return String(localized: "连接中…") }
+        if failed { return String(localized: "连接失败") }
+        if !steps.isEmpty && steps.allSatisfy({ $0.state == .success }) { return String(localized: "连接成功") }
+        return String(localized: "等待中")
     }
 
     var overallColor: Color {
@@ -323,16 +330,16 @@ final class ConnectionTester: ObservableObject {
         concluded = false
 
         guard !conn.host.isEmpty else {
-            log("未填写主机地址", color: Pal.red)
+            log(String(localized: "未填写主机地址"), color: Pal.red)
             failStep(0); return
         }
 
         markRunning(0)
-        log("开始测试连接到 \(conn.host):\(conn.port)（用户 \(conn.user)）")
-        if conn.disableProxy { log("代理：已禁用") }
-        else if !conn.proxyURL.isEmpty { log("代理：\(conn.proxyURL)") }
-        if !conn.ciphers.isEmpty { log("指定 Cipher：\(conn.ciphers)") }
-        if !conn.kexAlgos.isEmpty { log("指定 KEX：\(conn.kexAlgos)") }
+        log(String(localized: "开始测试连接到 \(conn.host):\(conn.port)（用户 \(conn.user)）"))
+        if conn.disableProxy { log(String(localized: "代理：已禁用")) }
+        else if !conn.proxyURL.isEmpty { log(String(localized: "代理：\(conn.proxyURL)")) }
+        if !conn.ciphers.isEmpty { log(String(localized: "指定 Cipher：\(conn.ciphers)")) }
+        if !conn.kexAlgos.isEmpty { log(String(localized: "指定 KEX：\(conn.kexAlgos)")) }
         markSuccess(0)
         markRunning(1)
 
@@ -371,7 +378,7 @@ final class ConnectionTester: ObservableObject {
         if ok {
             markSuccess(stage)
             if stage == steps.count - 1 {          // 末阶段「连接成功」
-                log("连接成功 ✓", color: Pal.green)
+                log(String(localized: "连接成功 ✓"), color: Pal.green)
                 isRunning = false
                 conclude(true)
             } else {

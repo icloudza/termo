@@ -133,13 +133,41 @@ jobs:
           { echo "### 本次更新"; echo; printf '%s\n' "$NOTES" | sed 's/^/- /'; } > "$RUNNER_TEMP/release-body.md"
           echo "dir=$ARCH_DIR" >> "$GITHUB_OUTPUT"
 
-      # ── EdDSA 签名 + 生成 appcast（enclosure 指向本次 Release 的 zip 资产）──
+      # ── 上传安装包到 Cloudflare R2（dl.termoi.app）——必须在生成/发布 appcast 之前 ──
+      # Sparkle 自动更新的 zip 与官网直链的 dmg 都放 R2：国内下载远快于 GitHub Release，
+      # 完整性由 appcast 的 EdDSA 签名保证（下错/被篡改会被 Sparkle 拒绝）。
+      # 版本键（Termo-<版本>.zip/.dmg）内容唯一 → immutable 长缓存，永不下到旧版；
+      # 稳定键 Termo.dmg（官网按钮）仅正式版更新、短缓存。
+      - name: 上传安装包到 Cloudflare R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.artifacts.outputs.version }}"
+          DMG="${{ steps.artifacts.outputs.dmg }}"
+          ZIP="${{ steps.sparkle.outputs.dir }}/Termo-$VERSION.zip"
+          BUCKET=termo-downloads
+          IMMUTABLE="public, max-age=31536000, immutable"
+          put() { npx --yes wrangler@4 r2 object put "$1" --file="$2" --content-type="$3" --cache-control="$4" --remote; }
+          echo "上传 Sparkle zip 与 dmg 到 R2 …"
+          put "$BUCKET/Termo-$VERSION.zip" "$ZIP" "application/zip" "$IMMUTABLE"
+          put "$BUCKET/$(basename "$DMG")" "$DMG" "application/x-apple-diskimage" "$IMMUTABLE"
+          # 稳定键 Termo.dmg：官网下载按钮永远指它；仅正式版更新、短缓存（5 分钟内切新版）
+          if [[ "$VERSION" != *-* ]]; then
+            put "$BUCKET/Termo.dmg" "$DMG" "application/x-apple-diskimage" "public, max-age=300"
+            echo "✓ 稳定键 Termo.dmg 已更新为 $VERSION"
+          else
+            echo "预发布 $VERSION：仅存档版本键，未更新官网稳定键 Termo.dmg"
+          fi
+
+      # ── EdDSA 签名 + 生成 appcast（enclosure 指向 R2 上的 zip，自动更新走 R2）──
       - name: 生成 appcast
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          PREFIX="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/"
+          PREFIX="https://dl.termoi.app/"
           printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | .sparkle/bin/generate_appcast \
             --ed-key-file - \
             --download-url-prefix "$PREFIX" \
@@ -169,30 +197,3 @@ jobs:
           publish_dir: ${{ steps.sparkle.outputs.dir }}
           keep_files: true   # 不删除 Pages 上其它文件（如历史 appcast 资源）
           exclude_assets: "*.zip,*.app"   # 只发布 appcast.xml / *.html，不把 zip 推到 Pages
-
-      # ── 同步 DMG 到 Cloudflare R2（官网 dl.termoi.app 直链下载）──
-      # 版本键存档 Termo-<版本>.dmg；稳定键 Termo.dmg 仅正式版更新（官网按钮永远指它）。
-      - name: 上传 DMG 到 Cloudflare R2
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          DMG="${{ steps.artifacts.outputs.dmg }}"
-          VERSION="${{ steps.artifacts.outputs.version }}"
-          BUCKET=termo-downloads
-          CT=application/x-apple-diskimage
-          BASENAME=$(basename "$DMG")
-          echo "上传 $BASENAME 到 R2 桶 $BUCKET …"
-          # 版本键：内容永不变，长期不可变缓存（重复下载走边缘，最快）
-          npx --yes wrangler@4 r2 object put "$BUCKET/$BASENAME" --file="$DMG" \
-            --content-type="$CT" --cache-control="public, max-age=31536000, immutable" --remote
-          # 稳定键仅在正式版更新；预发布（版本号含 -，如 0.9.2-beta）只存档、不覆盖官网直链
-          # 短缓存(5 分钟)：发版后官网直链最多 5 分钟就切到新版，无需手动清缓存
-          if [[ "$VERSION" != *-* ]]; then
-            npx --yes wrangler@4 r2 object put "$BUCKET/Termo.dmg" --file="$DMG" \
-              --content-type="$CT" --cache-control="public, max-age=300" --remote
-            echo "✓ 稳定键 Termo.dmg 已更新为 $VERSION"
-          else
-            echo "预发布 $VERSION：仅存档 $BASENAME，未更新稳定键 Termo.dmg"
-          fi

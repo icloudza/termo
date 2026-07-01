@@ -18,7 +18,7 @@ enum AppInfo {
     /// 关于页展示用版本行：「版本 0.7.6.1 (build 18)」。
     /// 取不到时（非 .app 运行等极端情况）回退通用文案，不内嵌具体版本号以免与真实值不一致。
     static var versionLine: String {
-        guard !version.isEmpty else { return "开发版" }
-        return build.isEmpty ? "版本 \(version)" : "版本 \(version) (build \(build))"
+        guard !version.isEmpty else { return String(localized: "开发版") }
+        return build.isEmpty ? String(localized: "版本 \(version)") : String(localized: "版本 \(version) (build \(build))")
     }
 }

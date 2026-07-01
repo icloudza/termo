@@ -6,9 +6,9 @@ enum ForwardKind: String, Codable, CaseIterable {
 
     var title: String {
         switch self {
-        case .local:   return "本地"
-        case .remote:  return "远程"
-        case .dynamic: return "动态"
+        case .local:   return String(localized: "本地")
+        case .remote:  return String(localized: "远程")
+        case .dynamic: return String(localized: "动态")
         }
     }
 
@@ -16,11 +16,11 @@ enum ForwardKind: String, Codable, CaseIterable {
     var hint: String {
         switch self {
         case .local:
-            return "在本机开一个监听端口，连进来的流量经隧道送到「目标」——目标地址由服务器解析，故 localhost 指服务器自身（访问只监听内网的远程服务）。"
+            return String(localized: "在本机开一个监听端口，连进来的流量经隧道送到「目标」——目标地址由服务器解析，故 localhost 指服务器自身（访问只监听内网的远程服务）。")
         case .remote:
-            return "在服务器上开一个监听端口，连进来的流量经隧道送回本机能访问的「目标」（把本地服务暴露给服务器侧）。"
+            return String(localized: "在服务器上开一个监听端口，连进来的流量经隧道送回本机能访问的「目标」（把本地服务暴露给服务器侧）。")
         case .dynamic:
-            return "在本机开一个 SOCKS5 代理端口，应用走它即可让流量从服务器出口（无需指定目标）。"
+            return String(localized: "在本机开一个 SOCKS5 代理端口，应用走它即可让流量从服务器出口（无需指定目标）。")
         }
     }
 }
@@ -71,10 +71,10 @@ struct ForwardRule: Identifiable, Codable, Hashable {
 
     /// 校验：监听端口必填合法；local/remote 还需合法的目标主机与端口。
     var validationError: String? {
-        guard (1...65535).contains(listenPort) else { return "监听端口需在 1–65535 之间" }
+        guard (1...65535).contains(listenPort) else { return String(localized: "监听端口需在 1–65535 之间") }
         if kind != .dynamic {
-            if destHost.trimmingCharacters(in: .whitespaces).isEmpty { return "请填写目标主机" }
-            guard (1...65535).contains(destPort) else { return "目标端口需在 1–65535 之间" }
+            if destHost.trimmingCharacters(in: .whitespaces).isEmpty { return String(localized: "请填写目标主机") }
+            guard (1...65535).contains(destPort) else { return String(localized: "目标端口需在 1–65535 之间") }
         }
         return nil
     }
@@ -168,7 +168,7 @@ final class ForwardManager: ObservableObject {
     /// 拉起一条隧道（start 与自动重启共用；不改 intended/退避）：后台建 dedicated 会话 + 开 C 层转发。
     private func launch(_ rule: ForwardRule) {
         guard forwards[rule.id] == nil, sessions[rule.id] == nil else { return }
-        guard NetworkMonitor.shared.isOnline else { statuses[rule.id] = .failed("等待网络"); return }
+        guard NetworkMonitor.shared.isOnline else { statuses[rule.id] = .failed(String(localized: "等待网络")); return }
         guard !ssh.host.isEmpty else { statuses[rule.id] = .failed("主机未配置"); return }
 
         statuses[rule.id] = .starting
@@ -184,13 +184,13 @@ final class ForwardManager: ObservableObject {
                 session = try SSHSession.connect(host: conn.host, port: conn.port, user: conn.user,
                                                  password: a.password, keyPath: a.keyPath, keyPassphrase: a.keyPassphrase)
             } catch {
-                let msg = (error as? SSHSession.SSHError)?.message ?? "连接失败"
+                let msg = (error as? SSHSession.SSHError)?.message ?? String(localized: "连接失败")
                 Task { @MainActor in self?.onFailure(id, reason: msg) }
                 return
             }
             guard let raw = session.rawHandle else {
                 session.close()
-                Task { @MainActor in self?.onFailure(id, reason: "连接失败") }
+                Task { @MainActor in self?.onFailure(id, reason: String(localized: "连接失败")) }
                 return
             }
             let box = Unmanaged.passRetained(StateBox { msg in
@@ -201,7 +201,7 @@ final class ForwardManager: ObservableObject {
                                                    { ud, ok, msg in
                                                        guard let ud, ok == 0 else { return }
                                                        Unmanaged<StateBox>.fromOpaque(ud).takeUnretainedValue()
-                                                           .cb(msg.map { String(cString: $0) } ?? "连接已断开")
+                                                           .cb(msg.map { String(cString: $0) } ?? String(localized: "连接已断开"))
                                                    }, box, &err, 256) else {
                 Unmanaged<StateBox>.fromOpaque(box).release()
                 session.close()
@@ -246,7 +246,7 @@ final class ForwardManager: ObservableObject {
     private func onDropped(_ id: UUID, reason: String) {
         guard sessions[id] != nil else { return }   // 已被 stop/teardown → 忽略
         teardown(id)
-        statuses[id] = .failed(reason.isEmpty ? "连接已断开" : reason)
+        statuses[id] = .failed(reason.isEmpty ? String(localized: "连接已断开") : reason)
         guard intended.contains(id) else { return }
         scheduleRestart(id)
     }
