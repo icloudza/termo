@@ -3,6 +3,22 @@
     <channel>
         <title>Termo</title>
         <item>
+            <title>1.0.0</title>
+            <pubDate>Wed, 01 Jul 2026 09:52:44 +0000</pubDate>
+            <link>https://github.com/icloudza/termo</link>
+            <sparkle:version>32</sparkle:version>
+            <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<h2>Termo 1.0.0</h2>
+release: 1.0.0（构建号 32）<br>
+<br>
+首个正式版本<br>
+新增应用内隐私政策（设置 › 关于）<br>
+]]></description>
+            <enclosure url="https://dl.termoi.app/Termo-1.0.0.zip" length="19063424" type="application/octet-stream" sparkle:edSignature="DjYQerctFET0anJqgnJeHSDfi3a05Ysl3BeboDY/UiBe7pWEyrd5VgMCNrRvqfAVibXJ8b1I9Fh6/UVQOProBg=="/>
+        </item>
+        <item>
             <title>0.9.3.1</title>
             <pubDate>Wed, 01 Jul 2026 07:55:35 +0000</pubDate>
             <link>https://github.com/icloudza/termo</link>
