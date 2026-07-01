@@ -1,0 +1,44 @@
+name: Bug 报告 / Bug report
+description: 报告一个可复现的问题 / Report a reproducible problem
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: 感谢反馈！请先搜索是否已有相同 Issue。/ Thanks! Please search existing issues first.
+  - type: input
+    id: termo-version
+    attributes:
+      label: Termo 版本 / Termo version
+      description: 见「设置 › 关于」/ see Settings › About
+      placeholder: e.g. 0.9.3.1
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS 版本 / macOS version
+      placeholder: e.g. macOS 15.1 (Apple Silicon)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题描述 / What happened
+      description: 发生了什么？期望是什么？/ What went wrong, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 截图 / 日志（可选）/ Screenshots / logs (optional)
+      description: 若涉及远端信息，请脱敏。/ Redact any sensitive host info.

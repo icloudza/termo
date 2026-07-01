@@ -1,0 +1,13 @@
+<svg width="300" height="112" viewBox="0 0 300 112" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Termo</title>
+  <desc>终端提示符 &gt;_ 图标，下划线在品牌蓝与运行绿之间平滑呼吸</desc>
+  <g transform="translate(6 10) scale(5)" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M4.3 4.4 L9.4 9 L4.3 13.6" stroke="#1b1b1f" stroke-width="2.3"/>
+    <path d="M12.3 13.6 L16 13.6" stroke="#409EFF" stroke-width="2.7">
+      <animate attributeName="stroke" dur="2.6s" repeatCount="indefinite"
+        values="#409EFF;#33C759;#409EFF" keyTimes="0;0.5;1"
+        calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+    </path>
+  </g>
+  <text x="108" y="76" fill="#1b1b1f" font-family="ui-sans-serif,-apple-system,'PingFang SC',sans-serif" font-size="58" font-weight="500" letter-spacing="-1">Termo</text>
+</svg>

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 官网 / Website
+    url: https://termoi.app
+    about: 下载与介绍 / Downloads and overview
+  - name: 安全漏洞 / Security vulnerability
+    url: https://github.com/icloudza/termo/security/advisories/new
+    about: 请私密报告，勿公开 Issue / Report privately, not as a public issue
