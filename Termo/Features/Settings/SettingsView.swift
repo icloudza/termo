@@ -31,12 +31,16 @@ struct SettingsView: View {
         }
     }
 
-    /// 干净重启：启动新实例后正常退出当前进程（terminate 会走 applicationShouldTerminate 收尾）。
+    /// 干净重启：先关所有模态 sheet（SwiftUI 的 .sheet 会拦截 NSApp.terminate，不先关就会
+    /// 「新实例已起、旧实例退不掉」双开），留一拍让其关闭，再启动新实例并退出旧进程。
     static func relaunch() {
-        let cfg = NSWorkspace.OpenConfiguration()
-        cfg.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: cfg) { _, _ in
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+        AppModel.shared.dismissAllSheets()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            let cfg = NSWorkspace.OpenConfiguration()
+            cfg.createsNewApplicationInstance = true
+            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: cfg) { _, _ in
+                DispatchQueue.main.async { NSApp.terminate(nil) }
+            }
         }
     }
 
