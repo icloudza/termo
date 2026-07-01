@@ -51,9 +51,9 @@ Under the hood, Termo runs its SSH / SFTP / terminal / port forwarding / keys en
 
 > Requirements: macOS 14 (Sonoma) or later · Apple Silicon (M-series)
 
-[![Download](https://img.shields.io/badge/Download-Termo.dmg-409EFF?style=for-the-badge)](https://dl.termoi.app/Termo.dmg)
+[![Download](https://img.shields.io/badge/Download-Termo.dmg-409EFF?style=for-the-badge)](https://termoi.app)
 
-- Recommended: the direct link above (Cloudflare R2)
+- Recommended: get it from the [official website](https://termoi.app) via the button above
 - Or grab past versions from [GitHub Releases](https://github.com/icloudza/termo/releases)
 
 Termo is **signed with a Developer ID and notarized by Apple**, so Gatekeeper recognizes it as coming from an identified developer. Once installed, new versions are offered automatically — no need to re-download manually.

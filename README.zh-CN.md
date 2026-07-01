@@ -51,9 +51,9 @@ SSH · SFTP · 终端 · Windows 远程桌面 · 端口转发 · 主机监控
 
 > 系统要求：macOS 14 (Sonoma) 及以上 · Apple Silicon（M 系列）
 
-[![下载最新版](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88-Termo.dmg-409EFF?style=for-the-badge)](https://dl.termoi.app/Termo.dmg)
+[![下载最新版](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88-Termo.dmg-409EFF?style=for-the-badge)](https://termoi.app)
 
-- 推荐：上方按钮直链下载
+- 推荐：点上方按钮前往[官网](https://termoi.app)下载
 - 或前往 [GitHub Releases](https://github.com/icloudza/termo/releases) 获取历史版本与校验信息
 
 安装后首次打开若被 Gatekeeper 提示，请确认应用来自「已验证的开发者」——Termo 已用 **Developer ID 签名并经 Apple 公证**。装好后新版本会自动提醒，无需手动重复下载。
