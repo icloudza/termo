@@ -98,6 +98,10 @@ Termo 采用 [PolyForm Noncommercial License 1.0.0](LICENSE.md) 授权。
 
 © 2026 cloudza
 
+## 友情链接
+
+> [LINUX DO](https://linux.do/) —— 新的理想型社区，技术爱好者的聚集地。
+
 ---
 
 <div align="center">

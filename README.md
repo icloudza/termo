@@ -98,6 +98,10 @@ Termo is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
 
 © 2026 cloudza
 
+## Friends
+
+> [LINUX DO](https://linux.do/) — a new ideal community, where tech enthusiasts gather.
+
 ---
 
 <div align="center">
