@@ -3,6 +3,26 @@
     <channel>
         <title>Termo</title>
         <item>
+            <title>1.0.1</title>
+            <pubDate>Wed, 01 Jul 2026 10:56:23 +0000</pubDate>
+            <link>https://github.com/icloudza/termo</link>
+            <sparkle:version>33</sparkle:version>
+            <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<h2>Termo 1.0.1</h2>
+release: 1.0.1（构建号 33）<br>
+<br>
+修复「安全」设置中远程桌面证书端口号显示千分位分隔符（如 3,389）<br>
+修复英文界面下侧栏分组标题「未分组」未翻译<br>
+修复从「关于」页更新后无法自动重启完成安装<br>
+新增主机时不再自动预填分组，默认留空<br>
+修复外观从深色 / 浅色切回「跟随系统」不生效<br>
+修复打开设置页后无法从 Dock 退出、关闭窗口菜单栏图标不隐藏<br>
+]]></description>
+            <enclosure url="https://dl.termoi.app/Termo-1.0.1.zip" length="19063016" type="application/octet-stream" sparkle:edSignature="fCyrNwIqIywgS8rddXzLfDrWMxyk99VRQtdrMTMQhnPPdFsak6Vy/F091nrGwQtCbck6mjpptCftW3MeHfuACA=="/>
+        </item>
+        <item>
             <title>1.0.0</title>
             <pubDate>Wed, 01 Jul 2026 09:52:44 +0000</pubDate>
             <link>https://github.com/icloudza/termo</link>
