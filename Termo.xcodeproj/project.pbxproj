@@ -928,6 +928,8 @@
 					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Termo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -966,6 +968,8 @@
 					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Termo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1003,6 +1007,8 @@
 					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Termo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -1040,6 +1046,8 @@
 					"$(SRCROOT)/Termo/Features/SSH/Engine",
 				);
 				INFOPLIST_FILE = Termo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Termo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

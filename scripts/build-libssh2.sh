@@ -111,6 +111,27 @@ else
 fi
 ok "源码就绪：${SRC#$ROOT/}"
 
+# ── 安全补丁：CVE-2026-55200（CVSS 9.2，有公开 PoC）─────────────────────────
+# ssh2_transport_read() 在“无需解密即可取包长”分支只校验 packet_length 下界、漏了上界，
+# 随后 total_num += packet_length → 整数溢出到堆越界写，恶意/被劫持的服务器可 RCE 到客户端。
+# 1.11.1 另一分支已有该上界检查，此处回填官方 PR #2052（+5/-1，仅 transport.c）。
+# 上游尚无含修复的 release，故对固定 tag 就地打补丁；每次构建重新 checkout，补丁在此幂等重打。
+section "应用安全补丁 CVE-2026-55200"
+TP="$SRC/src/transport.c"
+[ -f "$TP" ] || die "未找到 $TP"
+# 非破坏性校验：无花括号的脆弱分支应恰好出现 1 处（已修复分支写作 “< 1) {”，不匹配）
+VULN=$(perl -0777 -ne 'print scalar(() = /if\(p->packet_length < 1\)\n\s+return LIBSSH2_ERROR_DECRYPT;/g)' "$TP")
+if [ "$VULN" = "1" ]; then
+    perl -0777 -i -pe 's{if\(p->packet_length < 1\)\n(\s+)return LIBSSH2_ERROR_DECRYPT;}{if(p->packet_length < 1) {\n$1    return LIBSSH2_ERROR_DECRYPT;\n$1}\n$1else if(p->packet_length > LIBSSH2_PACKET_MAXPAYLOAD) {\n$1    return LIBSSH2_ERROR_OUT_OF_BOUNDARY;\n$1}}g' "$TP"
+    PC=$(grep -c "packet_length > LIBSSH2_PACKET_MAXPAYLOAD" "$TP")
+    [ "$PC" -ge 2 ] || die "CVE-2026-55200 补丁复核失败（MAXPAYLOAD 上界检查=$PC，期望 ≥2）"
+    ok "已应用 CVE-2026-55200 补丁（transport.c 补上界检查，现有 $PC 处 MAXPAYLOAD 边界返回）"
+elif [ "$VULN" = "0" ] && grep -q "packet_length > LIBSSH2_PACKET_MAXPAYLOAD" "$TP"; then
+    warn "未发现脆弱分支且已存在上界检查 —— 视为已含修复的版本，跳过打补丁"
+else
+    die "CVE-2026-55200：目标代码不匹配（脆弱分支计数=$VULN）；libssh2 版本可能已变，请人工核对 transport.c"
+fi
+
 # ── CMake 配置（静态 / arm64 / OpenSSL 后端）────────────────────────────────
 section "CMake 配置（静态 / OpenSSL backend）"
 step "cmake configure…"
