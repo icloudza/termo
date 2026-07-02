@@ -3,6 +3,21 @@
     <channel>
         <title>Termo</title>
         <item>
+            <title>1.0.2</title>
+            <pubDate>Thu, 02 Jul 2026 07:56:43 +0000</pubDate>
+            <link>https://github.com/icloudza/termo</link>
+            <sparkle:version>34</sparkle:version>
+            <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<h2>Termo 1.0.2</h2>
+release: 1.0.2（构建号 34）<br>
+<br>
+修复内置 SSH 引擎 libssh2 的严重安全漏洞 CVE-2026-55200：连接到恶意或被中间人劫持的服务器时，特制数据包可导致内存越界写入（存在远程代码执行风险）；已回填官方补丁，建议尽快更新<br>
+]]></description>
+            <enclosure url="https://dl.termoi.app/Termo-1.0.2.zip" length="19063769" type="application/octet-stream" sparkle:edSignature="YxJixu9X6LiaUDZ/TvB1fmCv1zXNtFXZn9PdK3ZIbext8dmQAyD3b+EANn4y9Td/f0d/oZQH78afjoZ9Hm9xCQ=="/>
+        </item>
+        <item>
             <title>1.0.1</title>
             <pubDate>Wed, 01 Jul 2026 10:56:23 +0000</pubDate>
             <link>https://github.com/icloudza/termo</link>
