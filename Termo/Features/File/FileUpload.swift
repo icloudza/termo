@@ -83,6 +83,8 @@ final class UploadTask: ObservableObject {
     @Published var phase: SessionPhase = .queued    // 初始排队；由协调器调用 start() 出队转 .running
     /// 任务进入终态（完成/取消）时回调一次，供上层推进传输队列。
     var onFinished: (() -> Void)? = nil
+    /// 任务进入终态时回调一次（在 onFinished 之外），用于释放随任务持有的资源（如下载目录的安全作用域访问）。
+    var onTerminated: (() -> Void)? = nil
     /// 暂停/请求恢复后回调，供协调器重新泵队列（补位排队任务、放行等待名额的恢复请求）。
     var onPauseStateChanged: (() -> Void)? = nil
     /// 用户已点「继续」但当前无空闲名额，处于「等待协调器放行」状态（phase 仍为 .paused）。
@@ -172,6 +174,7 @@ final class UploadTask: ObservableObject {
         if phase == .queued {           // 尚未开始：直接取消并出队（让协调器推进下一个）
             phase = .cancelled
             onFinished?()
+            fireTerminated()
             return
         }
         guard phase == .running || phase == .paused else { return }
@@ -399,6 +402,14 @@ final class UploadTask: ObservableObject {
         releaseHeldLock()       // 释放当前持有的逐文件写锁
         fs.closeSession()       // 终态立即回收 SFTP 子进程/读循环线程/缓冲（记录仍留列表也不再占内存）
         onFinished?()           // 终态：推进传输队列
+        fireTerminated()
+    }
+
+    /// 终态资源回调，保证只触发一次（排队取消 vs 正常收尾两条终态路径互斥，此处再兜底防重）。
+    private func fireTerminated() {
+        guard let cb = onTerminated else { return }
+        onTerminated = nil
+        cb()
     }
 
     private func postCompletionNotification() {

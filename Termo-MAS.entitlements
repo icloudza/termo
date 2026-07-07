@@ -27,5 +27,8 @@
     <!-- 下载文件夹（下载远端文件的默认落点） -->
     <key>com.apple.security.files.downloads.read-write</key>
     <true/>
+    <!-- 记住用户自选的下载目录：持久化 app-scoped 安全作用域书签，跨会话恢复写入授权 -->
+    <key>com.apple.security.files.bookmarks.app-scope</key>
+    <true/>
 </dict>
 </plist>

@@ -2149,6 +2149,7 @@ final class AppModel: ObservableObject {
         let downloadable = files.filter { !$0.isDir }
         guard !downloadable.isEmpty, let ssh = host.ssh, !ssh.host.isEmpty else { return }
         let dir: URL
+        let releaseScope: () -> Void
         if AppSettings.shared.downloadAskEachTime {
             let panel = NSOpenPanel()
             panel.canChooseFiles = false
@@ -2159,8 +2160,12 @@ final class AppModel: ObservableObject {
             panel.directoryURL = AppSettings.shared.resolvedDownloadDir
             guard panel.runModal() == .OK, let u = panel.url else { return }
             dir = u
+            releaseScope = {}   // 面板返回的 URL 自带进程内授权，无需书签/安全作用域收尾
         } else {
-            dir = AppSettings.shared.resolvedDownloadDir
+            // 自定义目录在沙盒下须经安全作用域书签授权；作用域随任务持有，终态时释放。
+            let acquired = AppSettings.shared.acquireDownloadDirectory()
+            dir = acquired.url
+            releaseScope = acquired.release
         }
         // 完成后不再自动弹访达窗口（打断用户）；完成提醒由系统通知给出。
         // 本地保存名去重：不覆盖已有文件、不与进行中下载撞名 → 不同主机/来源的同名文件可并发各自落地。
@@ -2168,6 +2173,7 @@ final class AppModel: ObservableObject {
         let task = UploadTask(download: downloadable, toLocalURLs: localURLs, inDir: dir, fs: RemoteFS(ssh)) { }
         task.hostId = host.id
         task.hostName = host.name
+        task.onTerminated = releaseScope
         enqueueTransfer(task)
     }
 

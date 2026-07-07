@@ -323,7 +323,7 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.prompt = String(localized: "选择")
         panel.directoryURL = settings.resolvedDownloadDir
-        if panel.runModal() == .OK, let url = panel.url { settings.downloadDir = url.path }
+        if panel.runModal() == .OK, let url = panel.url { settings.setDownloadDir(url) }
     }
 
     // MARK: - 终端

@@ -196,13 +196,50 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    /// 实际下载目录：设置为空则用系统下载文件夹。
+    /// 实际下载目录（展示 / 面板初始定位用）：设置为空则用系统下载文件夹。
     var resolvedDownloadDir: URL {
         if !downloadDir.isEmpty {
             return URL(fileURLWithPath: (downloadDir as NSString).expandingTildeInPath, isDirectory: true)
         }
         return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    private static let downloadBookmarkKey = "downloadDirBookmark"
+
+    /// 记住用户在面板里选的自定义下载目录：存路径（展示用）+ 安全作用域书签。
+    /// 沙盒下，仅凭路径字符串重建的 URL 拿不到写权限，必须靠书签在后续会话恢复授权；非沙盒无需书签。
+    func setDownloadDir(_ url: URL) {
+        downloadDir = url.path
+        guard AppEnv.isSandboxed else { d.removeObject(forKey: Self.downloadBookmarkKey); return }
+        if let data = try? url.bookmarkData(options: .withSecurityScope,
+                                            includingResourceValuesForKeys: nil, relativeTo: nil) {
+            d.set(data, forKey: Self.downloadBookmarkKey)
+        } else {
+            d.removeObject(forKey: Self.downloadBookmarkKey)
+        }
+    }
+
+    /// 取「本次下载」的目标目录及其安全作用域访问：
+    /// - 自定义目录：解析书签、开启安全作用域（沙盒必需），返回停止闭包，须在传输结束时调用。
+    /// - 系统下载文件夹（downloadDir 为空）：由 downloads.read-write 授权，无需书签。
+    /// 面板「每次询问」路径的 URL 自带进程内临时授权，不走这里。
+    func acquireDownloadDirectory() -> (url: URL, release: () -> Void) {
+        guard !downloadDir.isEmpty else { return (resolvedDownloadDir, {}) }
+        if let data = d.data(forKey: Self.downloadBookmarkKey) {
+            var stale = false
+            if let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope,
+                                  relativeTo: nil, bookmarkDataIsStale: &stale) {
+                let started = url.startAccessingSecurityScopedResource()
+                if stale, let fresh = try? url.bookmarkData(options: .withSecurityScope,
+                                                            includingResourceValuesForKeys: nil, relativeTo: nil) {
+                    d.set(fresh, forKey: Self.downloadBookmarkKey)
+                }
+                return (url, { if started { url.stopAccessingSecurityScopedResource() } })
+            }
+        }
+        // 无可用书签（非沙盒直发，或旧数据）：路径直用（非沙盒可写任意路径）。
+        return (resolvedDownloadDir, {})
     }
 
     /// 解析出实际的 shell 可执行路径。
