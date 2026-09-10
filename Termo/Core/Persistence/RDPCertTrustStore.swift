@@ -47,6 +47,12 @@ final class RDPCertTrustStore: ObservableObject {
         persist()
     }
 
+    /// 用同步合并结果整体替换信任库（同步功能专用）。
+    func replaceAll(_ certs: [RDPTrustedCert]) {
+        entries = certs
+        persist()
+    }
+
     // MARK: - 持久化
 
     private static var url: URL {

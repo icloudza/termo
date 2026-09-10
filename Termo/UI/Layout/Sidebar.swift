@@ -82,6 +82,9 @@ struct Sidebar: View {
                 Spacer().frame(height: 10)
                 searchBox(String(localized: "搜索片段…"))
                 SnippetsPanel(model: model, tabs: tabs)
+            } else if model.section == .sync {
+                Spacer().frame(height: 10)
+                SyncPanel(model: model)
             } else {
                 Spacer()
                 Text("\(sectionTitle)模块开发中")
@@ -106,6 +109,7 @@ struct Sidebar: View {
         case .sshKeys: return String(localized: "密钥")
         case .rdp: return "RDP"
         case .snippets: return String(localized: "代码片段")
+        case .sync: return String(localized: "同步")
         case .settings: return String(localized: "设置")
         }
     }

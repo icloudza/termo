@@ -384,6 +384,8 @@ struct ContentView: View {
             .allowsHitTesting(model.pendingQuitConfirm)
         }
         .modifier(AppSheets(model: model))
+        // 同步冲突裁决弹窗（挂在这里：侧栏有 clipped，大弹窗需覆盖整个窗口）
+        .modifier(SyncDialogs(model: model))
         .onAppear { model.applyStartupIfNeeded() }
     }
 

@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum Section: Hashable {
-    case hosts, files, sshKeys, rdp, snippets, settings
+    case hosts, files, sshKeys, rdp, snippets, sync, settings
 }
 
 enum SettingsTab: String, CaseIterable, Hashable {

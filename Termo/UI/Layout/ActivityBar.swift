@@ -15,6 +15,7 @@ struct ActivityBar: View {
         ("key", .sshKeys),
         ("display", .rdp),
         ("chevron.left.forwardslash.chevron.right", .snippets),
+        ("arrow.triangle.2.circlepath", .sync),
     ]
 
     var body: some View {

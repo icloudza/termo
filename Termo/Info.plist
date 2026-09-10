@@ -53,5 +53,11 @@
 	<string>s+AwMfJZ8Jd4e64NiWyqZQ1cX98HuKo96GAdoZbqJBE=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>3600</integer>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- 允许访问局域网/本机 WebDAV（http）；公网地址仍由 ATS 强制 HTTPS -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

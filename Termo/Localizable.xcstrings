@@ -7478,6 +7478,726 @@
           }
         }
       }
+    },
+    "RDP 剪贴板同步": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "RDP Clipboard Sync"
+          }
+        }
+      }
+    },
+    "RDP 打开方式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "RDP Open Mode"
+          }
+        }
+      }
+    },
+    "RDP 新窗口全屏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Full Screen for New RDP Windows"
+          }
+        }
+      }
+    },
+    "RDP 证书「%@:%lld」": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "RDP Certificate “%@:%lld”"
+          }
+        }
+      }
+    },
+    "WebDAV 服务器": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WebDAV Server"
+          }
+        }
+      }
+    },
+    "上传本机覆盖远端": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Upload Local (Overwrite Remote)"
+          }
+        }
+      }
+    },
+    "上次同步：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last synced: %@"
+          }
+        }
+      }
+    },
+    "不是有效的 Termo 备份文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not a valid Termo backup file"
+          }
+        }
+      }
+    },
+    "主密码至少 8 位（用于加密备份）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Master password must be at least 8 characters (used to encrypt backups)"
+          }
+        }
+      }
+    },
+    "主密码错误，或备份文件已损坏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incorrect master password, or the backup file is corrupted"
+          }
+        }
+      }
+    },
+    "主密码（端到端加密）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Master Password (End-to-End Encryption)"
+          }
+        }
+      }
+    },
+    "主密码（至少 8 位）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Master password (min. 8 characters)"
+          }
+        }
+      }
+    },
+    "主机「%@」": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host “%@”"
+          }
+        }
+      }
+    },
+    "主题": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Subject"
+          }
+        }
+      }
+    },
+    "从 WebDAV 导入": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import from WebDAV"
+          }
+        }
+      }
+    },
+    "从文件导入…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import from File…"
+          }
+        }
+      }
+    },
+    "以下 %lld 项在本机与远端不同，请逐项选择保留哪边。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The following %lld items differ between this Mac and the remote. Choose which to keep for each."
+          }
+        }
+      }
+    },
+    "使用远端": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use Remote"
+          }
+        }
+      }
+    },
+    "保存配置": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save Config"
+          }
+        }
+      }
+    },
+    "保留本机": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep Local"
+          }
+        }
+      }
+    },
+    "全部使用远端": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use Remote for All"
+          }
+        }
+      }
+    },
+    "全部保留本机": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep Local for All"
+          }
+        }
+      }
+    },
+    "关": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off"
+          }
+        }
+      }
+    },
+    "内容": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Content"
+          }
+        }
+      }
+    },
+    "删除确认": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Confirmation"
+          }
+        }
+      }
+    },
+    "协议": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Protocol"
+          }
+        }
+      }
+    },
+    "发现 %lld 处冲突，请选择保留哪边": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Found %lld conflicts — choose which side to keep"
+          }
+        }
+      }
+    },
+    "合并同步": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merge & Sync"
+          }
+        }
+      }
+    },
+    "合并按 id 双向进行，冲突时逐项选择；删除不会同步（另一端下次会带回）。语言等设置同步后需重启生效。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merge runs both ways by ID; resolve conflicts item by item. Deletions are not synced (the other side will bring them back). Language and other settings take effect after a restart."
+          }
+        }
+      }
+    },
+    "同步完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sync complete"
+          }
+        }
+      }
+    },
+    "同步完成（仅本机 %lld 项，仅远端 %lld 项）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sync complete (local-only: %lld, remote-only: %lld)"
+          }
+        }
+      }
+    },
+    "同步完成，无变更": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sync complete — no changes"
+          }
+        }
+      }
+    },
+    "备份上传前用主密码加密，WebDAV 上只有密文；主密码不保存，各设备需一致。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backups are encrypted with the master password before upload, so WebDAV stores only ciphertext. The master password is never saved and must match on every device."
+          }
+        }
+      }
+    },
+    "备份内容无法解析": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to parse backup contents"
+          }
+        }
+      }
+    },
+    "外观": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appearance"
+          }
+        }
+      }
+    },
+    "字段": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Field"
+          }
+        }
+      }
+    },
+    "密钥「%@」": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Key “%@”"
+          }
+        }
+      }
+    },
+    "密钥派生失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Key derivation failed"
+          }
+        }
+      }
+    },
+    "导出到文件…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export to File…"
+          }
+        }
+      }
+    },
+    "导出加密备份": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export Encrypted Backup"
+          }
+        }
+      }
+    },
+    "已上传本机数据覆盖远端备份": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local data uploaded; remote backup overwritten"
+          }
+        }
+      }
+    },
+    "已从备份合并导入": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merged and imported from backup"
+          }
+        }
+      }
+    },
+    "已保存": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved"
+          }
+        }
+      }
+    },
+    "已保存（不一致）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved (differs)"
+          }
+        }
+      }
+    },
+    "已取消本次合并": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merge canceled"
+          }
+        }
+      }
+    },
+    "已导出加密备份：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encrypted backup exported: %@"
+          }
+        }
+      }
+    },
+    "应用设置": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App Settings"
+          }
+        }
+      }
+    },
+    "建议使用 HTTPS；远程路径第一级目录需已存在（Seafile 需先在网页端新建资料库），深层目录会自动创建。密码存系统钥匙串，不写磁盘明文。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTPS is recommended. The first path segment must already exist (for Seafile, create a library in the web UI first); deeper folders are created automatically. The password is stored in the system Keychain, never in plaintext on disk."
+          }
+        }
+      }
+    },
+    "开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On"
+          }
+        }
+      }
+    },
+    "操作": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actions"
+          }
+        }
+      }
+    },
+    "更新时间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updated"
+          }
+        }
+      }
+    },
+    "本机": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Mac"
+          }
+        }
+      }
+    },
+    "正在处理…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Working…"
+          }
+        }
+      }
+    },
+    "滚动缓冲": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scrollback"
+          }
+        }
+      }
+    },
+    "片段「%@」": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Snippet “%@”"
+          }
+        }
+      }
+    },
+    "片段运行方式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Snippet Action"
+          }
+        }
+      }
+    },
+    "监听": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listen"
+          }
+        }
+      }
+    },
+    "私钥": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Private Key"
+          }
+        }
+      }
+    },
+    "签发者": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Issuer"
+          }
+        }
+      }
+    },
+    "终端字体": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminal Font"
+          }
+        }
+      }
+    },
+    "终端字号": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminal Font Size"
+          }
+        }
+      }
+    },
+    "编辑器缩略图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Editor Minimap"
+          }
+        }
+      }
+    },
+    "解决同步冲突": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resolve Sync Conflicts"
+          }
+        }
+      }
+    },
+    "请先填写 WebDAV 服务器地址与远程路径": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter the WebDAV server URL and remote path first"
+          }
+        }
+      }
+    },
+    "请先输入主密码（用于加解密备份）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter the master password first (used to encrypt and decrypt backups)"
+          }
+        }
+      }
+    },
+    "转发规则「%@」": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Forwarding Rule “%@”"
+          }
+        }
+      }
+    },
+    "远端": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remote"
+          }
+        }
+      }
+    },
+    "远端无备份，已用本机数据创建": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No remote backup found; created one from local data"
+          }
+        }
+      }
+    },
+    "连接成功；远端目录尚不存在，首次同步会尝试创建（Seafile 需先在网页端新建资料库）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connected. The remote folder does not exist yet; the first sync will try to create it (for Seafile, create a library in the web UI first)."
+          }
+        }
+      }
+    },
+    "选择 Termo 备份文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a Termo Backup File"
+          }
+        }
+      }
+    },
+    "配置已保存": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configuration saved"
+          }
+        }
+      }
+    },
+    "随机数生成失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to generate random bytes"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
