@@ -99,6 +99,12 @@ final class AppSettings: ObservableObject {
         didSet { d.set(termGPURendering, forKey: "termGPURendering") }
     }
 
+    /// SSH Agent 套接字（全局）：认证方式为「SSH Agent」且主机未单独指定时使用；空 = 系统 SSH_AUTH_SOCK。
+    static let sshAgentPathKey = "sshAgentPath"
+    @Published var sshAgentPath: String {
+        didSet { d.set(sshAgentPath, forKey: Self.sshAgentPathKey) }
+    }
+
     /// 默认下载目录（空=系统下载文件夹）。
     @Published var downloadDir: String {
         didSet { d.set(downloadDir, forKey: "downloadDir") }
@@ -174,6 +180,7 @@ final class AppSettings: ObservableObject {
         termCursorBlink = d.object(forKey: "termCursorBlink") as? Bool ?? true
         termScrollback = d.object(forKey: "termScrollback") as? Int ?? 1000
         termGPURendering = d.object(forKey: "termGPURendering") as? Bool ?? true
+        sshAgentPath = d.string(forKey: Self.sshAgentPathKey) ?? ""
         downloadDir = d.string(forKey: "downloadDir") ?? ""
         downloadAskEachTime = d.object(forKey: "downloadAskEachTime") as? Bool ?? false
         maxConcurrentTransfers = d.object(forKey: "maxConcurrentTransfers") as? Int ?? 2

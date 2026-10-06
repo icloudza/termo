@@ -55,6 +55,7 @@ enum AuthMethod: String, CaseIterable, Hashable, Codable {
     case password = "密码"
     case key = "密钥"
     case ask = "每次询问"           // 每次连接时弹窗输入本次密码，不保存任何凭证
+    case agent = "SSH Agent"       // 用 SSH Agent（1Password、Secretive、系统 ssh-agent 等）里的密钥，私钥不经过 Termo
 
     // rawValue 已持久化进主机，不能改；显示用本地化 label。
     var label: String {
@@ -62,7 +63,13 @@ enum AuthMethod: String, CaseIterable, Hashable, Codable {
         case .password: return String(localized: "密码")
         case .key: return String(localized: "密钥")
         case .ask: return String(localized: "每次询问")
+        case .agent: return "SSH Agent"
         }
+    }
+
+    /// 表单里可选的方式。MAS 沙盒连不上沙盒外的 agent 套接字，不提供 Agent。
+    static var selectable: [AuthMethod] {
+        AppEnv.isMAS ? allCases.filter { $0 != .agent } : allCases
     }
 }
 
@@ -106,6 +113,7 @@ final class HostDraft: ObservableObject {
     @Published var password = ""
     @Published var keyPath = ""        // 私钥文件路径（认证方式为「密钥」时使用）
     @Published var keyId = ""          // 关联密钥库的密钥 id（非空则用库密钥，优先于 keyPath）
+    @Published var agentPath = ""      // 本主机的 SSH Agent 套接字（认证方式为「SSH Agent」时；空 = 用全局设置）
     @Published var notes = ""
 
     // 连接设置
@@ -170,6 +178,7 @@ final class HostDraft: ObservableObject {
         password = s.password
         keyPath = s.keyPath
         keyId = s.keyId
+        agentPath = s.agentPath
         encoding = s.encoding
         hostKeyAlgos = s.hostKeyAlgos
         ciphers = s.ciphers
@@ -188,7 +197,7 @@ final class HostDraft: ObservableObject {
             host: address.trimmingCharacters(in: .whitespaces),
             port: Int(port.trimmingCharacters(in: .whitespaces)) ?? 22,
             authMethod: authMethod,
-            password: password,
+            password: authMethod == .agent ? "" : password,   // Agent 认证不用密码，别把旧密码留在钥匙串里
             keyPath: keyPath.trimmingCharacters(in: .whitespaces),
             keyId: keyId,
             encoding: encoding,
@@ -200,7 +209,8 @@ final class HostDraft: ObservableObject {
             timeoutMs: Int(timeout.trimmingCharacters(in: .whitespaces)) ?? 10000,
             heartbeatMs: Int(heartbeat.trimmingCharacters(in: .whitespaces)) ?? 5000,
             initialCommand: initialCommand,
-            defaultPath: defaultPath
+            defaultPath: defaultPath,
+            agentPath: agentPath.trimmingCharacters(in: .whitespaces)
         )
     }
 }

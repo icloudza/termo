@@ -273,6 +273,18 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 24) {
             sectionHeader(String(localized: "安全"))
 
+            // MAS 沙盒连不上沙盒外的 agent 套接字，不提供。
+            if !AppEnv.isMAS {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("SSH Agent").font(.system(size: 13)).foregroundStyle(Pal.text)
+                    Text("认证方式为「SSH Agent」的主机从这里取密钥，私钥不经过 Termo，支持 1Password、Secretive、系统 ssh-agent 等。留空使用系统默认（SSH_AUTH_SOCK）；单台主机可在自己的设置里另行指定。")
+                        .font(.system(size: 11)).foregroundStyle(Pal.overlay)
+                        .fixedSize(horizontal: false, vertical: true)
+                    AgentSocketField(path: $settings.sshAgentPath,
+                                     placeholder: String(localized: "留空使用系统默认（SSH_AUTH_SOCK）"))
+                }
+            }
+
             VStack(alignment: .leading, spacing: 10) {
                 Text("已信任的远程桌面证书")
                     .font(.system(size: 13)).foregroundStyle(Pal.text)

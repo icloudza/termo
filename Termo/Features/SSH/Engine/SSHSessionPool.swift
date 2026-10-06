@@ -7,6 +7,7 @@ extension SSHConnection {
     /// - 密钥登录：落地库密钥(keyId)或手填路径(keyPath)，passphrase 取 password 字段；
     /// - 密码 / 每次询问：用已保存/本会话输入的 password 走密码认证。
     var libssh2Auth: (password: String?, keyPath: String?, keyPassphrase: String?) {
+        if authMethod == .agent { return (nil, nil, nil) }   // 由 agent 签名，不传任何凭据
         if authMethod == .key {
             let path = keyId.isEmpty ? keyPath : (KeyMaterializer.path(forKeyId: keyId) ?? keyPath)
             return (nil, path.isEmpty ? nil : path, password.isEmpty ? nil : password)
@@ -17,7 +18,18 @@ extension SSHConnection {
     /// 连接复用键：目标 + 影响连接的设置（凭据/代理/算法）。设置一变就是另一把键，不会复用按旧配置建立的连接。
     var poolKey: String {
         [host, String(port), user, authMethod.rawValue, password, keyId, keyPath, disableProxy ? "1" : "0",
-         proxyURL, ciphers, kexAlgos, hostKeyAlgos].joined(separator: "\u{1F}")
+         proxyURL, ciphers, kexAlgos, hostKeyAlgos, authMethod == .agent ? resolvedAgentPath : ""]
+            .joined(separator: "\u{1F}")
+    }
+
+    /// 实际使用的 agent 套接字：本主机设置 > 全局设置 > 空（libssh2 读 SSH_AUTH_SOCK，即系统 ssh-agent）。
+    /// 直接读 UserDefaults：建连在后台线程，不能碰主线程的 AppSettings。
+    var resolvedAgentPath: String {
+        let own = agentPath.trimmingCharacters(in: .whitespaces)
+        let global = (UserDefaults.standard.string(forKey: AppSettings.sshAgentPathKey) ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        let p = own.isEmpty ? global : own
+        return p.isEmpty ? "" : (p as NSString).expandingTildeInPath
     }
 
     /// 代理设置解析结果。type：0 直连 1 SOCKS5 2 SOCKS4a 3 HTTP CONNECT -1 地址无效（拒绝连接，绝不静默直连）。
@@ -59,6 +71,8 @@ extension SSHConnection {
         o.hostkey_algos = c(hostKeyAlgos.isEmpty ? (HostKeyAlgoPreference.get(host: host, port: port) ?? "") : hostKeyAlgos)
         o.connect_timeout_sec = Int32(timeoutMs > 0 ? max(1, timeoutMs / 1000) : 0)
         o.keepalive_sec = Int32(heartbeatMs > 0 ? max(1, heartbeatMs / 1000) : 0)
+        o.use_agent = authMethod == .agent ? 1 : 0
+        o.agent_path = authMethod == .agent ? c(resolvedAgentPath) : nil
         return try withUnsafePointer(to: &o) { try body($0) }
     }
 }

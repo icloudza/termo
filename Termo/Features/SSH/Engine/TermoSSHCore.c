@@ -426,6 +426,78 @@ static int apply_method_prefs(LIBSSH2_SESSION *session, const TermoSSHOptions *o
     return 0;
 }
 
+/// 用 SSH Agent 里的身份逐个尝试认证。成功返回 0。
+/// 失败时 msg 写原因、返回值区分两类：服务器不接受任何密钥 / 用户在授权提示里取消 → LIBSSH2_ERROR_AUTHENTICATION_FAILED，
+/// 上层视为不可重试（否则断线重连会一遍遍弹 Touch ID）；连不上 agent → 其它错误码，可等 agent 就绪后重试。
+static int agent_userauth(LIBSSH2_SESSION *session, const char *user, const char *agent_path,
+                          char *msg, size_t msglen) {
+    LIBSSH2_AGENT *agent = libssh2_agent_init(session);
+    if (!agent) { snprintf(msg, msglen, "无法初始化 SSH Agent"); return LIBSSH2_ERROR_ALLOC; }
+    if (agent_path && *agent_path) libssh2_agent_set_identity_path(agent, agent_path);
+    const char *where = (agent_path && *agent_path) ? agent_path : "SSH_AUTH_SOCK";
+
+    int rc = libssh2_agent_connect(agent);
+    if (rc) {
+        snprintf(msg, msglen, "无法连接 SSH Agent（%s），请确认 Agent 已启动", where);
+        goto done;
+    }
+    rc = libssh2_agent_list_identities(agent);
+    if (rc) {
+        snprintf(msg, msglen, "读取 SSH Agent 中的密钥失败（%s）", where);
+        goto done;
+    }
+
+    struct libssh2_agent_publickey *id = NULL, *prev = NULL;
+    int tried = 0, refused = 0;
+    rc = LIBSSH2_ERROR_AUTHENTICATION_FAILED;
+    for (;;) {
+        int r = libssh2_agent_get_identity(agent, &id, prev);
+        if (r != 0) break;                     // 1 = 没有更多身份，<0 = 出错
+        tried++;
+        int a = libssh2_agent_userauth(agent, user ? user : "", id);
+        if (a == 0) { rc = 0; break; }
+        // agent 拒绝签名（授权提示被取消、Agent 已锁定）：libssh2 报 PUBLICKEY_UNVERIFIED「Callback returned error」
+        char *le = NULL; libssh2_session_last_error(session, &le, NULL, 0);
+        if (a == LIBSSH2_ERROR_AGENT_PROTOCOL || (le && strstr(le, "Callback returned error"))) refused = 1;
+        if (a == LIBSSH2_ERROR_SOCKET_DISCONNECT || a == LIBSSH2_ERROR_SOCKET_SEND
+            || a == LIBSSH2_ERROR_SOCKET_RECV || a == LIBSSH2_ERROR_TIMEOUT) { rc = a; break; }   // 网络问题，可重试
+        prev = id;
+    }
+    if (rc == LIBSSH2_ERROR_AUTHENTICATION_FAILED) {
+        if (tried == 0) snprintf(msg, msglen, "SSH Agent 中没有可用的密钥（%s）", where);
+        else if (refused) snprintf(msg, msglen, "SSH Agent 拒绝签名（可能在授权提示中取消，或 Agent 已锁定）");
+        else snprintf(msg, msglen, "服务器未接受 SSH Agent 中的任何密钥（已尝试 %d 个）", tried);
+    } else if (rc) {
+        char *e = NULL; libssh2_session_last_error(session, &e, NULL, 0);
+        snprintf(msg, msglen, "%s", e ? e : "");
+    }
+done:
+    libssh2_agent_disconnect(agent);
+    libssh2_agent_free(agent);
+    return rc;
+}
+
+/// 按主机设置认证：SSH Agent / 私钥文件 / 密码。成功返回 0，失败返回 libssh2 错误码并写原因。
+static int do_userauth(LIBSSH2_SESSION *session, const char *user, const char *password,
+                       const char *key_path, const char *key_passphrase,
+                       const TermoSSHOptions *opts, char *msg, size_t msglen) {
+    msg[0] = 0;
+    int rc;
+    if (opts && opts->use_agent) {
+        return agent_userauth(session, user, opts->agent_path, msg, msglen);
+    } else if (key_path && *key_path) {
+        rc = libssh2_userauth_publickey_fromfile(session, user ? user : "", NULL,
+                                                 key_path, key_passphrase ? key_passphrase : "");
+    } else {
+        rc = libssh2_userauth_password(session, user ? user : "", password ? password : "");
+    }
+    if (rc) {
+        char *e = NULL; libssh2_session_last_error(session, &e, NULL, 0);
+        snprintf(msg, msglen, "%s", e ? e : "");
+    }
+    return rc;
+}
+
 // ── 持久会话 ────────────────────────────────────────────────────────────────
 struct TermoSSHSession {
     int sock;
@@ -482,15 +554,10 @@ TermoSSHSession *termo_ssh_open(const char *host, int port,
         }
     }
 
-    if (key_path && *key_path) {
-        rc = libssh2_userauth_publickey_fromfile(session, user ? user : "", NULL,
-                                                 key_path, key_passphrase ? key_passphrase : "");
-    } else {
-        rc = libssh2_userauth_password(session, user ? user : "", password ? password : "");
-    }
+    char amsg[200];
+    rc = do_userauth(session, user, password, key_path, key_passphrase, opts, amsg, sizeof(amsg));
     if (rc) {
-        char *msg = NULL; libssh2_session_last_error(session, &msg, NULL, 0);
-        snprintf(err, (size_t)errlen, "认证失败 (%d)：%s", rc, msg ? msg : "");
+        snprintf(err, (size_t)errlen, "认证失败 (%d)：%s", rc, amsg);
         goto fail;
     }
 
@@ -611,14 +678,10 @@ handshake: ;
     STAGE(3, 1, NULL);
 
     // 4. 身份验证
-    if (key_path && *key_path)
-        rc = libssh2_userauth_publickey_fromfile(session, user ? user : "", NULL,
-                                                 key_path, key_passphrase ? key_passphrase : "");
-    else
-        rc = libssh2_userauth_password(session, user ? user : "", password ? password : "");
+    char amsg[200];
+    rc = do_userauth(session, user, password, key_path, key_passphrase, opts, amsg, sizeof(amsg));
     if (rc) {
-        char *e = NULL; libssh2_session_last_error(session, &e, NULL, 0);
-        char m[220]; snprintf(m, sizeof(m), "身份验证失败 (%d)：%s", rc, e ? e : "");
+        char m[220]; snprintf(m, sizeof(m), "身份验证失败 (%d)：%s", rc, amsg);
         STAGE(4, 0, m);
         libssh2_session_disconnect(session, "auth failed"); libssh2_session_free(session); close(sock); return;
     }

@@ -364,10 +364,15 @@ final class ConnectionTester: ObservableObject {
         // [SSH 迁移] 进程内 libssh2 分阶段测试（替代 spawn ssh -v）：连接由 App 进程发起，
         // 触发 macOS 本地网络权限弹窗，且内网主机不再因子进程发起连接而被静默拦截。
         let isKey = conn.authMethod == .key
+        let isAgent = conn.authMethod == .agent
+        if isAgent {
+            let sock = conn.resolvedAgentPath
+            log(String(localized: "认证方式：SSH Agent（\(sock.isEmpty ? "SSH_AUTH_SOCK" : sock)）"))
+        }
         let keyPath: String? = isKey
             ? (conn.keyId.isEmpty ? (conn.keyPath.isEmpty ? nil : conn.keyPath) : KeyMaterializer.path(forKeyId: conn.keyId))
             : nil
-        let password: String? = isKey ? nil : conn.password
+        let password: String? = (isKey || isAgent) ? nil : conn.password
         let keyPass: String? = isKey ? conn.password : nil
         let (h, p, u) = (conn.host, conn.port, conn.user)
         let (realKH, sessionKH) = (HostKeyVerifier.realKnownHosts, HostKeyVerifier.sessionKnownHosts)

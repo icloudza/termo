@@ -27,6 +27,8 @@ typedef struct {
     const char *hostkey_algos;
     int connect_timeout_sec;   // ≤0 用默认值
     int keepalive_sec;         // 心跳间隔（主机设置）：>0 时终端空闲按此发 SSH 心跳，TCP 层 3 个间隔无确认即判断线；0 = 系统默认
+    int use_agent;             // 1 = 用 SSH Agent 里的密钥认证（1Password、Secretive、系统 ssh-agent 等），忽略密码与私钥文件
+    const char *agent_path;    // agent 套接字路径；空 = libssh2 读 SSH_AUTH_SOCK
 } TermoSSHOptions;
 
 /// 连接 + 握手 + 认证，成功返回会话句柄，失败返回 NULL 并写 err。key_path 非空走公钥认证。

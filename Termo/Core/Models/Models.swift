@@ -82,7 +82,7 @@ struct SSHConnection: Codable, Equatable {
     // 密码不进 JSON（存 Keychain），其余字段全部持久化
     enum CodingKeys: String, CodingKey {
         case user, host, port, authMethod, keyPath, keyId, encoding, hostKeyAlgos, ciphers, kexAlgos
-        case proxyURL, disableProxy, timeoutMs, heartbeatMs, initialCommand, defaultPath
+        case proxyURL, disableProxy, timeoutMs, heartbeatMs, initialCommand, defaultPath, agentPath
     }
 
     var user: String = "root"
@@ -102,6 +102,7 @@ struct SSHConnection: Codable, Equatable {
     var heartbeatMs: Int = 5000
     var initialCommand: String = ""
     var defaultPath: String = "~"
+    var agentPath: String = ""   // 本主机单独指定的 SSH Agent 套接字；空 = 用「设置 › 安全」里的全局设置
 
     /// 当前是否已具备自动连接所需凭证：「每次询问」需已输入本会话密码；其它方式恒为 true。
     /// 用于门控后台监控/规格探测——无凭证时跳过（UI 显示占位、不反复弹密码框），有凭证后正常采集。
@@ -129,6 +130,32 @@ struct SSHConnection: Codable, Equatable {
         case "ASCII": return "C"
         default: return nil
         }
+    }
+}
+
+extension SSHConnection {
+    // 容错解码：缺的键按默认值处理。合成解码器遇到旧 hosts.json 里没有的新键（如 agentPath）会抛 keyNotFound，
+    // 整台主机就加载不出来；认证方式是未知值时也退回默认，而不是让主机消失。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = SSHConnection()
+        user = try c.decodeIfPresent(String.self, forKey: .user) ?? d.user
+        host = try c.decodeIfPresent(String.self, forKey: .host) ?? d.host
+        port = try c.decodeIfPresent(Int.self, forKey: .port) ?? d.port
+        authMethod = (try? c.decodeIfPresent(AuthMethod.self, forKey: .authMethod)) ?? d.authMethod
+        keyPath = try c.decodeIfPresent(String.self, forKey: .keyPath) ?? d.keyPath
+        keyId = try c.decodeIfPresent(String.self, forKey: .keyId) ?? d.keyId
+        encoding = try c.decodeIfPresent(String.self, forKey: .encoding) ?? d.encoding
+        hostKeyAlgos = try c.decodeIfPresent(String.self, forKey: .hostKeyAlgos) ?? d.hostKeyAlgos
+        ciphers = try c.decodeIfPresent(String.self, forKey: .ciphers) ?? d.ciphers
+        kexAlgos = try c.decodeIfPresent(String.self, forKey: .kexAlgos) ?? d.kexAlgos
+        proxyURL = try c.decodeIfPresent(String.self, forKey: .proxyURL) ?? d.proxyURL
+        disableProxy = try c.decodeIfPresent(Bool.self, forKey: .disableProxy) ?? d.disableProxy
+        timeoutMs = try c.decodeIfPresent(Int.self, forKey: .timeoutMs) ?? d.timeoutMs
+        heartbeatMs = try c.decodeIfPresent(Int.self, forKey: .heartbeatMs) ?? d.heartbeatMs
+        initialCommand = try c.decodeIfPresent(String.self, forKey: .initialCommand) ?? d.initialCommand
+        defaultPath = try c.decodeIfPresent(String.self, forKey: .defaultPath) ?? d.defaultPath
+        agentPath = try c.decodeIfPresent(String.self, forKey: .agentPath) ?? d.agentPath
     }
 }
 

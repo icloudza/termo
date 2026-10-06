@@ -190,7 +190,7 @@ struct AddHostView: View {
             }
             labeled(String(localized: "验证方式")) {
                 ThemedDropdown(
-                    options: AuthMethod.allCases.map { (value: $0, verbatim: $0.label) },
+                    options: AuthMethod.selectable.map { (value: $0, verbatim: $0.label) },
                     selection: $draft.authMethod
                 )
                 .frame(width: 200)
@@ -220,6 +220,15 @@ struct AddHostView: View {
                 labeled(String(localized: "登录密码"), optional: true) {
                     ThemedSecureField(placeholder: "（可选）", text: $draft.password)
                 }
+            } else if draft.authMethod == .agent {
+                labeled(String(localized: "Agent 套接字"), optional: true) {
+                    AgentSocketField(path: $draft.agentPath,
+                                     placeholder: String(localized: "留空使用「设置 › 安全」中的 Agent"),
+                                     fallback: AppSettings.shared.sshAgentPath)
+                }
+                Text("用 SSH Agent（1Password、Secretive、系统 ssh-agent 等）里的密钥登录，私钥不经过 Termo；Agent 可能会弹出 Touch ID 等授权确认。")
+                    .font(.system(size: 11)).foregroundStyle(Pal.overlay)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 // 每次询问：不保存任何凭证，连接时弹窗输入本次密码。
                 Text("每次连接时弹窗输入本次密码，不保存任何凭证。")
