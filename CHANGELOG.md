@@ -4,6 +4,8 @@
 发版由 `scripts/release.sh` 自动把下方 `[Unreleased]` 归档为对应版本，并同步到 GitHub Release、软件更新弹窗与 Sparkle appcast。
 
 ## [Unreleased]
+
+## [1.1.0] - 2026-10-06
 - 新增 SSH Agent 认证：可直接使用 1Password、Secretive、系统 ssh-agent 中的密钥登录，私钥不经过 Termo；可在「设置 › 安全」指定 Agent 套接字（自动识别已安装的 1Password / Secretive），单台主机也可单独指定（#3）
 - 修复 vim / top 等全屏程序只占半屏、换行错乱：终端连上之前的尺寸变化未同步给远端（#5）
 - 修复终端 ⌘C / ⌘V 失效、鼠标拖选时选区突然断开；改变窗口大小时远端提示符反复重绘造成的输出错乱（#2）
