@@ -6,9 +6,8 @@ struct AddHostView: View {
     var editing: Host? = nil
     @StateObject private var draft = HostDraft()
     @ObservedObject private var theme = ThemeManager.shared
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modalDismiss) private var dismiss
     @State private var section: HostFormSection = .basic
-    @State private var showTest = false
     @State private var didLoad = false
 
     private var isEditing: Bool { editing != nil }
@@ -16,10 +15,10 @@ struct AddHostView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             HStack(spacing: 0) {
                 navSidebar
-                Divider().overlay(Pal.fill(0.06))
+                Hairline(vertical: true)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         sectionContent
@@ -28,12 +27,11 @@ struct AddHostView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             footer
         }
         .frame(width: 680, height: 560)
         .background(Pal.solidBase)
-        .background(NoInitialFocus())   // 打开时不默认把光标聚焦到「名称」
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .onAppear {
             guard !didLoad else { return }
@@ -41,9 +39,6 @@ struct AddHostView: View {
             if let editing {
                 draft.load(from: editing)
             }
-        }
-        .sheet(isPresented: $showTest) {
-            TestConnectionView(draft: draft)
         }
     }
 
@@ -89,7 +84,8 @@ struct AddHostView: View {
                         Text(s.label)
                             .font(.system(size: 13))
                             .foregroundStyle(selected ? Pal.text : Pal.subtext)
-                        Spacer()
+                            .lineLimit(1).minimumScaleFactor(0.85)
+                        Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 10).padding(.vertical, 7)
                     .background(
@@ -104,7 +100,7 @@ struct AddHostView: View {
             Spacer()
         }
         .padding(8)
-        .frame(width: 150)
+        .frame(width: 176)   // 英文「Connection Settings」等在 150 宽里会折成两行
         .frame(maxHeight: .infinity)
         .background(Pal.solidMantle)
     }
@@ -114,23 +110,20 @@ struct AddHostView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Button {
-                showTest = true
+                model.testConnectionDraft = draft
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "bolt.horizontal.circle")
-                        .font(.system(size: 13))
-                    Text("测试连接").font(.system(size: 13))
+                    Text("测试连接")
                 }
-                .foregroundStyle(Pal.mauve)
-                .padding(.horizontal, 14).padding(.vertical, 7)
-                .background(Pal.mauve.opacity(0.10), in: RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Pal.mauve.opacity(0.25), lineWidth: 1))
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .pointerCursor(draft.canSave)
+            .buttonStyle(ThemedButtonStyle(kind: .tinted))
             .disabled(!draft.canSave)
-            .opacity(draft.canSave ? 1 : 0.5)
+
+            // 按钮为什么点不了：缺哪项、哪项不合法（可能在别的分页里，不提示就找不到）。
+            if let blocker = draft.saveBlocker {
+                Text(blocker).font(.system(size: 11)).foregroundStyle(Pal.overlay).lineLimit(1)
+            }
 
             Spacer()
             SecondaryButton(title: "取消") { dismiss() }
@@ -264,8 +257,7 @@ struct AddHostView: View {
                 String(localized: "选择此选项后，数据将会通过代理进行中转传输。"),
                 String(localized: "支持 socks4/socks5 代理，如：socks5://127.0.0.1:10808（鉴权：socks5://user:pass@host:port）"),
                 String(localized: "支持 http 代理，如：http://127.0.0.1:10809（鉴权：http://user:pass@host:port）"),
-                String(localized: "支持 https 代理，如：https://127.0.0.1:10809（鉴权：https://user:pass@host:port）"),
-                String(localized: "若此处留空且在系统设置中开启“使用系统代理”，将自动尝试使用系统代理。"),
+                String(localized: "https:// 与 http:// 相同，按 HTTP CONNECT 建立隧道（不支持与代理之间的 TLS 加密连接）"),
             ])
             toggleRow(String(localized: "禁用代理"), isOn: $draft.disableProxy)
             labeled(String(localized: "代理设置")) {

@@ -49,7 +49,7 @@ extension ThemeColors {
         text: Color(hex: 0xcccccc),
         textBright: Color(hex: 0xffffff),
         subtext: Color(hex: 0x9d9d9d),
-        overlay: Color(hex: 0x7a7a7a),
+        overlay: Color(hex: 0x858585),  // 占位文字/次要图标：0x7a 在活动栏(crust)上对比度不足 3:1
         mauve: Color(hex: 0x569cd6),    // 蓝色强调色
         green: Color(hex: 0x4ec9b0),
         yellow: Color(hex: 0xd7ba7d),
@@ -67,8 +67,8 @@ extension ThemeColors {
         surface0: Color(hex: 0xdfe2e9),
         text: Color(hex: 0x2e3440),
         textBright: Color(hex: 0x1a1d24),
-        subtext: Color(hex: 0x6b7280),
-        overlay: Color(hex: 0x9aa0ac),
+        subtext: Color(hex: 0x5a6170),  // 浅色底上说明文字需 ≥4.5:1（原 0x6b7280 在侧栏底约 4.2）
+        overlay: Color(hex: 0x7b8290),  // 占位文字/次要图标 ≥3:1（原 0x9aa0ac 仅约 2.3，几乎看不见）
         mauve: Color(hex: 0x3b82f6),    // 清新亮蓝
         green: Color(hex: 0x10b981),
         yellow: Color(hex: 0xf59e0b),
@@ -157,6 +157,11 @@ enum Pal {
     static var green: Color { c.green }
     static var yellow: Color { c.yellow }
     static var red: Color { c.red }
+
+    // 按钮填充色：白字要清楚可读（≥4.5:1）。强调色 mauve 本身偏亮，白字只有约 3:1，只用于文字、描边、选中底。
+    static var accentFill: Color { ThemeManager.shared.isDark ? Color(hex: 0x2f6fbf) : Color(hex: 0x2563eb) }
+    static var dangerFill: Color { ThemeManager.shared.isDark ? Color(hex: 0xc93c3c) : Color(hex: 0xdc2626) }
+    static var successFill: Color { Color(hex: 0x15803d) }
 
     /// 自适应叠加色：深色主题用白色叠加，浅色主题用黑色叠加。
     /// 用于 hover / 选中 / 卡片 / 边框等半透明层，保证两种主题下都可见。

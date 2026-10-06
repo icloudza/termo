@@ -23,9 +23,16 @@ final class EditorState: ObservableObject {
     @Published var phase: LoadPhase = .loading
     @Published var mode: ViewerMode = .text
     @Published var text: String = "" {
-        didSet { isDirty = (text != savedText) }
+        didSet {
+            let dirty = text != savedText
+            if dirty != isDirty { isDirty = dirty }       // 只在变化时发布，避免每次按键多一轮重绘
+            scheduleLineCount()
+        }
     }
     @Published var isDirty = false
+    /// 行数（工具栏显示）。按键后防抖统计：以前每次重绘都按字符遍历全文，大文件打字明显卡。
+    @Published private(set) var lineCount = 1
+    private var lineCountWork: DispatchWorkItem?
     /// 「基准（上次保存/加载的内容）」的版本号。每次基准变化 +1；编辑器的变更竖条协调器据此从 TextView
     /// 实时快照新基准并对账。改动竖条本身完全由编辑器侧的 ChangeBarCoordinator 按字符偏移锚定计算，
     /// 不走滞后的行号管线（彻底消除快速编辑时的错位）。
@@ -38,6 +45,8 @@ final class EditorState: ObservableObject {
     @Published var byteSize: Int64 = 0
 
     private var savedText = ""
+    /// 文件原编码：保存时按它写回。非 UTF-8 文件（GBK 等）若一律按 UTF-8 写回，整个文件会被静默转码。
+    private var textEncoding: String.Encoding = .utf8
     /// 文件版本令牌（`mtime:size`），打开时记录、保存成功后更新；保存前据此做冲突检测。nil=该文件无法 stat（不检测）。
     private var fileVersion: String?
     /// 编辑器文本视图（弱引用）：tab keep-alive 后由 AppModel.focusActiveTab 在切到本 tab 时聚焦它。
@@ -49,11 +58,23 @@ final class EditorState: ObservableObject {
     // 上限：文本 5MB，图片 16MB
     private let textLimit = 5_000_000
     private let imageLimit = 16_000_000
+    /// 当前文件类型的打开上限（超限提示页显示）。
+    var openLimit: Int { Self.isImageName(file.name) ? imageLimit : textLimit }
 
     var canSave: Bool { (mode == .text) && isDirty && !saving }
-    var lineCount: Int {
-        guard !text.isEmpty else { return 1 }
-        return text.reduce(1) { $0 + ($1 == "\n" ? 1 : 0) }
+
+    private func scheduleLineCount() {
+        lineCountWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.updateLineCountNow() }
+        lineCountWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    }
+
+    private func updateLineCountNow() {
+        lineCountWork?.cancel()
+        lineCountWork = nil
+        let n = text.utf8.reduce(1) { $0 + ($1 == 0x0A ? 1 : 0) }
+        if n != lineCount { lineCount = n }
     }
 
     init(file: RemoteFile, host: Host, fs: RemoteFS) {
@@ -75,6 +96,13 @@ final class EditorState: ObservableObject {
         saveError = nil
         let isImg = Self.isImageName(file.name)
         let limit = isImg ? imageLimit : textLimit
+        // 列表里已知大小且超限：直接提示，不必先把 5MB 拉下来再说「太大」。
+        if file.size > Int64(limit) {
+            byteSize = file.size
+            mode = .tooLarge
+            phase = .loaded
+            return
+        }
         loadTask = Task {
             let result = await fs.read(file.path, limit: limit + 1)
             if Task.isCancelled { return }
@@ -96,10 +124,12 @@ final class EditorState: ObservableObject {
                     } else {
                         mode = .binary   // 扩展名是图片但解码失败
                     }
-                } else if let str = Self.decodeText(data) {
+                } else if let (str, enc) = Self.decodeText(data) {
+                    textEncoding = enc
                     savedText = str
                     text = str
                     isDirty = false
+                    updateLineCountNow()
                     savedVersion &+= 1   // 新基准 → 通知协调器重设基准
                     mode = .text
                 } else {
@@ -113,9 +143,11 @@ final class EditorState: ObservableObject {
     /// 二进制 → 强制按文本（有损解码）只读打开。
     func forceOpenAsText() {
         let str = String(decoding: rawData, as: UTF8.self)
+        textEncoding = .utf8
         savedText = str
         text = str
         isDirty = false
+        updateLineCountNow()
         savedVersion &+= 1
         mode = .readonlyText
     }
@@ -128,7 +160,12 @@ final class EditorState: ObservableObject {
         saving = true
         saveError = nil
         let path = file.path
-        let payload = Data(text.utf8)
+        guard let payload = text.data(using: textEncoding) else {
+            // 例如在 GBK 文件里输入了 emoji：原编码无法表示，宁可不保存也不偷偷改成 UTF-8
+            saving = false
+            saveError = String(localized: "内容包含原文件编码无法表示的字符，未保存")
+            return
+        }
         let snapshot = text
         let expected = force ? nil : fileVersion
         Task {
@@ -157,14 +194,17 @@ final class EditorState: ObservableObject {
     }
 
     /// 尝试把字节解码为文本：含 NUL 或非 UTF-8 视为二进制。
-    static func decodeText(_ data: Data) -> String? {
-        if data.isEmpty { return "" }
+    static let gb18030 = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(
+        CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
+
+    /// 尝试把字节解码为文本并返回所用编码：含 NUL 视为二进制；UTF-8 失败时退而求其次按 GB18030（GBK 超集）。
+    static func decodeText(_ data: Data) -> (String, String.Encoding)? {
+        if data.isEmpty { return ("", .utf8) }
         // 前 8KB 出现 NUL 基本可判为二进制
         let probe = data.prefix(8192)
         if probe.contains(0) { return nil }
-        if let s = String(data: data, encoding: .utf8) { return s }
-        // 退而求其次：GBK/Latin1 常见于旧文件
-        if let s = String(data: data, encoding: .init(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))) { return s }
+        if let s = String(data: data, encoding: .utf8) { return (s, .utf8) }
+        if let s = String(data: data, encoding: gb18030) { return (s, gb18030) }
         return nil
     }
 }
@@ -177,8 +217,10 @@ private let editorHeaderInset: CGFloat = 14
 
 struct FileViewerView: View {
     @ObservedObject var state: EditorState
-    @ObservedObject var model: AppModel
+    let model: AppModel          // 只转交/在动作里用，不订阅：编辑器常驻，订阅会让每次模型变化都重绘所有打开的编辑器
     let tabId: Int
+    /// 是否为当前标签：编辑器标签常驻（隐藏的只是透明），隐藏编辑器的 ⌘S 也注册着，必须停用，否则可能保存到看不见的文件。
+    var isActive = true
     @ObservedObject private var theme = ThemeManager.shared
     @ObservedObject private var settings = AppSettings.shared
 
@@ -201,6 +243,7 @@ struct FileViewerView: View {
             ZStack {
                 if state.saveConflict {
                     SaveConflictDialog(
+                        isActive: isActive,
                         onOverwrite: { state.saveConflict = false; state.save(force: true) },
                         onReload: { state.saveConflict = false; state.reload() },
                         onCancel: { state.saveConflict = false }
@@ -212,6 +255,11 @@ struct FileViewerView: View {
             .allowsHitTesting(state.saveConflict)
         }
         .animation(.easeOut(duration: 0.16), value: state.saveConflict)
+        // 冲突弹窗期间键盘不能留在编辑器里：否则继续打字会改到弹窗背后的内容。关闭后焦点还给编辑器。
+        .onChange(of: state.saveConflict) { _, shown in
+            guard isActive else { return }
+            if shown { NSApp.keyWindow?.makeFirstResponder(nil) } else { model.focusActiveTab() }
+        }
     }
 
     // MARK: 工具栏
@@ -257,16 +305,20 @@ struct FileViewerView: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help(settings.editorMinimap ? String(localized: "隐藏缩略图") : String(localized: "显示缩略图"))
+                .tooltip(settings.editorMinimap ? String(localized: "隐藏缩略图") : String(localized: "显示缩略图"))
             }
 
-            iconButton("arrow.clockwise", help: String(localized: "重新加载")) { state.reload() }
+            iconButton("arrow.clockwise", help: String(localized: "重新加载")) { model.requestEditorReload(state) }
 
             if state.mode == .text {
                 Button { state.save() } label: {
                     HStack(spacing: 5) {
-                        if state.saving { ProgressView().controlSize(.small).scaleEffect(0.7) }
-                        else { Image(systemName: "square.and.arrow.down").font(.system(size: 11, weight: .semibold)) }
+                        // 固定 12pt 槽位：保存时图标换成转圈，按钮宽度不变（scaleEffect 不改布局尺寸，按钮会被撑大）。
+                        Group {
+                            if state.saving { ProgressView().controlSize(.mini) }
+                            else { Image(systemName: "square.and.arrow.down").font(.system(size: 11, weight: .semibold)) }
+                        }
+                        .frame(width: 12, height: 12)
                         Text("保存").font(.system(size: 12, weight: .medium))
                     }
                     .foregroundStyle(state.canSave ? Pal.mauve : Pal.overlay.opacity(0.5))
@@ -276,7 +328,7 @@ struct FileViewerView: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor(state.canSave)
-                .disabled(!state.canSave)
+                .disabled(!state.canSave || !isActive || state.saveConflict)
                 .keyboardShortcut("s", modifiers: .command)
             }
         }
@@ -291,7 +343,7 @@ struct FileViewerView: View {
                 .background(Pal.fill(0.05), in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain).pointerCursor().help(help)
+        .buttonStyle(.plain).pointerCursor().tooltip(help)
     }
 
     // MARK: 内容
@@ -300,14 +352,14 @@ struct FileViewerView: View {
     private var content: some View {
         switch state.phase {
         case .loading:
-            centered { ProgressView().controlSize(.small) }
+            centered { DelayedSpinner() }
         case .error(let msg):
             centered {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 24)).foregroundStyle(Pal.yellow)
                     Text(msg).font(.system(size: 12)).foregroundStyle(Pal.subtext)
                         .multilineTextAlignment(.center).textSelection(.enabled)
-                    Button("重试") { state.reload() }.buttonStyle(.plain).pointerCursor().foregroundStyle(Pal.mauve)
+                    TintedButton(title: "重试") { state.reload() }
                 }
                 .padding(.horizontal, 40)
             }
@@ -321,9 +373,11 @@ struct FileViewerView: View {
                 ImagePreviewView(image: state.image)
             case .binary:
                 BinaryNoticeView(file: state.file, size: state.byteSize,
-                                 onForceText: { state.forceOpenAsText() })
+                                 onForceText: { state.forceOpenAsText() },
+                                 onDownload: { model.downloadFiles([state.file], host: state.host) })
             case .tooLarge:
-                TooLargeNoticeView(size: state.byteSize)
+                TooLargeNoticeView(size: state.byteSize, limit: state.openLimit,
+                                   onDownload: { model.downloadFiles([state.file], host: state.host) })
             }
         }
     }
@@ -396,7 +450,7 @@ private struct EditorRoot: View {
 private struct EditorBreadcrumb: View {
     let file: RemoteFile
     let host: Host
-    @ObservedObject var model: AppModel
+    let model: AppModel          // 只在点击动作里用，不订阅
 
     private struct Crumb: Identifiable {
         let id: Int
@@ -459,7 +513,7 @@ private struct HostPill: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .onHover { hover = $0 }
-        .help(String(localized: "跳到根目录"))
+        .tooltip(String(localized: "跳到根目录"))
     }
 }
 
@@ -490,7 +544,7 @@ private struct CrumbText: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .onHover { hover = $0 }
-        .help(isLast ? String(localized: "在文件树中定位") : String(localized: "跳转到此目录"))
+        .tooltip(isLast ? String(localized: "在文件树中定位") : String(localized: "跳转到此目录"))
     }
 }
 
@@ -525,7 +579,7 @@ private struct ImagePreviewView: View {
                 Text("\(Int(scale * 100))%").font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(Pal.subtext).frame(width: 52)
                 zoomButton("plus.magnifyingglass") { scale = min(8, scale + 0.25) }
-                Divider().frame(height: 14).overlay(Pal.fill(0.1))
+                Hairline(vertical: true, length: 14, opacity: 0.1)
                 Button("实际大小") { scale = 1.0 }.buttonStyle(.plain).pointerCursor()
                     .font(.system(size: 12)).foregroundStyle(Pal.mauve)
             }
@@ -567,6 +621,7 @@ private struct BinaryNoticeView: View {
     let file: RemoteFile
     let size: Int64
     let onForceText: () -> Void
+    let onDownload: () -> Void
 
     var body: some View {
         VStack(spacing: 14) {
@@ -574,12 +629,10 @@ private struct BinaryNoticeView: View {
             Text("二进制文件").font(.system(size: 15, weight: .medium)).foregroundStyle(Pal.text)
             Text("\(file.name) · \(humanSize(size))")
                 .font(.system(size: 12)).foregroundStyle(Pal.subtext)
-            Button(action: onForceText) {
-                Text("仍然以文本方式打开").font(.system(size: 12))
-                    .foregroundStyle(Pal.mauve)
-                    .padding(.horizontal, 14).padding(.vertical, 7)
-                    .background(Pal.mauve.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-            }.buttonStyle(.plain).pointerCursor()
+            HStack(spacing: 8) {
+                TintedButton(title: "下载到本地", action: onDownload)
+                TintedButton(title: "仍然以文本方式打开", tint: Pal.subtext, action: onForceText)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -587,12 +640,15 @@ private struct BinaryNoticeView: View {
 
 private struct TooLargeNoticeView: View {
     let size: Int64
+    let limit: Int
+    let onDownload: () -> Void
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.arrow.triangle.2.circlepath").font(.system(size: 32)).foregroundStyle(Pal.yellow)
             Text("文件过大").font(.system(size: 15, weight: .medium)).foregroundStyle(Pal.text)
-            Text("\(humanSize(size)) — 超出编辑器的打开上限")
+            Text("\(humanSize(size))，超出编辑器的打开上限（\(humanSize(Int64(limit)))）")
                 .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+            TintedButton(title: "下载到本地", action: onDownload)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -601,6 +657,7 @@ private struct TooLargeNoticeView: View {
 /// 乐观锁冲突弹窗（自定义样式，对齐 [[HostKeyDialog]] 的卡片风，替代系统 .alert）。
 /// 紧凑卡片 + 底部一排 pill 按钮，克制用色：覆盖=淡红、重载=灰底、取消=纯文字。
 struct SaveConflictDialog: View {
+    var isActive = true
     let onOverwrite: () -> Void
     let onReload: () -> Void
     let onCancel: () -> Void
@@ -609,8 +666,7 @@ struct SaveConflictDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(theme.isDark ? 0.42 : 0.20).ignoresSafeArea()
-                .onTapGesture { onCancel() }
+            ModalBackdrop(escapable: isActive, onTap: onCancel)
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {

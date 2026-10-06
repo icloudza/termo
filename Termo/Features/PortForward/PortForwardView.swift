@@ -20,7 +20,7 @@ struct PortForwardView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             if let rule = formRule {
                 ForwardRuleForm(
                     existing: isNew ? nil : rule,
@@ -66,8 +66,7 @@ struct PortForwardView: View {
     private func deleteConfirm(_ rule: ForwardRule) -> some View {
         let name = rule.name.isEmpty ? (rule.kind.title + String(localized: "转发")) : rule.name
         ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea()
-                .onTapGesture { pendingDelete = nil }
+            ModalBackdrop { pendingDelete = nil }
             VStack(alignment: .leading, spacing: 14) {
                 Text("删除转发规则「\(name)」？")
                     .font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
@@ -90,14 +89,8 @@ struct PortForwardView: View {
                         if dontAskAgain { model.skipForwardDeleteConfirm = true }
                         model.deleteForwardRule(rule)
                         pendingDelete = nil
-                    } label: {
-                        Text("删除").font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
-                            .padding(.horizontal, 16).padding(.vertical, 7)
-                            .background(Pal.red, in: RoundedRectangle(cornerRadius: 7))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
+                    } label: { Text("删除") }
+                        .buttonStyle(ThemedButtonStyle(kind: .destructive))
                 }
             }
             .padding(20)
@@ -251,7 +244,7 @@ private struct ForwardRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain).pointerCursor()
-            .help(status.isRunning ? String(localized: "停止") : String(localized: "启动"))
+            .tooltip(status.isRunning ? String(localized: "停止") : String(localized: "启动"))
 
             // 编辑（运行中不可改）
             Button(action: onEdit) {
@@ -263,7 +256,7 @@ private struct ForwardRow: View {
             .buttonStyle(.plain).pointerCursor()
             .disabled(status.isRunning)
             .opacity(status.isRunning ? 0.4 : 1)
-            .help(status.isRunning ? String(localized: "请先停止再编辑") : String(localized: "编辑"))
+            .tooltip(status.isRunning ? String(localized: "请先停止再编辑") : String(localized: "编辑"))
 
             Button(action: onDelete) {
                 Image(systemName: "trash").font(.system(size: 11)).foregroundStyle(Pal.subtext)
@@ -272,7 +265,7 @@ private struct ForwardRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain).pointerCursor()
-            .help(String(localized: "删除"))
+            .tooltip(String(localized: "删除"))
         }
         .padding(.horizontal, 12).padding(.vertical, 11)
         .background(hover ? Pal.fill(0.05) : Pal.fill(0.03), in: RoundedRectangle(cornerRadius: 10))
@@ -388,6 +381,8 @@ private struct ForwardRuleForm: View {
             .padding(.horizontal, 22).padding(.top, 18).padding(.bottom, 22)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // 改了任一字段就收起上次的校验错误，不让旧错误一直挂着。
+        .onChange(of: "\(kind)|\(bind)|\(listen)|\(destHost)|\(destPort)") { _, _ in error = nil }
     }
 
     private var destHostHint: String {
@@ -398,13 +393,19 @@ private struct ForwardRuleForm: View {
 
     // 实时预览将要执行的 ssh 转发参数，帮助理解方向。
     private var previewLine: some View {
-        let l = Int(listen) ?? 0
-        let dp = Int(destPort) ?? 0
-        let b = bind.trimmingCharacters(in: .whitespaces).isEmpty ? "127.0.0.1" : bind
+        // 没填的部分显示成占位名，而不是「0」和空串拼出 127.0.0.1:0::0 这种看不懂的命令。
+        func part(_ v: String, _ placeholder: String) -> String {
+            let t = v.trimmingCharacters(in: .whitespaces)
+            return t.isEmpty ? placeholder : t
+        }
+        let l = part(listen, String(localized: "监听端口"))
+        let dh = part(destHost, String(localized: "目标地址"))
+        let dp = part(destPort, String(localized: "目标端口"))
+        let b = part(bind, "127.0.0.1")
         let preview: String = {
             switch kind {
-            case .local:   return "ssh -L \(b):\(l):\(destHost):\(dp)"
-            case .remote:  return "ssh -R \(b):\(l):\(destHost):\(dp)"
+            case .local:   return "ssh -L \(b):\(l):\(dh):\(dp)"
+            case .remote:  return "ssh -R \(b):\(l):\(dh):\(dp)"
             case .dynamic: return "ssh -D \(b):\(l)"
             }
         }()

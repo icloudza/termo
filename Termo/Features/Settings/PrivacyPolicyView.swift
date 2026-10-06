@@ -6,7 +6,7 @@ import SwiftUI
 /// 未来若加 iCloud 同步也只经用户自己的 iCloud，绝不回传开发者。
 struct PrivacyPolicyView: View {
     @ObservedObject private var theme = ThemeManager.shared
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modalDismiss) private var dismiss
 
     private var isEnglish: Bool {
         (Bundle.main.preferredLocalizations.first ?? "en").hasPrefix("en")
@@ -15,7 +15,7 @@ struct PrivacyPolicyView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text(effectiveDate)

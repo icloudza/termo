@@ -3,7 +3,7 @@ import Foundation
 // MARK: - 从连接配置派生 libssh2 认证参数
 
 extension SSHConnection {
-    /// 把连接配置映射成 libssh2 认证三元组（与 `sshArguments` 的密钥解析口径一致）：
+    /// 把连接配置映射成 libssh2 认证三元组：
     /// - 密钥登录：落地库密钥(keyId)或手填路径(keyPath)，passphrase 取 password 字段；
     /// - 密码 / 每次询问：用已保存/本会话输入的 password 走密码认证。
     var libssh2Auth: (password: String?, keyPath: String?, keyPassphrase: String?) {
@@ -12,6 +12,54 @@ extension SSHConnection {
             return (nil, path.isEmpty ? nil : path, password.isEmpty ? nil : password)
         }
         return (password.isEmpty ? nil : password, nil, nil)
+    }
+
+    /// 连接复用键：目标 + 影响连接的设置（凭据/代理/算法）。设置一变就是另一把键，不会复用按旧配置建立的连接。
+    var poolKey: String {
+        [host, String(port), user, authMethod.rawValue, password, keyId, keyPath, disableProxy ? "1" : "0",
+         proxyURL, ciphers, kexAlgos, hostKeyAlgos].joined(separator: "\u{1F}")
+    }
+
+    /// 代理设置解析结果。type：0 直连 1 SOCKS5 2 SOCKS4a 3 HTTP CONNECT -1 地址无效（拒绝连接，绝不静默直连）。
+    var proxySpec: (type: Int32, host: String, port: Int, user: String, pass: String) {
+        var raw = proxyURL.trimmingCharacters(in: .whitespaces)
+        guard !disableProxy, !raw.isEmpty else { return (0, "", 0, "", "") }
+        // 早年允许不带协议头（如 127.0.0.1:7890）：按 SOCKS5 理解（ssh 走代理最常见的类型；类型不对会报「代理响应异常」）
+        if !raw.contains("://") { raw = "socks5://" + raw }
+        guard let c = URLComponents(string: raw), let scheme = c.scheme?.lowercased(),
+              let h = c.host, !h.isEmpty else { return (-1, "", 0, "", "") }
+        let type: Int32
+        switch scheme {
+        case "socks5", "socks5h": type = 1
+        case "socks4", "socks4a": type = 2
+        case "http", "https": type = 3          // https:// 与旧版 nc -X connect 一致，按 HTTP CONNECT 处理
+        default: return (-1, "", 0, "", "")
+        }
+        return (type, h, c.port ?? (type == 3 ? 8080 : 1080), c.user ?? "", c.password ?? "")
+    }
+
+    /// 把主机的代理/算法/超时设置转成 C 层选项（字符串仅在 body 执行期间有效）。
+    func withSSHOptions<R>(_ body: (UnsafePointer<TermoSSHOptions>) throws -> R) rethrows -> R {
+        var owned: [UnsafeMutablePointer<CChar>] = []
+        defer { owned.forEach { free($0) } }
+        func c(_ s: String) -> UnsafePointer<CChar>? {
+            guard !s.isEmpty, let p = strdup(s) else { return nil }
+            owned.append(p)
+            return UnsafePointer(p)
+        }
+        let px = proxySpec
+        var o = TermoSSHOptions()
+        o.proxy_type = px.type
+        o.proxy_host = c(px.host)
+        o.proxy_port = Int32(px.port)
+        o.proxy_user = c(px.user)
+        o.proxy_pass = c(px.pass)
+        o.ciphers = c(ciphers)
+        o.kex = c(kexAlgos)
+        o.hostkey_algos = c(hostKeyAlgos.isEmpty ? (HostKeyAlgoPreference.get(host: host, port: port) ?? "") : hostKeyAlgos)
+        o.connect_timeout_sec = Int32(timeoutMs > 0 ? max(1, timeoutMs / 1000) : 0)
+        o.keepalive_sec = Int32(heartbeatMs > 0 ? max(1, heartbeatMs / 1000) : 0)
+        return try withUnsafePointer(to: &o) { try body($0) }
     }
 }
 
@@ -31,8 +79,10 @@ final class SSHSessionPool {
     static let shared = SSHSessionPool()
     private init() {}
 
-    /// 池键：与 ControlMaster 的 `%C`（按目标主机哈希）同口径——同 host:port:user 的操作共享暖连接。
-    private struct Key: Hashable { let host: String; let port: Int; let user: String }
+    /// 池键：同 host:port:user 的操作共享暖连接；连接相关设置（凭据/代理/算法）变了就是另一把键，
+    /// 改完主机配置后不会再借到按旧配置建立的连接。
+    private struct Key: Hashable { let host: String; let port: Int; let user: String; let config: String }
+    // host/port/user 单列出来，供 closeHost 等按主机操作；config 用完整 poolKey 区分不同配置。
 
     private struct Pooled { let session: SSHSession; let idleSince: Date }
 
@@ -43,26 +93,38 @@ final class SSHSessionPool {
     /// 暖连接闲置超过此秒数即认为可能已被服务器断开，借用时丢弃重建（ControlPersist 旧值是 120s，这里更保守）。
     private let idleTTL: TimeInterval = 90
 
-    private func key(_ c: SSHConnection) -> Key { Key(host: c.host, port: c.port, user: c.user) }
+    private func key(_ c: SSHConnection) -> Key { Key(host: c.host, port: c.port, user: c.user, config: c.poolKey) }
 
     /// 借一条暖连接给短操作用：`body` 跑完自动归还以供复用；`body` 抛错（可能是断线）则弃用该连接、不污染池。
     /// `body` 在**调用线程同步执行并阻塞**（其内部 `SSHSession.exec` 自带串行队列，跨线程安全）——
     /// 务必在后台线程调用。
+    /// 借到的是闲置过的暖连接且失败时，换一条新连接重试一次：NAT/防火墙可能早已悄悄回收了它。
     func withSession<T>(_ c: SSHConnection, _ body: (SSHSession) throws -> T) throws -> T {
-        let s = try borrow(c)
+        let (s, reused) = try borrow(c)
         do {
             let r = try body(s)
             giveBack(c, s)
             return r
         } catch {
             s.close()
-            throw error
+            guard reused, (error as? SSHSession.SSHError)?.isChannelOpenFailure == true else { throw error }
+            let fresh = try connect(c)
+            do {
+                let r = try body(fresh)
+                giveBack(c, fresh)
+                return r
+            } catch {
+                fresh.close()
+                throw error
+            }
         }
     }
 
     /// 手动借/还（供需要按结果决定“归还复用 vs 弃用”的调用方，如 RemoteFS.run：取消/超时过的连接须 discard，
     /// 因其 cancel 标志已置位且通道状态可能不洁）。借 → 跑 → 正常则 `recycle`、异常/取消则 `discard`。
-    func take(_ c: SSHConnection) throws -> SSHSession { try borrow(c) }
+    func take(_ c: SSHConnection) throws -> SSHSession { try borrow(c).session }
+    /// 同 take，并告知是否为复用的暖连接（失败时可换新连接重试一次）。
+    func takeReporting(_ c: SSHConnection) throws -> (session: SSHSession, reused: Bool) { try borrow(c) }
     func recycle(_ c: SSHConnection, _ s: SSHSession) { giveBack(c, s) }
     func discard(_ s: SSHSession) { s.close() }
 
@@ -83,7 +145,7 @@ final class SSHSessionPool {
 
     // MARK: - 内部
 
-    private func borrow(_ c: SSHConnection) throws -> SSHSession {
+    private func borrow(_ c: SSHConnection) throws -> (session: SSHSession, reused: Bool) {
         let k = key(c)
         let now = Date()
         while true {
@@ -92,11 +154,11 @@ final class SSHSessionPool {
             idle[k] = list
             lock.unlock()
             if now.timeIntervalSince(p.idleSince) < idleTTL {
-                return p.session            // 暖连接，直接复用
+                return (p.session, true)    // 暖连接，直接复用
             }
             p.session.close()               // 太旧、可能已断 → 关掉，继续取下一条
         }
-        return try connect(c)               // 池空 → 新建
+        return (try connect(c), false)      // 池空 → 新建
     }
 
     private func giveBack(_ c: SSHConnection, _ s: SSHSession) {
@@ -114,8 +176,6 @@ final class SSHSessionPool {
     }
 
     private func connect(_ c: SSHConnection) throws -> SSHSession {
-        let a = c.libssh2Auth
-        return try SSHSession.connect(host: c.host, port: c.port, user: c.user,
-                                      password: a.password, keyPath: a.keyPath, keyPassphrase: a.keyPassphrase)
+        try SSHSession.connect(c)
     }
 }

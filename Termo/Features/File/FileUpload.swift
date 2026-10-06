@@ -32,6 +32,7 @@ final class UploadItem: ObservableObject, Identifiable {
     @Published var state: ItemState = .waiting
     @Published var sent: Int64 = 0          // 已确认字节（用于进度与总量）
     var interrupted = false                 // 失败留下半截、可续传
+    var restartFromZero = false             // 「重试」而非「续传」：远端有 .part 也从头传
 
     /// 上传项：url=本地源文件，remotePath=远端目标。
     init(url: URL, destDir: String) {
@@ -55,6 +56,39 @@ final class UploadItem: ObservableObject, Identifiable {
     }
     static func fileSize(_ url: URL) -> Int64 {
         Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+    }
+}
+
+/// 远端 `.part` 的来源登记：记下每个半截文件是哪个本地文件（路径 + 大小 + 修改时间）传出来的。
+/// 跨会话续传前必须核对：同名但内容不同的旧 `.part` 若按大小直接续接，会拼出一个损坏文件且毫无提示。
+enum UploadPartLedger {
+    private static let key = "uploadPartLedger"
+
+    private static func entryKey(_ hostId: String?, _ remotePath: String) -> String { "\(hostId ?? "")|\(remotePath)" }
+
+    private static func fingerprint(_ url: URL) -> String? {
+        guard let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+              let size = v.fileSize, let mtime = v.contentModificationDate else { return nil }
+        return "\(url.path)|\(size)|\(Int64(mtime.timeIntervalSince1970 * 1000))"
+    }
+
+    static func record(hostId: String?, remotePath: String, local: URL) {
+        guard let fp = fingerprint(local) else { return }
+        var all = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+        all[entryKey(hostId, remotePath)] = fp
+        UserDefaults.standard.set(all, forKey: key)
+    }
+
+    static func matches(hostId: String?, remotePath: String, local: URL) -> Bool {
+        guard let fp = fingerprint(local),
+              let all = UserDefaults.standard.dictionary(forKey: key) as? [String: String] else { return false }
+        return all[entryKey(hostId, remotePath)] == fp
+    }
+
+    static func clear(hostId: String?, remotePath: String) {
+        guard var all = UserDefaults.standard.dictionary(forKey: key) as? [String: String],
+              all.removeValue(forKey: entryKey(hostId, remotePath)) != nil else { return }
+        UserDefaults.standard.set(all, forKey: key)
     }
 }
 
@@ -97,8 +131,9 @@ final class UploadTask: ObservableObject {
 
     /// 逐文件目标互斥锁（由协调器 AppModel 注入）：传输每个文件前后获取/释放，
     /// 仅当两任务真要同时写同一目标文件时才串行，避免 .part 临时文件互相覆盖；其余文件照常并发。
-    var acquirePathLock: ((String) async -> Void)? = nil
+    var acquirePathLock: ((String) async -> Bool)? = nil
     var releasePathLock: ((String) -> Void)? = nil
+    var cancelPathWait: (() -> Void)? = nil
 
     /// 单个目标文件的锁键：上传以「主机+远端路径」（.part 临时名相同才会撞），下载以本地路径。
     private func lockKey(_ item: UploadItem) -> String {
@@ -126,8 +161,7 @@ final class UploadTask: ObservableObject {
     private func switchLock(to key: String) async {
         if heldLockKey == key { return }
         if let h = heldLockKey { releasePathLock?(h); heldLockKey = nil }
-        await acquirePathLock?(key)
-        heldLockKey = key
+        if await acquirePathLock?(key) ?? true { heldLockKey = key }   // false = 等锁时被取消，调用方随即看到 .cancel
     }
     /// 释放当前持有的写锁（任务收尾或被取消时）。
     private func releaseHeldLock() {
@@ -179,6 +213,7 @@ final class UploadTask: ObservableObject {
         }
         guard phase == .running || phase == .paused else { return }
         control.set(.cancel)
+        cancelPathWait?()   // 若在等同名文件的写锁，唤醒它
         // 若卡在同名询问，唤醒它（否则 runFrom 挂在 await 上，cancel 无效）
         if let cont = askCont { askCont = nil; pendingAsk = nil; cont.resume(returning: .cancel) }
         wakeFromPause()   // 暂停态取消：唤醒挂起的主循环，使其看到 .cancel 后收尾
@@ -237,7 +272,7 @@ final class UploadTask: ObservableObject {
         guard phase == .done else { return }
         for it in items {
             if case .failed = it.state {
-                if !resume { it.interrupted = false }   // 重试=从 0；续传=保留半截
+                if !resume { it.interrupted = false; it.restartFromZero = true }   // 重试=从 0；续传=保留半截
                 it.state = .waiting
             }
         }
@@ -276,9 +311,11 @@ final class UploadTask: ObservableObject {
             pendingBaselineReset = true
             let probe = await fs.probeUpload(remotePath: item.remotePath)
             // 续传：本会话失败留半截（interrupted），或上次取消/失败保留的远端 .part
-            //（远端有未完整 .part 且无正式文件 → 从上次断点接着传）。
-            let resuming = item.interrupted
-                || (probe.partSize > 0 && probe.partSize < item.localSize && !probe.finalExists)
+            //（远端有未完整 .part、无正式文件，且登记显示它正是这个本地文件传出来的 → 从上次断点接着传）。
+            let resuming = !item.restartFromZero && (item.interrupted
+                || (probe.partSize > 0 && probe.partSize < item.localSize && !probe.finalExists
+                    && UploadPartLedger.matches(hostId: hostId, remotePath: item.remotePath, local: item.url)))
+            item.restartFromZero = false
 
             if !resuming, probe.finalExists {
                 switch await resolveOverwrite(item: item, finalSize: probe.finalSize) {
@@ -304,12 +341,14 @@ final class UploadTask: ObservableObject {
             item.state = .uploading
             control.set(.run)
             control.setSent(startOffset)
+            UploadPartLedger.record(hostId: hostId, remotePath: item.remotePath, local: item.url)
 
             let outcome = await fs.upload(localURL: item.url, toRemote: item.remotePath,
                                           startOffset: startOffset, control: control)
 
             switch outcome {
             case .completed:
+                UploadPartLedger.clear(hostId: hostId, remotePath: item.remotePath)
                 item.sent = item.localSize
                 item.interrupted = false
                 item.state = (try? await fs.finalizeUpload(remotePath: item.remotePath).get()) != nil
@@ -486,7 +525,7 @@ struct UploadDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(theme.isDark ? 0.42 : 0.20).ignoresSafeArea()
+            ModalBackdrop(onTap: onHide)   // 点空白处收起弹窗，任务继续在后台跑
             card
         }
         .preferredColorScheme(theme.isDark ? .dark : .light)
@@ -536,7 +575,7 @@ struct UploadDialog: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .help(String(localized: "后台运行（在左下角继续显示进度）"))
+            .tooltip(String(localized: "后台运行（在左下角继续显示进度）"))
         }
     }
 
@@ -623,9 +662,22 @@ struct UploadDialog: View {
                 pill(String(localized: "保留残留（下次续传）"), fg: Pal.mauve, base: Pal.mauve.opacity(0.14), action: onClose)
                 pill(String(localized: "删除残留"), fg: Pal.subtext, base: Pal.fill(0.07)) { task.cleanupPartials(); onClose() }
             case .done, .cancelled:
+                if task.direction == .download && task.phase == .done {
+                    pill(String(localized: "在访达中显示"), fg: Pal.subtext, base: Pal.fill(0.07)) { revealDownloads() }
+                }
                 pill(task.phase == .done ? String(localized: "完成") : String(localized: "关闭"),
                      fg: Pal.mauve, base: Pal.mauve.opacity(0.14), action: onClose)
             }
+        }
+    }
+
+    /// 在访达里选中下载好的文件（都不在了就打开保存目录）。
+    private func revealDownloads() {
+        let files = task.items.map(\.url).filter { FileManager.default.fileExists(atPath: $0.path) }
+        if files.isEmpty {
+            NSWorkspace.shared.open(URL(fileURLWithPath: task.destDir))
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting(files)
         }
     }
 

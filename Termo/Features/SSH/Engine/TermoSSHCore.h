@@ -15,6 +15,20 @@ extern "C" {
 // libssh2 单会话非线程安全：上层须用一个串行队列序列化对同一句柄的所有调用。
 typedef struct TermoSSHSession TermoSSHSession;
 
+/// 连接选项：代理与算法偏好（主机「代理设置」「高级设置」）。传 NULL = 直连、全部默认协商。
+typedef struct {
+    int proxy_type;            // 0 直连 1 SOCKS5 2 SOCKS4a 3 HTTP CONNECT -1 代理地址无效（拒绝连接，不静默直连）
+    const char *proxy_host;
+    int proxy_port;
+    const char *proxy_user;    // 可空
+    const char *proxy_pass;
+    const char *ciphers;       // 逗号分隔的算法偏好，空 = 自动协商
+    const char *kex;
+    const char *hostkey_algos;
+    int connect_timeout_sec;   // ≤0 用默认值
+    int keepalive_sec;         // 心跳间隔（主机设置）：>0 时终端空闲按此发 SSH 心跳，TCP 层 3 个间隔无确认即判断线；0 = 系统默认
+} TermoSSHOptions;
+
 /// 连接 + 握手 + 认证，成功返回会话句柄，失败返回 NULL 并写 err。key_path 非空走公钥认证。
 /// real_known_hosts / session_known_hosts 非空时，在**握手后认证前**校验主机密钥：仅当明确与已知密钥
 /// **不匹配**（疑似 MITM）才拒绝（err 以 "HOSTKEY_MISMATCH" 开头）；未知主机/解析失败一律放行（保守，不误拒）。
@@ -22,28 +36,34 @@ TermoSSHSession *termo_ssh_open(const char *host, int port,
                                 const char *user, const char *password,
                                 const char *key_path, const char *key_passphrase,
                                 const char *real_known_hosts, const char *session_known_hosts,
+                                const TermoSSHOptions *opts,
                                 char *err, int errlen);
 
 // ── 主机密钥扫描（握手即可得，无需认证；替代 ssh-keyscan + ssh-keygen）──────────
 /// 仅 TCP+握手就能拿到主机公钥与指纹，并对照 known_hosts 判定。供首次连接验证弹窗。
 typedef struct {
-    int status;          // 0=已知匹配 1=未知 2=不匹配(疑似 MITM) -1=连接/握手失败
+    int status;          // 0=已知匹配 1=未知 2=不匹配(疑似 MITM) 3=只记录过该主机其它类型的密钥 -1=连接/握手失败
     char sha256[80];     // "SHA256:base64"
     char md5[64];        // "ab:cd:…"
     char line[1024];     // known_hosts 行（"<host|[host]:port> <keytype> <base64key>"），写入信任用
+    char known_algos[96];// status=3 时：known_hosts 里该主机已记录的密钥类型对应的算法名（可据此重新协商）
 } TermoHostKeyScan;
 
 /// 扫描 host:port 的主机密钥（不认证、不发密码）。结果写 *out。
 void termo_ssh_scan_hostkey(const char *host, int port,
                             const char *real_known_hosts, const char *session_known_hosts,
+                            const TermoSSHOptions *opts,
                             TermoHostKeyScan *out);
 
 // ── 分阶段测试连接（替代 spawn ssh -v；由 App 进程发起连接，触发本地网络权限）──────
 /// 逐阶段回调：stage 1=解析主机 2=建立 TCP 3=SSH 握手 4=身份验证 5=完成。
 /// ok=1 该阶段成功；ok=0 失败（message 写原因，随即停止）。在后台线程调用（阻塞）。
+/// 握手后对照 known_hosts（两份文件，可为 NULL 跳过）核对主机密钥，未确认的主机不发凭据。
 typedef void (*TermoSSHStageCallback)(void *userdata, int stage, int ok, const char *message);
 void termo_ssh_test(const char *host, int port, const char *user,
                     const char *password, const char *key_path, const char *key_passphrase,
+                    const char *real_known_hosts, const char *session_known_hosts,
+                    const TermoSSHOptions *opts,
                     TermoSSHStageCallback on_stage, void *userdata);
 
 /// 主机指纹（握手后即可取）。指向会话内部缓冲，勿 free。
@@ -97,7 +117,8 @@ typedef struct TermoSSHShell TermoSSHShell;
 typedef void (*TermoSSHClosedCallback)(void *userdata, int exit_code);
 
 /// 开 PTY(xterm-256color, cols×rows) + shell 并启动 pump 线程。成功返回句柄，失败 NULL 并写 err。
-TermoSSHShell *termo_ssh_shell_open(TermoSSHSession *s, int cols, int rows,
+/// lc_all 非空时先发送 LC_ALL 环境变量（best-effort，服务器未放行 AcceptEnv 时忽略）。
+TermoSSHShell *termo_ssh_shell_open(TermoSSHSession *s, int cols, int rows, const char *lc_all,
                                     TermoSSHDataCallback on_data,
                                     TermoSSHClosedCallback on_closed, void *userdata,
                                     char *err, int errlen);
@@ -134,10 +155,11 @@ void termo_ssh_forward_close(TermoSSHForward *f);
 
 /// SFTP 文件属性（仅本端用到的字段；has_* 标识该字段是否有效）。
 typedef struct {
-    int has_size, has_perm, has_mtime;
+    int has_size, has_perm, has_mtime, has_owner;
     unsigned long long size;
     unsigned int permissions;
     unsigned int mtime;
+    unsigned int uid, gid;
 } TermoSFTPAttrs;
 
 /// 在已认证会话上初始化 SFTP 子系统，返回 LIBSSH2_SFTP*（void*）或 NULL。
@@ -151,6 +173,8 @@ int   termo_sftp_last_errno(void *sftp);
 int   termo_sftp_stat(TermoSSHSession *s, void *sftp, const char *path, int follow, TermoSFTPAttrs *out);
 /// 设权限位（mode & 07777）。
 int   termo_sftp_setstat_perm(TermoSSHSession *s, void *sftp, const char *path, unsigned int mode);
+/// 设属主/属组（非 root 通常只能改成自己所属的组，失败按状态码返回）。
+int   termo_sftp_setstat_owner(TermoSSHSession *s, void *sftp, const char *path, unsigned int uid, unsigned int gid);
 int   termo_sftp_mkdir(TermoSSHSession *s, void *sftp, const char *path);
 int   termo_sftp_rmdir(TermoSSHSession *s, void *sftp, const char *path);
 int   termo_sftp_unlink(TermoSSHSession *s, void *sftp, const char *path);

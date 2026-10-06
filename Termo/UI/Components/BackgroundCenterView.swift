@@ -128,20 +128,11 @@ final class BackgroundProgressModel: ObservableObject {
     }
 }
 
-/// 端口转发运行中时叠在图标中心的绿色呼吸点：纯 SwiftUI 自反转动画（缩放 + 透明），无定时器；
-/// 视图随 hasRunningForward 出现/消失，转发停止即移除，空闲零开销。
+/// 端口转发运行中时叠在图标中心的绿色呼吸点（图层动画，见 [[PulseDot]]）；随 hasRunningForward 出现/消失。
 private struct ForwardBreathingDot: View {
-    @State private var on = false
     var body: some View {
-        Circle()
-            .fill(Color(hex: 0x32D74B))                  // 运行绿
-            .frame(width: 3.5, height: 3.5)              // dot 大小
-            .scaleEffect(on ? 1.0 : 0.85)
-            .opacity(on ? 1.0 : 0.6)
+        PulseDot(color: Color(hex: 0x32D74B), diameter: 3.5)   // 运行绿
             .allowsHitTesting(false)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { on = true }
-            }
     }
 }
 
@@ -191,7 +182,7 @@ struct BackgroundCenterButton: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .onHover { hover = $0 }
-        .help(String(localized: "后台任务"))
+        .tooltip(String(localized: "后台任务"))
         .popover(isPresented: $open, arrowEdge: .trailing) {
             BackgroundCenterPanel(model: model, dismiss: { open = false })
         }
@@ -230,7 +221,7 @@ struct BackgroundCenterPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             content
         }
         .frame(width: 360, height: 440)
@@ -263,7 +254,7 @@ struct BackgroundCenterPanel: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help(String(localized: "清理所有已完成 / 已取消的任务"))
+                .tooltip(String(localized: "清理所有已完成 / 已取消的任务"))
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
@@ -408,15 +399,17 @@ struct QuitConfirmDialog: View {
     private var hasTasks: Bool { model.hasRunningBackground }
     // 是否走「隐藏到菜单栏」语义：仅常规模式且已开启设置时；彻底退出模式恒为退出。
     private var hidesOnConfirm: Bool { !forceMode && settings.closeToTray }
+    // 真正退出时才提示未保存的文件；隐藏到菜单栏不会丢修改。
+    private var unsaved: [String] { hidesOnConfirm ? [] : model.unsavedEditorNames }
     private var confirmTitle: String {
+        if !unsaved.isEmpty && !hasTasks { return String(localized: "不保存并退出") }
         if forceMode { return hasTasks ? String(localized: "停止任务并退出") : String(localized: "退出") }
         return settings.closeToTray ? String(localized: "确定") : (hasTasks ? String(localized: "关闭任务并退出") : String(localized: "退出"))
     }
 
     var body: some View {
         ZStack {
-            Color.black.opacity(theme.isDark ? 0.42 : 0.20).ignoresSafeArea()
-                .onTapGesture(perform: onCancel)
+            ModalBackdrop(onTap: onCancel)
             card
         }
         .preferredColorScheme(theme.isDark ? .dark : .light)
@@ -431,6 +424,17 @@ struct QuitConfirmDialog: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 240)
+            }
+            if !unsaved.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "doc.badge.ellipsis").font(.system(size: 12)).foregroundStyle(Pal.yellow)
+                    Text("\(unsaved.count) 个文件有未保存的修改，退出后将丢失：\(unsaved.joined(separator: "、"))")
+                        .font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Pal.yellow.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
 
             // 勾选即开启设置里的「关闭窗口时隐藏到菜单栏」（实时持久化），后台任务继续运行。
@@ -450,15 +454,8 @@ struct QuitConfirmDialog: View {
                 SecondaryButton(title: "取消", action: onCancel)
                 Button {
                     if hidesOnConfirm { onHideToTray() } else { onConfirm() }
-                } label: {
-                    Text(confirmTitle)
-                        .font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
-                        .padding(.horizontal, 16).padding(.vertical, 7)
-                        .background(hidesOnConfirm ? Pal.mauve : Pal.red, in: RoundedRectangle(cornerRadius: 7))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                } label: { Text(confirmTitle) }
+                    .buttonStyle(ThemedButtonStyle(kind: hidesOnConfirm ? .primary : .destructive))
             }
         }
         .padding(18)
@@ -470,11 +467,12 @@ struct QuitConfirmDialog: View {
 
     @ViewBuilder private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: hasTasks ? "exclamationmark.triangle.fill" : "power")
+            let warn = hasTasks || !unsaved.isEmpty
+            Image(systemName: warn ? "exclamationmark.triangle.fill" : "power")
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(hasTasks ? Pal.yellow : Pal.mauve)
+                .foregroundStyle(warn ? Pal.yellow : Pal.mauve)
                 .frame(width: 30, height: 30)
-                .background((hasTasks ? Pal.yellow : Pal.mauve).opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                .background((warn ? Pal.yellow : Pal.mauve).opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 2) {
                 Text(hasTasks ? "仍有 \(model.activeBackgroundCount) 个后台任务在运行" : "退出 Termo？")
                     .font(.system(size: 14, weight: .semibold)).foregroundStyle(Pal.text)
@@ -718,5 +716,5 @@ private func iconButton(_ symbol: String, color: Color, help: String, action: @e
     }
     .buttonStyle(.plain)
     .pointerCursor()
-    .help(help)
+    .tooltip(help)
 }

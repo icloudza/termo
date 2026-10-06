@@ -3,6 +3,7 @@ import SwiftUI
 /// 「密钥」活动栏分区的侧栏面板：列出受管密钥，支持搜索、查看详情、复制公钥、删除。
 struct KeysPanel: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var search = AppModel.shared.sidebarState   // 搜索词变化时刷新列表
     @ObservedObject private var theme = ThemeManager.shared
 
     private var keys: [SSHKey] {
@@ -19,13 +20,7 @@ struct KeysPanel: View {
         if model.sshKeys.isEmpty {
             emptyState
         } else if keys.isEmpty {
-            VStack(spacing: 10) {
-                Spacer().frame(height: 40)
-                Image(systemName: "magnifyingglass").font(.system(size: 26)).foregroundStyle(Pal.overlay)
-                Text("无匹配密钥").font(.system(size: 13)).foregroundStyle(Pal.subtext)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
+            SearchNoMatch(text: String(localized: "无匹配密钥"))
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
@@ -45,20 +40,8 @@ struct KeysPanel: View {
             Text("还没有密钥").font(.system(size: 13)).foregroundStyle(Pal.subtext)
             Text("生成新密钥，或导入已有私钥").font(.system(size: 11)).foregroundStyle(Pal.overlay)
             HStack(spacing: 8) {
-                Button { model.showGenerateKey = true } label: {
-                    Text("生成").font(.system(size: 12)).foregroundStyle(Pal.mauve)
-                        .padding(.horizontal, 14).padding(.vertical, 7)
-                        .background(Pal.mauve.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).pointerCursor()
-                Button { model.presentImportKey() } label: {
-                    Text("导入").font(.system(size: 12)).foregroundStyle(Pal.subtext)
-                        .padding(.horizontal, 14).padding(.vertical, 7)
-                        .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 8))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).pointerCursor()
+                TintedButton(title: "生成") { model.showGenerateKey = true }
+                TintedButton(title: "导入", tint: Pal.subtext) { model.presentImportKey() }
             }
             Spacer()
         }
@@ -69,7 +52,7 @@ struct KeysPanel: View {
 
 private struct KeyRow: View {
     let key: SSHKey
-    @ObservedObject var model: AppModel
+    let model: AppModel          // 只在动作里用，不订阅：模型任何变化不再让每一行重算
     @ObservedObject private var theme = ThemeManager.shared
     @State private var hover = false
 
@@ -99,7 +82,7 @@ private struct KeyRow: View {
             Button("复制公钥") { model.copyPublicKey(key) }
             Button("查看详情") { model.detailKey = key }
             Divider()
-            Button("删除", role: .destructive) { model.deleteKey(key) }
+            Button("删除", role: .destructive) { model.requestDeleteKey(key) }
         }
     }
 

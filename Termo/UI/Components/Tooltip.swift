@@ -10,19 +10,52 @@ final class TooltipController {
     private var panel: NSPanel?
     private var hosting: NSHostingView<TooltipView>?
     private var showWork: DispatchWorkItem?
+    private var owner = 0            // 当前（待）显示的 tooltip 归属哪次悬停
+    private var lastHidden = Date.distantPast
+    private var monitor: Any?
 
-    /// 悬停进入：延迟后在当前光标处弹出。
-    func scheduleShow(_ text: String, delay: TimeInterval = 0.45) {
-        showWork?.cancel()
-        guard !text.isEmpty else { return }
-        let work = DispatchWorkItem { [weak self] in self?.present(text) }
-        showWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-    }
-
-    func hide() {
+    /// 悬停进入：延迟后在当前光标处弹出。返回令牌，离开/消失时凭它收起——
+    /// 从 A 移到 B 时 A 的「离开」晚到，不能把 B 刚排上的弹出取消掉。
+    @discardableResult
+    func scheduleShow(_ text: String, delay: TimeInterval = 0.45) -> Int {
+        installMonitorIfNeeded()
+        // 刚看过一个提示、紧接着移到相邻按钮：立即显示（同系统工具提示），不用每个都再等一遍。
+        let warm = panel?.isVisible == true || Date().timeIntervalSince(lastHidden) < 0.6
         showWork?.cancel()
         panel?.orderOut(nil)
+        owner &+= 1
+        guard !text.isEmpty else { return owner }
+        let work = DispatchWorkItem { [weak self] in self?.present(text) }
+        showWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (warm ? 0.05 : delay), execute: work)
+        return owner
+    }
+
+    func hide(_ token: Int) {
+        guard token == owner else { return }
+        showWork?.cancel()
+        if panel?.isVisible == true { lastHidden = Date() }
+        panel?.orderOut(nil)
+    }
+
+    /// 点击、按键、滚动时立即收起并取消待弹出的提示：否则点开弹窗后，提示会在 0.45s 后浮到新弹窗上面。
+    private func hideAll() {
+        guard showWork != nil || panel?.isVisible == true else { return }   // 滚动/打字时每个事件都会来，空闲时直接返回
+        showWork?.cancel()
+        showWork = nil
+        owner &+= 1
+        lastHidden = .distantPast
+        panel?.orderOut(nil)
+    }
+
+    private func installMonitorIfNeeded() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]
+        ) { event in
+            MainActor.assumeIsolated { TooltipController.shared.hideAll() }
+            return event
+        }
     }
 
     // 文本最大宽度（超出则换行）。
@@ -68,7 +101,7 @@ final class TooltipController {
         p.isOpaque = false
         p.hasShadow = false                  // 阴影由 SwiftUI 卡片画
         p.ignoresMouseEvents = true          // 永不抢事件/焦点
-        p.hidesOnDeactivate = false
+        p.hidesOnDeactivate = true           // 切到别的 App 时不残留在别人的窗口上
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         let h = NSHostingView(rootView: TooltipView(text: "", textWidth: 0))
         p.contentView = h
@@ -110,13 +143,18 @@ extension View {
 
 private struct TooltipModifier: ViewModifier {
     let text: String
+    @State private var token: Int?
+
     func body(content: Content) -> some View {
-        content.onHover { hovering in
-            if hovering && !text.isEmpty {
-                TooltipController.shared.scheduleShow(text)
-            } else {
-                TooltipController.shared.hide()
+        content
+            .onHover { hovering in
+                if hovering && !text.isEmpty {
+                    token = TooltipController.shared.scheduleShow(text)
+                } else if let token {
+                    TooltipController.shared.hide(token)
+                }
             }
-        }
+            // 延迟期间源视图消失（弹窗关闭、隐藏到菜单栏）收不到「离开」，不收起就会一直留在屏幕上。
+            .onDisappear { if let token { TooltipController.shared.hide(token) } }
     }
 }

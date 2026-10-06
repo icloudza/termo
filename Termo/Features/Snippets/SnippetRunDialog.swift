@@ -15,7 +15,7 @@ struct SnippetRunDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea().onTapGesture(perform: onCancel)
+            ModalBackdrop(onTap: onCancel)
             VStack(alignment: .leading, spacing: 14) {
                 Text(request.run ? "运行片段" : "插入片段")
                     .font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
@@ -26,10 +26,13 @@ struct SnippetRunDialog: View {
                     ForEach(request.variables, id: \.self) { v in
                         VStack(alignment: .leading, spacing: 5) {
                             Text(v).font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                            // 第一个变量自动聚焦；回车：都填好就提交
                             ThemedTextField(verbatim: v, text: Binding(
                                 get: { values[v] ?? "" },
                                 set: { values[v] = $0 }
-                            ))
+                            ), autofocus: v == request.variables.first, onSubmit: {
+                                if allFilled { onConfirm(values) }
+                            })
                         }
                     }
                 }
@@ -59,7 +62,7 @@ struct SnippetActionDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea().onTapGesture(perform: onCancel)
+            ModalBackdrop(onTap: onCancel)
             VStack(alignment: .leading, spacing: 14) {
                 Text("使用片段").font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
                 Text("「\(snippet.name)」要如何发送到当前终端？")

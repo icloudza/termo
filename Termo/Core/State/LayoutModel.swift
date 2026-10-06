@@ -12,6 +12,30 @@ import SwiftUI
 /// 这点开销。
 @MainActor
 final class LayoutModel: ObservableObject {
+    /// 展开时的最小宽度：侧栏内容按这个宽度排版，再窄就被裁掉（按钮、延迟数字切一半），所以不允许停在更窄处。
+    static let minExpanded: CGFloat = 200
+    private static let widthKey = "sidebarWidth"
+
     /// 侧栏宽度(像素)。0 视为折叠。
-    @Published var sidebarWidth: CGFloat = 224
+    @Published var sidebarWidth: CGFloat {
+        didSet {
+            guard sidebarWidth >= Self.minExpanded, sidebarWidth != expandedWidth else { return }
+            expandedWidth = sidebarWidth
+            UserDefaults.standard.set(Double(sidebarWidth), forKey: Self.widthKey)
+        }
+    }
+    /// 最近一次展开的宽度（持久化）：折叠后再展开、重启后都回到用户拖好的宽度。
+    private(set) var expandedWidth: CGFloat
+
+    init() {
+        let saved = UserDefaults.standard.double(forKey: Self.widthKey)
+        // 只有「文件」分区允许拖到 320 以上；启动总在「主机」分区，宽度按 320 封顶。
+        let w = saved >= Double(Self.minExpanded) ? min(CGFloat(saved), 320) : 224
+        expandedWidth = w
+        sidebarWidth = w
+    }
+
+    var isCollapsed: Bool { sidebarWidth < 10 }
+    func expand() { sidebarWidth = expandedWidth }
+    func toggle() { sidebarWidth = isCollapsed ? expandedWidth : 0 }
 }

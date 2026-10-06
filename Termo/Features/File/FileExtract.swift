@@ -171,7 +171,8 @@ struct ExtractDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(theme.isDark ? 0.42 : 0.20).ignoresSafeArea()
+            // 还没开始：点空白处 = 放弃（否则会在后台中心留一条永远「待解压」的任务）；运行中/已结束：收起到后台。
+            ModalBackdrop(onTap: task.phase == .ready ? onClose : onHide)
             card
         }
         .preferredColorScheme(theme.isDark ? .dark : .light)
@@ -215,7 +216,7 @@ struct ExtractDialog: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help(String(localized: "后台运行（在左下角继续显示进度）"))
+                .tooltip(String(localized: "后台运行（在左下角继续显示进度）"))
             }
         }
     }

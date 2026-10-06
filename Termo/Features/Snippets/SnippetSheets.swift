@@ -5,7 +5,7 @@ struct SnippetEditView: View {
     @ObservedObject var model: AppModel
     var editing: Snippet? = nil
     @ObservedObject private var theme = ThemeManager.shared
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modalDismiss) private var dismiss
 
     @State private var name = ""
     @State private var content = ""
@@ -29,7 +29,7 @@ struct SnippetEditView: View {
                 .buttonStyle(.plain).pointerCursor()
             }
             .padding(.horizontal, 18).padding(.vertical, 14)
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -53,16 +53,11 @@ struct SnippetEditView: View {
                 .padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             HStack {
                 if let ed = editing {
-                    Button { model.deleteSnippet(ed); dismiss() } label: {
-                        Text("删除").font(.system(size: 13, weight: .medium)).foregroundStyle(Pal.red)
-                            .padding(.horizontal, 16).padding(.vertical, 7)
-                            .background(Pal.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain).pointerCursor()
+                    Button { model.requestDeleteSnippet(ed) } label: { Text("删除") }   // 确认后由 deleteSnippet 关闭本弹窗
+                        .buttonStyle(ThemedButtonStyle(kind: .softDestructive))
                 }
                 Spacer()
                 SecondaryButton(title: "取消") { dismiss() }
@@ -98,7 +93,7 @@ struct SnippetEditView: View {
     }
 
     @ViewBuilder
-    private func labeled<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
+    private func labeled<Content: View>(_ label: LocalizedStringKey, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label).font(.system(size: 12)).foregroundStyle(Pal.subtext)
             content()

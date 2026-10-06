@@ -8,13 +8,14 @@ struct Workspace: View {
     // 非活动编辑器的冻结尺寸：仅首次布局时定一次。缩放时只有活动编辑器随实时尺寸重排，隐藏编辑器尺寸不变、不触发 TextKit 重排。
     @State private var frozenEditorSize: CGSize = .zero
 
+    private static let corner = RoundedRectangle(cornerRadius: 10)
+
     var body: some View {
-        ZStack {
-            Pal.base
-            content
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // 圆角底色用 background 画，不对整个工作区 clipShape：裁剪蒙版会让里面持续刷新的终端（Metal 图层）
+        // 每帧多一次离屏合成。终端四周有内边距、碰不到圆角，只有会贴边的标签内容才单独裁圆角。
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Pal.base, in: Self.corner)
     }
 
     @ViewBuilder
@@ -37,7 +38,7 @@ struct Workspace: View {
                 ZStack(alignment: .topLeading) {
                     ForEach(tabs.tabs.filter { $0.kind == .editor }, id: \.id) { tab in
                         let isActive = tab.id == tabs.activeTabId
-                        tabView(tab)
+                        tabView(tab, isActive: isActive)
                             .frame(width: isActive ? geo.size.width : max(1, frozenEditorSize.width),
                                    height: isActive ? geo.size.height : max(1, frozenEditorSize.height))
                             .opacity(isActive ? 1 : 0)
@@ -64,7 +65,7 @@ struct Workspace: View {
     }
 
     @ViewBuilder
-    private func tabView(_ tab: TabItem) -> some View {
+    private func tabView(_ tab: TabItem, isActive: Bool = true) -> some View {
         Group {
             switch tab.kind {
             case .terminal:
@@ -74,31 +75,36 @@ struct Workspace: View {
                                  canUpload: model.host(tab.hostId)?.ssh != nil)
                     .overlay {
                         if let conn = model.terminalConn(for: tab.id) {
-                            TerminalReconnectOverlay(conn: conn) { model.manualReconnectTerminal(tab.id) }
+                            TerminalReconnectOverlay(conn: conn, onReconnect: { model.manualReconnectTerminal(tab.id) },
+                                                     onClose: { model.closeTab(tab.id) })
                         }
                     }
                     .padding(10)
             case .overview:
                 if let host = model.host(tab.hostId) {
-                    HostOverview(host: host, model: model)
+                    HostOverview(host: host, model: model).clipShape(Self.corner)
                 }
             case .files:
                 if let host = model.host(tab.hostId) {
                     FileBrowser(state: model.browserState(for: tab.id, host: host),
                                 host: host, model: model,
                                 onOpenFile: { model.openFile($0, host: host) })
+                        .clipShape(Self.corner)
                 } else {
                     Text("无主机").font(.system(size: 13)).foregroundStyle(Pal.overlay)
                 }
             case .editor:
                 if let st = model.editorState(for: tab.id) {
-                    FileViewerView(state: st, model: model, tabId: tab.id)
+                    FileViewerView(state: st, model: model, tabId: tab.id, isActive: isActive)
+                        .clipShape(Self.corner)
                 } else {
                     Text("无法打开文件").font(.system(size: 13)).foregroundStyle(Pal.overlay)
                 }
             case .rdp:
                 if let host = model.host(tab.hostId) {
-                    RDPSessionView(session: model.rdpSession(for: tab.id, host: host))
+                    RDPSessionView(session: model.rdpSession(for: tab.id, host: host), isActive: isActive,
+                                   onClose: { model.closeTab(tab.id) })
+                        .clipShape(Self.corner)
                 } else {
                     Text("无主机").font(.system(size: 13)).foregroundStyle(Pal.overlay)
                 }

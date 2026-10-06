@@ -11,11 +11,16 @@ struct PendingHostKey: Identifiable {
     let respond: (HostKeyDecision) -> Void
 }
 
-// 在线探测的并发队列与上限（最多 6 个并发 TCP 探测，控制线程/CPU，主机多时不会线程爆炸）。
-// 置于文件作用域而非 @MainActor 的 AppModel 内：DispatchQueue/Semaphore 本身线程安全且非 actor 隔离，
-// 可在后台 Sendable 闭包里直接使用，不触发「主actor隔离静态属性不可在 Sendable 闭包引用」告警。
-private let reachQueue = DispatchQueue(label: "termo.reach", qos: .utility, attributes: .concurrent)
-private let reachLimit = DispatchSemaphore(value: 6)
+// 在线探测队列：最多 6 个并发 TCP 探测。用 OperationQueue 限并发而不是并发队列 + 信号量——
+// 后者每个排队任务都占着一条阻塞在 wait 上的 GCD 线程，离线主机一多就线程爆炸。
+// 置于文件作用域：OperationQueue 线程安全且非 actor 隔离，可在后台闭包里直接使用。
+private let reachQueue: OperationQueue = {
+    let q = OperationQueue()
+    q.name = "termo.reach"
+    q.maxConcurrentOperationCount = 6
+    q.qualityOfService = .utility
+    return q
+}()
 
 /// 承载「新窗口」打开的 RDP 远程桌面：独立 NSWindow + RDPSessionView，默认进入全屏。
 /// 强持有会话（经 contentView 的 rootView），由 AppModel 持有本 controller；窗口关闭即断开并回调释放。
@@ -73,13 +78,16 @@ final class RDPWindowController: NSWindowController, NSWindowDelegate {
 @MainActor
 final class AppModel: ObservableObject {
     @Published var section: Section = .hosts
-    @Published var query: String = ""
-    // 脱敏显示:开启后隐藏列表/概览里的 IP 与主机名(搜索框旁的眼睛按钮切换)。会话级,不持久化。
-    @Published var privacyMode: Bool = false
+    let sidebarState = SidebarState()   // 搜索词/脱敏开关（见 [[SidebarState]]），下面两个属性只是转发
+    var query: String { get { sidebarState.query } set { sidebarState.query = newValue } }
+    var privacyMode: Bool { get { sidebarState.privacyMode } set { sidebarState.privacyMode = newValue } }
 
     // 标签状态独立成 [[TabsModel]]：TabBar/Workspace 只观察它，不被本对象其它 @Published 牵动重算。
     // 下面两个转发计算属性让 AppModel 内部大量 tabs/activeTabId 引用零改动；视图层改为观察 tabsModel。
     let tabsModel = TabsModel()
+    // 弹窗/待确认等界面临时状态独立成 [[DialogState]]：开关弹窗只牵动弹窗层，不让侧栏、工作区等重算。
+    // 下方同名属性都只是转发，业务逻辑照旧读写 model.xxx。
+    let dialogs = DialogState()
     var tabs: [TabItem] {
         get { tabsModel.tabs }
         set { tabsModel.tabs = newValue }
@@ -90,60 +98,62 @@ final class AppModel: ObservableObject {
     }
     // 侧栏宽度同样移到独立的 [[LayoutModel]]：拖动改宽度时不再触发本对象的
     // objectWillChange，避免 TabBar/Workspace 等重控件每帧重算（见 LayoutModel 注释）。
+    // 由模型持有（而非 ContentView 的 @StateObject），主菜单的 ⌘B 才能在视图之外开合侧栏。
+    let layoutModel = LayoutModel()
     @Published var settingsTab: SettingsTab = .general
-    @Published var showSettings = false
-    @Published var showAddHost = false
-    @Published var editingHost: Host? = nil   // 非 nil 时以编辑模式打开主机表单
-    @Published var showAddRDPHost = false
-    @Published var editingRDPHost: Host? = nil   // 非 nil 时以编辑模式打开 RDP 主机表单
+    var showSettings: Bool { get { dialogs.showSettings } set { dialogs.showSettings = newValue } }
+    var showAddHost: Bool { get { dialogs.showAddHost } set { dialogs.showAddHost = newValue } }
+    var editingHost: Host? { get { dialogs.editingHost } set { dialogs.editingHost = newValue } }
+    var showAddRDPHost: Bool { get { dialogs.showAddRDPHost } set { dialogs.showAddRDPHost = newValue } }
+    var editingRDPHost: Host? { get { dialogs.editingRDPHost } set { dialogs.editingRDPHost = newValue } }
     // 密钥库（SSH Keys）
     @Published var sshKeys: [SSHKey] = []
-    @Published var showGenerateKey = false        // 显示「生成密钥」弹窗
-    @Published var detailKey: SSHKey? = nil        // 非 nil 显示密钥详情弹窗
-    @Published var keyOpError: String? = nil       // 密钥操作错误提示（生成/导入失败）
+    var showGenerateKey: Bool { get { dialogs.showGenerateKey } set { dialogs.showGenerateKey = newValue } }
+    var detailKey: SSHKey? { get { dialogs.detailKey } set { dialogs.detailKey = newValue } }
+    var keyOpError: String? { get { dialogs.keyOpError } set { dialogs.keyOpError = newValue } }
     // 代码片段（Snippets）
     @Published var snippets: [Snippet] = []
-    @Published var showCreateSnippet = false               // 显示「新建片段」弹窗
-    @Published var editingSnippet: Snippet? = nil          // 非 nil 显示片段编辑/详情弹窗
-    @Published var pendingSnippetRun: SnippetRunRequest? = nil  // 非 nil 显示变量填值弹窗
-    @Published var pendingSnippetAction: Snippet? = nil    // 非 nil 显示「插入/运行」选择弹窗
-    @Published var snippetNotice: String? = nil            // 片段操作提示（如无可用终端）
-    @Published var pendingAskAuth: Host? = nil     // 「每次询问」主机的密码弹窗（连接前）
+    var showCreateSnippet: Bool { get { dialogs.showCreateSnippet } set { dialogs.showCreateSnippet = newValue } }
+    var editingSnippet: Snippet? { get { dialogs.editingSnippet } set { dialogs.editingSnippet = newValue } }
+    var pendingSnippetRun: SnippetRunRequest? { get { dialogs.pendingSnippetRun } set { dialogs.pendingSnippetRun = newValue } }
+    var pendingSnippetAction: Snippet? { get { dialogs.pendingSnippetAction } set { dialogs.pendingSnippetAction = newValue } }
+    var snippetNotice: String? { get { dialogs.snippetNotice } set { dialogs.snippetNotice = newValue } }
+    var pendingAskAuth: Host? { get { dialogs.pendingAskAuth } set { dialogs.pendingAskAuth = newValue } }
     private var pendingAskContinuation: (() -> Void)?   // 密码确认后要执行的动作（终端/文件/转发等）
     private var connectingContinuation: (() -> Void)?   // 「正在连接」验证弹窗成功后要执行的原动作
     var connectingActionHint = String(localized: "正在进入终端…")          // 连接弹窗成功提示，按动作变化（ContentView 读取）
     private var askVerifiedHosts: Set<String> = []      // 「每次询问」本会话已成功验证过密码的主机（之后文件/转发直连，不再弹连接弹窗）
-    @Published var pendingHostKey: PendingHostKey? = nil   // 首次连接待验证的主机指纹
-    @Published var connectingHost: Host? = nil   // 正在连接的主机（展示连接进度弹窗）
-    @Published var connectingRDP: RDPSession? = nil   // 连接中的 RDP 会话：标签未开，弹窗覆盖当前视图，连接成功才开标签
-    @Published var pendingRDPOpen: RDPSession? = nil   // 连接成功、等待用户选择打开方式（内嵌/新窗口）的会话
+    var pendingHostKey: PendingHostKey? { get { dialogs.pendingHostKey } set { dialogs.pendingHostKey = newValue } }
+    var connectingHost: Host? { get { dialogs.connectingHost } set { dialogs.connectingHost = newValue } }
+    var connectingRDP: RDPSession? { get { dialogs.connectingRDP } set { dialogs.connectingRDP = newValue } }
+    var pendingRDPOpen: RDPSession? { get { dialogs.pendingRDPOpen } set { dialogs.pendingRDPOpen = newValue } }
     @Published private(set) var rdpHosts: Set<String> = []   // 已有 RDP 连接（内嵌标签或新窗口）的主机 id 集合，供概览页显示「运行中」
     private var rdpWindowControllers: [RDPWindowController] = []   // 持有「新窗口」打开的 RDP 窗口（连同其会话），关闭即移除
 
     // 文件栏右键操作弹窗（删除确认 / 重命名 / 权限 / 刷新冲突 / 信息提示）
-    @Published var pendingFileDelete: FileOpContext? = nil
-    @Published var pendingFileRename: FileOpContext? = nil
-    @Published var pendingFileChmod: ChmodContext? = nil
-    @Published var pendingFileCreate: CreateContext? = nil   // 新建文件/文件夹的名称输入弹窗
-    @Published var pendingFileRefresh: RefreshConflictContext? = nil
-    @Published var pendingFileInfo: FileInfoContext? = nil
+    var pendingFileDelete: FileOpContext? { get { dialogs.pendingFileDelete } set { dialogs.pendingFileDelete = newValue } }
+    var pendingFileRename: FileOpContext? { get { dialogs.pendingFileRename } set { dialogs.pendingFileRename = newValue } }
+    var pendingFileChmod: ChmodContext? { get { dialogs.pendingFileChmod } set { dialogs.pendingFileChmod = newValue } }
+    var pendingFileCreate: CreateContext? { get { dialogs.pendingFileCreate } set { dialogs.pendingFileCreate = newValue } }
+    var pendingFileRefresh: RefreshConflictContext? { get { dialogs.pendingFileRefresh } set { dialogs.pendingFileRefresh = newValue } }
+    var pendingFileInfo: FileInfoContext? { get { dialogs.pendingFileInfo } set { dialogs.pendingFileInfo = newValue } }
     // 上传/下载任务队列：可并发（上限 maxConcurrentTransfers），超出排队。含进行中/排队/已完成（完成后保留待用户清除）。
     @Published var transfers: [UploadTask] = []
     // 当前展开传输弹窗的任务 id（nil=无弹窗）；任务本身在后台继续跑，统一在左下角后台中控管理。
-    @Published var focusedTransferId: UUID? = nil
+    var focusedTransferId: UUID? { get { dialogs.focusedTransferId } set { dialogs.focusedTransferId = newValue } }
     // 「下载不弹窗」时的飞入动画事件（一次性，动画结束即清空，不常驻、不占用 CPU/内存）。
-    @Published var flyTransfer: FlyEvent? = nil
+    var flyTransfer: FlyEvent? { get { dialogs.flyTransfer } set { dialogs.flyTransfer = newValue } }
     // 左下角后台任务按钮的全局中心点（由按钮自身上报）；飞入动画的终点。
     var backgroundButtonCenter: CGPoint = .zero
     // 选中文件行的全局矩形（仅选中行上报，按远端路径索引）；飞入动画起点取此处，未命中则回退鼠标位置。
     var fileRowGlobalFrames: [String: CGRect] = [:]
     @Published var extractTask: ExtractTask? = nil // 当前解压任务（nil=无）
-    @Published var showExtractDialog = false       // 解压弹窗是否展开；隐藏后任务仍在后台跑，齿轮旁显示迷你状态
-    @Published var fileDeleteBusy = false          // 删除进行中：弹窗保留 + 删除键旁转圈，可中途取消
+    var showExtractDialog: Bool { get { dialogs.showExtractDialog } set { dialogs.showExtractDialog = newValue } }
+    var fileDeleteBusy: Bool { get { dialogs.fileDeleteBusy } set { dialogs.fileDeleteBusy = newValue } }
     private var deleteHandle: CommandHandle?        // 取消正在进行的删除（终止远端 rm）
-    @Published var pendingBatchDelete: BatchDeleteContext? = nil   // 批量删除确认弹窗
-    @Published var batchDeleteBusy = false         // 批量删除进行中：弹窗保留 + 转圈
-    @Published var pendingHostDelete: Host? = nil  // 删除主机确认弹窗
+    var pendingBatchDelete: BatchDeleteContext? { get { dialogs.pendingBatchDelete } set { dialogs.pendingBatchDelete = newValue } }
+    var batchDeleteBusy: Bool { get { dialogs.batchDeleteBusy } set { dialogs.batchDeleteBusy = newValue } }
+    var pendingHostDelete: Host? { get { dialogs.pendingHostDelete } set { dialogs.pendingHostDelete = newValue } }
 
     @Published var hosts: [Host] = []
     /// 主机会话历史（终端/上传/端口转发），用于「最近会话」。
@@ -151,11 +161,11 @@ final class AppModel: ObservableObject {
     /// 全部端口转发规则（持久化）；运行态由 [[ForwardManager]] 单独维护。
     @Published var forwards: [ForwardRule] = []
     /// 非 nil 时展示该主机的端口转发管理面板。
-    @Published var forwardPanelHost: Host? = nil
+    var forwardPanelHost: Host? { get { dialogs.forwardPanelHost } set { dialogs.forwardPanelHost = newValue } }
     /// 为真时展示「仍有后台任务」的自定义退出确认弹窗。
-    @Published var pendingQuitConfirm = false
+    var pendingQuitConfirm: Bool { get { dialogs.pendingQuitConfirm } set { dialogs.pendingQuitConfirm = newValue } }
     // 退出确认弹窗是否为「彻底退出」模式（托盘「退出 Termo」触发）：确认即停任务退出，不受「隐藏到菜单栏」影响。
-    @Published var pendingQuitForce = false
+    var pendingQuitForce: Bool { get { dialogs.pendingQuitForce } set { dialogs.pendingQuitForce = newValue } }
     /// 正在 SSH 探测系统信息的主机 id。
     @Published var probingHosts: Set<String> = []
 
@@ -292,18 +302,27 @@ final class AppModel: ObservableObject {
     }
 
     // ---------- 密钥库（SSH Keys）----------
-    /// 生成新密钥对：私钥进钥匙串，元数据落 JSON。
-    func generateKey(name: String, type: SSHKeyType, comment: String, passphrase: String) {
-        do {
-            let g = try KeyTools.generate(type: type, comment: comment, passphrase: passphrase)
-            let key = SSHKey(name: name.isEmpty ? String(localized: "未命名密钥") : name, type: type,
-                             publicKey: g.publicKey, fingerprint: g.fingerprint,
-                             comment: comment, hasPassphrase: !passphrase.isEmpty)
-            KeyKeychain.set(key.id, g.privateKey)
-            sshKeys.append(key)
-            KeyStore.save(sshKeys)
-        } catch {
-            keyOpError = (error as? KeyError)?.errorDescription ?? error.localizedDescription
+    /// 生成新密钥对：私钥进钥匙串，元数据落 JSON。在后台生成（RSA-4096 要几百毫秒到数秒，放主线程会卡住界面），
+    /// 完成后回调是否成功。
+    func generateKey(name: String, type: SSHKeyType, comment: String, passphrase: String,
+                     completion: @escaping (Bool) -> Void = { _ in }) {
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try KeyTools.generate(type: type, comment: comment, passphrase: passphrase) }
+            }.value
+            switch result {
+            case .success(let g):
+                let key = SSHKey(name: name.isEmpty ? String(localized: "未命名密钥") : name, type: type,
+                                 publicKey: g.publicKey, fingerprint: g.fingerprint,
+                                 comment: comment, hasPassphrase: !passphrase.isEmpty)
+                KeyKeychain.set(key.id, g.privateKey)
+                sshKeys.append(key)
+                KeyStore.save(sshKeys)
+                completion(true)
+            case .failure(let error):
+                keyOpError = (error as? KeyError)?.errorDescription ?? error.localizedDescription
+                completion(false)
+            }
         }
     }
 
@@ -338,6 +357,21 @@ final class AppModel: ObservableObject {
             keyOpError = (error as? KeyError)?.errorDescription ?? error.localizedDescription
             return nil
         }
+    }
+
+    var pendingKeyDelete: SSHKey? { get { dialogs.pendingKeyDelete } set { dialogs.pendingKeyDelete = newValue } }
+    var pendingSnippetDelete: Snippet? { get { dialogs.pendingSnippetDelete } set { dialogs.pendingSnippetDelete = newValue } }
+
+    /// 删除密钥会同时清掉钥匙串和落盘私钥，不可恢复：一律先确认。
+    func requestDeleteKey(_ key: SSHKey) { pendingKeyDelete = key }
+    func confirmKeyDelete() {
+        if let k = pendingKeyDelete { deleteKey(k) }
+        pendingKeyDelete = nil
+    }
+
+    /// 仍引用该密钥的 SSH 主机名（删除确认里提示，删掉后这些主机将无法用密钥登录）。
+    func hostsUsingKey(_ key: SSHKey) -> [String] {
+        hosts.filter { !$0.isRDP && $0.ssh?.keyId == key.id }.map(\.name)
     }
 
     func deleteKey(_ key: SSHKey) {
@@ -383,6 +417,12 @@ final class AppModel: ObservableObject {
         snippets[i].group = group
         snippets[i].updatedAt = Date()
         SnippetStore.save(snippets)
+    }
+
+    func requestDeleteSnippet(_ snippet: Snippet) { pendingSnippetDelete = snippet }
+    func confirmSnippetDelete() {
+        if let s = pendingSnippetDelete { deleteSnippet(s) }
+        pendingSnippetDelete = nil
     }
 
     func deleteSnippet(_ snippet: Snippet) {
@@ -503,13 +543,33 @@ final class AppModel: ObservableObject {
         let m = HostMonitor(ssh: host.ssh ?? SSHConnection())
         let hid = host.id
         m.onSample = { [weak self] metrics in self?.evaluateAlerts(hostId: hid, metrics) }
+        m.onHostKeyRejected = { [weak self] in self?.hostsNeedingKeyCheck.insert(hid) }
         hostMonitors[host.id] = m
         return m
+    }
+
+    private var visibleOverviews: Set<String> = []
+    private var occludedOverviews: Set<String> = []
+
+    /// 主窗口不可见时停掉正在显示的概览的监控，重新可见时恢复（只恢复当时正在显示的那些）。
+    func mainWindowVisibilityChanged(_ visible: Bool) {
+        if !visible {
+            guard occludedOverviews.isEmpty else { return }
+            occludedOverviews = visibleOverviews
+            for id in occludedOverviews { overviewDisappeared(id) }
+        } else {
+            let ids = occludedOverviews
+            occludedOverviews = []
+            for id in ids where tabs.contains(where: { $0.id == activeTabId && $0.kind == .overview && $0.hostId == id }) {
+                if let h = host(id) { overviewAppeared(h) }
+            }
+        }
     }
 
     /// 概览成为当前激活视图：防抖后再启动采集。在该时长内切走则启动被取消——飞速切换主机时不会把一堆监控点着，
     /// 任一时刻只有真正停留的那台在跑。
     func overviewAppeared(_ host: Host) {
+        visibleOverviews.insert(host.id)
         monitorStopWork[host.id]?.cancel()                 // 切回了：取消挂起的延迟停流，保留连接、不重连
         monitorStopWork.removeValue(forKey: host.id)
         // 「每次询问」未输密码前无凭证，跳过实时指标采集（UI 显示占位；后台 ssh 否则会反复认证失败/挂起）。
@@ -518,9 +578,13 @@ final class AppModel: ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.monitorStartWork.removeValue(forKey: host.id)
-            let m = self.hostMonitor(for: host)
-            m.updateConnection(self.host(host.id)?.ssh ?? host.ssh ?? SSHConnection())   // 用实时密码刷新（防缓存旧/错密码）
-            m.start()   // start 幂等（已在跑则跳过）
+            Task {
+                guard await self.hostKeyTrustedSilently(host) else { return }   // 未确认指纹不自动连
+                guard self.visibleOverviews.contains(host.id) else { return }    // 预检期间已切走
+                let m = self.hostMonitor(for: host)
+                m.updateConnection(self.host(host.id)?.ssh ?? host.ssh ?? SSHConnection())   // 用实时密码刷新（防缓存旧/错密码）
+                m.start()   // start 幂等（已在跑则跳过）
+            }
         }
         monitorStartWork[host.id] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.monitorDebounce, execute: work)
@@ -528,6 +592,7 @@ final class AppModel: ObservableObject {
 
     /// 概览不再是当前激活视图：取消待启动，并在宽限期后停流（快速切回则取消停止，避免反复连断）。
     func overviewDisappeared(_ hostId: String) {
+        visibleOverviews.remove(hostId)
         monitorStartWork[hostId]?.cancel()
         monitorStartWork.removeValue(forKey: hostId)
         monitorStopWork[hostId]?.cancel()
@@ -681,12 +746,19 @@ final class AppModel: ObservableObject {
                 self?.forwardPanelHost = self?.hosts.first(where: { $0.id == hostId })
             }
         } else {
-            forwardPanelHost = host
+            Task {
+                guard await verifyHostKey(host) else { return }   // 转发连接在后台发起，先确认指纹
+                forwardPanelHost = hosts.first(where: { $0.id == hostId })
+            }
         }
     }
 
-    /// 关闭所有打开的 sheet（设置/添加主机/端口转发等）。退出/隐藏前调用：
-    /// 退出确认弹窗是 ContentView 的 overlay，会被 sheet 盖在下面；sheet 还是窗口级模态、可能阻塞退出。
+    /// 非 nil 时在窗口层弹出「测试连接」（叠在新增/编辑主机弹窗之上）。
+    var testConnectionDraft: HostDraft? { get { dialogs.testConnectionDraft } set { dialogs.testConnectionDraft = newValue } }
+    /// 设置页「关于」里打开的隐私政策（卡片比设置页高，放在窗口层呈现）。
+    var showPrivacyPolicy: Bool { get { dialogs.showPrivacyPolicy } set { dialogs.showPrivacyPolicy = newValue } }
+
+    /// 关闭所有面板类弹窗（设置/添加主机/端口转发等）。退出/隐藏前调用：退出确认弹窗要显示在最上层。
     func dismissAllSheets() {
         showSettings = false
         showAddHost = false
@@ -694,6 +766,20 @@ final class AppModel: ObservableObject {
         showAddRDPHost = false
         editingRDPHost = nil
         forwardPanelHost = nil
+        showGenerateKey = false
+        detailKey = nil
+        showCreateSnippet = false
+        editingSnippet = nil
+        testConnectionDraft = nil
+        showPrivacyPolicy = false
+    }
+
+    /// 主窗口上是否有任何弹窗（见 DialogState）。
+    var isModalPresented: Bool { dialogs.isModalPresented }
+
+    /// 弹窗出现时把键盘焦点从标签内容（终端/编辑器）上收回，避免按键打进被遮住的终端。
+    func resignTabFocus() {
+        resignTabResponderIfNeeded(NSApp.keyWindow ?? NSApp.mainWindow)
     }
 
     /// 删除转发规则是否跳过确认：仅本次运行有效（内存态，不持久化）；勾选「不再询问」后本次运行内不再弹窗，
@@ -778,7 +864,13 @@ final class AppModel: ObservableObject {
         if let probedAt = host.specs?.probedAt, Date().timeIntervalSince(probedAt) < Self.specsTTL { return }
         probingHosts.insert(host.id)
         let id = host.id
+        Task {
+            guard await hostKeyTrustedSilently(host) else { probingHosts.remove(id); return }
+            runProbe(id: id, ssh: ssh)
+        }
+    }
 
+    private func runProbe(id: String, ssh: SSHConnection) {
         // [SSH 迁移] 进程内 libssh2（替换原来的 spawn /usr/bin/ssh）：经会话池借暖连接→exec 探测脚本→解析。
         // probeScript / applyProbe 完全不变，只换传输层。会话池保活连接，下次探测复用、不重复认证（替代 ControlMaster）。
         let conn = ssh
@@ -829,12 +921,16 @@ final class AppModel: ObservableObject {
     }
 
     // ---------- 在线状态检测 ----------
-    // 探测并发队列/上限定义在文件级（reachQueue / reachLimit），见文件顶部：
-    // 二者本身线程安全，置于文件作用域即非 actor 隔离，可在后台 Sendable 闭包里安全使用，且不触发并发告警。
+    // 探测并发队列 reachQueue 定义在文件级，见文件顶部。
     private var statusTimer: Timer?
+    private var reachInFlight: Set<String> = []                       // 正在探测的主机：同一台不叠加探测
+    private var pendingStatus: [String: (HostStatus, Int?)] = [:]     // 探测结果先攒着，一批写回
+    private var statusFlushScheduled = false
+    private var lastFullRefresh: Date = .distantPast
 
     /// 对所有主机做一次轻量 TCP 可达性检测（启动/刷新/定时调用）。
     func refreshAllStatuses() {
+        lastFullRefresh = Date()
         for host in hosts { checkReachability(host) }
     }
 
@@ -865,13 +961,36 @@ final class AppModel: ObservableObject {
         } else {
             return
         }
-        reachQueue.async { [weak self] in
-            reachLimit.wait()
-            defer { reachLimit.signal() }
+        guard reachInFlight.insert(id).inserted else { return }
+        reachQueue.addOperation { [weak self] in
             // RDP 端口无 SSH banner，只做纯 TCP 连通性；SSH 仍走带 1-RTT 测量的探测。
             let (ok, ms) = isRDP ? Self.tcpLatency(host: h, port: p) : Self.sshLatency(host: h, port: p)
-            Task { @MainActor in self?.setStatus(id, ok ? .online : .offline, latencyMs: ms) }
+            Task { @MainActor in self?.queueStatus(id, ok ? .online : .offline, latencyMs: ms) }
         }
+    }
+
+    /// 探测结果攒约 150ms 再一次性写回 hosts：每写一次 hosts 就是一次整棵视图树重算，N 台主机分 N 次写太浪费。
+    private func queueStatus(_ id: String, _ status: HostStatus, latencyMs: Int?) {
+        reachInFlight.remove(id)
+        pendingStatus[id] = (status, latencyMs)
+        guard !statusFlushScheduled else { return }
+        statusFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.flushStatuses() }
+    }
+
+    private func flushStatuses() {
+        statusFlushScheduled = false
+        guard !pendingStatus.isEmpty else { return }
+        var updated = hosts
+        var changed = false
+        for (id, (status, ms)) in pendingStatus {
+            guard let i = updated.firstIndex(where: { $0.id == id }) else { continue }
+            // 运行时状态，不持久化（下次启动重新检测）
+            if updated[i].status != status { updated[i].status = status; changed = true }
+            if updated[i].latencyMs != ms { updated[i].latencyMs = ms; changed = true }
+        }
+        pendingStatus.removeAll()
+        if changed { hosts = updated }
     }
 
     /// 纯 TCP 连通性探测（用于 RDP，没有可读 banner）：连上即在线，握手耗时作粗略延迟。
@@ -888,6 +1007,8 @@ final class AppModel: ObservableObject {
         let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
         if fd < 0 { return (false, nil) }
         defer { close(fd) }
+        var noSigPipe: Int32 = 1   // 对端已断时 send 返回 EPIPE，而不是用 SIGPIPE 杀掉整个进程
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         let flags = fcntl(fd, F_GETFL, 0)
         _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
         let t = DispatchTime.now()
@@ -912,7 +1033,8 @@ final class AppModel: ObservableObject {
         var smallSample: Int? = nil
         for _ in 0..<3 {
             let (ok, rtt) = probeOnce(host: host, port: port, timeoutSec: 5)
-            if ok { online = true }
+            guard ok else { break }    // TCP 都连不上：离线，不再重试（否则不可达主机一次要耗 3×5s）
+            online = true
             if let rtt {
                 if rtt >= 3 { return (true, rtt) }   // 干净样本，直接用
                 smallSample = rtt                    // <3ms：疑似粘包，先记下，继续采样
@@ -936,6 +1058,8 @@ final class AppModel: ObservableObject {
         let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
         if fd < 0 { return (false, nil) }
         defer { close(fd) }
+        var noSigPipe: Int32 = 1   // 对端已断时 send 返回 EPIPE，而不是用 SIGPIPE 杀掉整个进程
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         let flags = fcntl(fd, F_GETFL, 0)
         _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
 
@@ -969,13 +1093,6 @@ final class AppModel: ObservableObject {
         return poll(&pfd, 1, Int32(timeoutSec * 1000)) > 0
     }
 
-    private func setStatus(_ id: String, _ status: HostStatus, latencyMs: Int? = nil) {
-        guard let idx = hosts.firstIndex(where: { $0.id == id }) else { return }
-        // 运行时状态，不持久化（下次启动重新检测）
-        if hosts[idx].status != status { hosts[idx].status = status }
-        if hosts[idx].latencyMs != latencyMs { hosts[idx].latencyMs = latencyMs }
-    }
-
     private var terminals: [Int: LocalProcessTerminalView] = [:]
     private var termDrivers: [Int: SSHTerminalDriver] = [:]   // SSH 终端的 libssh2 驱动（按标签）
     private var rdpSessions: [Int: RDPSession] = [:]
@@ -1005,11 +1122,18 @@ final class AppModel: ObservableObject {
         themeCancellable = ThemeManager.shared.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async { self?.applyThemeToTerminals() }
         }
+        // objectWillChange 在值写入前触发，故异步到下一拍再读新值。任何设置变化都会走到这里，
+        // 终端配置只在它真正变化时才下发（改字体会让 SwiftTerm 整屏 reflow 并清掉选区）。
+        appliedTerminalConfig = TerminalConfig.current
         settingsCancellable = AppSettings.shared.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async {
-                self?.applyThemeToTerminals()
-                self?.applyTerminalSettings()
-                self?.pumpTransferQueue()   // 并发上限可能被调高，立即尝试开跑排队中的传输
+                guard let self else { return }
+                let cfg = TerminalConfig.current
+                if cfg != self.appliedTerminalConfig {
+                    self.appliedTerminalConfig = cfg
+                    self.applyTerminalSettings()
+                }
+                self.pumpTransferQueue()   // 并发上限可能被调高，立即尝试开跑排队中的传输
             }
         }
 
@@ -1029,7 +1153,12 @@ final class AppModel: ObservableObject {
         startStatusTimer()
         let nc = NotificationCenter.default
         nc.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.startStatusTimer(); self?.refreshAllStatuses() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.startStatusTimer()
+                // 频繁切回 App 时不重复全量探测（定时器本身 30s 一轮）
+                if Date().timeIntervalSince(self.lastFullRefresh) > 10 { self.refreshAllStatuses() }
+            }
         }
         nc.addObserver(forName: NSApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.stopStatusTimer() }
@@ -1080,7 +1209,9 @@ final class AppModel: ObservableObject {
         for (_, fm) in forwardManagers { fm.stopAll() }
         for t in transfers where t.phase == .running || t.phase == .queued || t.phase == .paused { t.cancel() }
         transfers.removeAll()
+        focusedTransferId = nil
         extractTask = nil
+        showExtractDialog = false
     }
 
     var activeHostId: String? {
@@ -1099,7 +1230,10 @@ final class AppModel: ObservableObject {
             return (fileTreeState(forTab: id, host: host), "tab-\(id)", host)
         case .editor:
             return (explorerTree(for: host), "host-\(host.id)", host)
-        case .overview, .rdp:
+        case .overview:
+            // 概览页也是「打开了这台主机」：显示它的资源管理器树，否则提示「打开一个主机」自相矛盾。
+            return host.isRDP || host.ssh == nil ? nil : (explorerTree(for: host), "host-\(host.id)", host)
+        case .rdp:
             return nil
         }
     }
@@ -1158,18 +1292,45 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// 应用光标样式与滚动缓冲到某终端。
+    /// 影响终端视图的设置快照：只有它变了才需要重新下发。
+    private struct TerminalConfig: Equatable {
+        var font: String
+        var fontSize: Int
+        var cursorStyle: String
+        var cursorBlink: Bool
+        var scrollback: Int
+        var gpu: Bool
+
+        @MainActor static var current: TerminalConfig {
+            let s = AppSettings.shared
+            return TerminalConfig(font: s.termFont, fontSize: s.termFontSize, cursorStyle: s.termCursorStyle,
+                                  cursorBlink: s.termCursorBlink, scrollback: s.termScrollback, gpu: s.termGPURendering)
+        }
+    }
+    private var appliedTerminalConfig: TerminalConfig?
+
+    /// 应用光标样式、滚动缓冲与渲染方式到某终端。
     private func applyTerminalConfig(to tv: LocalProcessTerminalView) {
         let term = tv.getTerminal()
         term.setCursorStyle(currentCursorStyle())
-        term.changeScrollback(AppSettings.shared.termScrollback)
+        if term.options.scrollback != AppSettings.shared.termScrollback {
+            term.changeScrollback(AppSettings.shared.termScrollback)
+        }
+        applyRenderer(to: tv)
     }
 
-    /// 设置变化时刷新所有终端的字体/光标/滚动缓冲。
+    /// GPU（Metal）渲染：设备或管线不可用时 setUseMetal 抛错，保持 CoreText 绘制。
+    private func applyRenderer(to tv: LocalProcessTerminalView) {
+        let want = AppSettings.shared.termGPURendering
+        guard tv.isUsingMetalRenderer != want else { return }
+        do { try tv.setUseMetal(want) } catch { try? tv.setUseMetal(false) }
+    }
+
+    /// 终端相关设置变化时刷新所有终端；字体未变不重设（重设字体会整屏 reflow 并清掉选区）。
     private func applyTerminalSettings() {
         let font = currentTerminalFont()
         for tv in terminals.values {
-            tv.font = font
+            if tv.font != font { tv.font = font }
             applyTerminalConfig(to: tv)
             tv.setNeedsDisplay(tv.bounds)
         }
@@ -1245,8 +1406,11 @@ final class AppModel: ObservableObject {
 
     /// 在给定终端视图上（重新）发起 SSH 连接：用 libssh2 驱动接管输入/输出/cwd/退出，注入 OSC 7 钩子与初始命令。
     /// 重连复用同一终端视图，滚动历史得以保留——先关旧驱动（停 pump + 释放通道与会话）再建新驱动。
-    private func startTerminalProcess(tv: LocalProcessTerminalView, ssh: SSHConnection, tabId: Int, hostId: String?) {
+    private func startTerminalProcess(tv: LocalProcessTerminalView, ssh: SSHConnection, tabId: Int, hostId: String?,
+                                      isReconnect: Bool = false) {
         termDrivers[tabId]?.onTerminated = nil      // 旧驱动退出回调失效，避免拆除时误触重连
+        termDrivers[tabId]?.onConnected = nil       // 被取代的旧尝试晚到的成功/失败不能改写新尝试的状态
+        termDrivers[tabId]?.onConnectFailed = nil
         termDrivers[tabId]?.close()
         let term = tv.getTerminal()
         let driver = SSHTerminalDriver(tv: tv, ssh: ssh)
@@ -1256,9 +1420,20 @@ final class AppModel: ObservableObject {
         driver.onTerminated = { [weak self] code in
             Task { @MainActor in self?.handleTerminalExit(tabId: tabId, hostId: hostId, exitCode: code) }
         }
+        driver.onConnected = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let c = self?.terminalConns[tabId] else { return }
+                c.phase = .live
+                c.attempt = 0
+                c.lastError = nil
+            }
+        }
+        driver.onConnectFailed = { [weak self] msg in
+            MainActor.assumeIsolated { self?.terminalConns[tabId]?.lastError = msg }
+        }
         tv.terminalDelegate = driver                // 接管输入/resize/cwd（替代 LocalProcessTerminalView 自身）
         termDrivers[tabId] = driver
-        driver.connect(cols: term.cols, rows: term.rows, initialLine: initialCommandLine(ssh))
+        driver.connect(cols: term.cols, rows: term.rows, initialLine: initialCommandLine(ssh), bufferEarlyInput: !isReconnect)
     }
 
     // ---------- 终端断线重连 ----------
@@ -1277,6 +1452,13 @@ final class AppModel: ObservableObject {
            hosts.contains(where: { $0.id == hostId }) {
             conn.dropGen += 1
             conn.phase = .dropped
+            // 密码错、主机指纹不符这类错误，重试多少次都一样：停下来把原因告诉用户，而不是无限转圈。
+            let lastError = conn.lastError
+            conn.lastError = nil                      // 只对应这一次断开，不留给以后的断开误判
+            if let e = lastError, Self.isPermanentConnectError(e) {
+                conn.status = .failed(Self.displayConnectError(e))
+                return
+            }
             scheduleTerminalReconnect(tabId: tabId, hostId: hostId)
             return
         }
@@ -1292,9 +1474,11 @@ final class AppModel: ObservableObject {
     /// 退避重连：离线时不试（等网络恢复回调触发），在线时按失败次数递增延迟（封顶 15 秒）后重连。
     /// 先撤销该标签已挂起的重连，确保同一时刻只排一个，避免反复掉线时叠加多次并发重连。
     private func scheduleTerminalReconnect(tabId: Int, hostId: String) {
-        guard NetworkMonitor.shared.isOnline, let conn = terminalConns[tabId] else { return }
+        guard let conn = terminalConns[tabId] else { return }
+        guard NetworkMonitor.shared.isOnline else { conn.status = .waitingNetwork; return }
         terminalReconnectWork[tabId]?.cancel()
         let delay = min(15.0, 2.0 * Double(conn.attempt + 1))
+        conn.status = .retrying(at: Date().addingTimeInterval(delay))
         let work = DispatchWorkItem { [weak self] in
             self?.terminalReconnectWork[tabId] = nil
             self?.reconnectTerminal(tabId: tabId, hostId: hostId)
@@ -1305,28 +1489,45 @@ final class AppModel: ObservableObject {
 
     /// 在原终端视图上重发 SSH 连接。连上判定：OSC 7 的 onCwd 最快置 live；无 OSC 7 的主机由看门狗兜底
     /// ——尝试期间未再掉线（dropGen 未变）即视为已连。
-    private func reconnectTerminal(tabId: Int, hostId: String) {
+    /// `force`：用户手动点「立即重连」时不看网络监测结果——无默认路由的内网、部分 VPN 下它会误报离线。
+    private func reconnectTerminal(tabId: Int, hostId: String, force: Bool = false) {
         terminalReconnectWork[tabId]?.cancel()   // 立即重连（手动/网络恢复）撤销可能挂起的退避重连
         terminalReconnectWork[tabId] = nil
         guard let conn = terminalConns[tabId], conn.phase == .dropped,
               tabs.contains(where: { $0.id == tabId }),
               let tv = terminals[tabId],
-              let host = hosts.first(where: { $0.id == hostId }), let ssh = host.ssh,
-              NetworkMonitor.shared.isOnline else { return }
+              let host = hosts.first(where: { $0.id == hostId }), let ssh = host.ssh else { return }
+        guard force || NetworkMonitor.shared.isOnline else { conn.status = .waitingNetwork; return }
         conn.attempt += 1
-        let gen = conn.dropGen
-        startTerminalProcess(tv: tv, ssh: ssh, tabId: tabId, hostId: hostId)   // .ask 本会话密码已在 host.ssh 内，重连复用
-        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
-            guard let self, let c = self.terminalConns[tabId],
-                  c.phase == .dropped, c.dropGen == gen else { return }
-            c.phase = .live
-            c.attempt = 0
-        }
+        conn.lastError = nil
+        conn.status = .connecting
+        // 连上由驱动的 onConnected 置 live；失败照常以 255 回到 handleTerminalExit 再排退避。
+        startTerminalProcess(tv: tv, ssh: ssh, tabId: tabId, hostId: hostId, isReconnect: true)   // .ask 本会话密码已在 host.ssh 内，重连复用
+    }
+
+    /// 重试也不会成功的连接错误：服务器明确拒绝了凭据、私钥文件问题、主机指纹、代理认证。
+    /// C 层对认证步骤的任何失败都写「认证失败 (rc)」，其中超时、收发失败、断开（-9/-7/-43/-13）只是网络问题，照常重试。
+    private static func isPermanentConnectError(_ msg: String) -> Bool {
+        if ["HOSTKEY_MISMATCH", "HOSTKEY_UNVERIFIED", "代理认证失败", "（407）", "代理要求用户名密码认证"]
+            .contains(where: { msg.contains($0) }) { return true }
+        guard let r = msg.range(of: #"认证失败 \((-?\d+)\)"#, options: .regularExpression) else { return false }
+        let code = Int(msg[r].filter { $0 == "-" || $0.isNumber }) ?? 0
+        return [-16, -18, -19].contains(code)   // FILE / AUTHENTICATION_FAILED / PUBLICKEY_UNVERIFIED
+    }
+
+    /// 去掉 C 层给程序判别用的标记前缀（如 HOSTKEY_MISMATCH），只留给人看的部分。
+    private static func displayConnectError(_ msg: String) -> String {
+        guard msg.hasPrefix("HOSTKEY_"), let sp = msg.firstIndex(of: " ") else { return msg }
+        return String(msg[msg.index(after: sp)...])
     }
 
     /// 网络恢复时立即重连所有断开的终端（清零退避）。先快照，避免重连过程中字典被改动。
     private func reconnectDroppedTerminals() {
-        let dropped = terminalConns.filter { $0.value.phase == .dropped }
+        let dropped = terminalConns.filter {
+            guard $0.value.phase == .dropped else { return false }
+            if case .failed = $0.value.status { return false }   // 认证等错误不因网络恢复而重试
+            return true
+        }
         for (tabId, conn) in dropped {
             conn.attempt = 0
             if let hostId = tabs.first(where: { $0.id == tabId })?.hostId {
@@ -1340,7 +1541,7 @@ final class AppModel: ObservableObject {
         guard let conn = terminalConns[tabId], conn.phase == .dropped,
               let hostId = tabs.first(where: { $0.id == tabId })?.hostId else { return }
         conn.attempt = 0
-        reconnectTerminal(tabId: tabId, hostId: hostId)
+        reconnectTerminal(tabId: tabId, hostId: hostId, force: true)
     }
 
     // ---------- 启动行为 ----------
@@ -1637,12 +1838,20 @@ final class AppModel: ObservableObject {
 
     /// 首次连接验证主机指纹：已知 → 直接放行；未知 → 弹窗让用户核对后决定。返回是否继续连接。
     func verifyHostKey(_ host: Host) async -> Bool {
-        guard let ssh = host.ssh, !ssh.host.isEmpty else { return true }
-        let h = ssh.host, p = ssh.port
-        let pf = await Task.detached { HostKeyVerifier.preflight(host: h, port: p) }.value
+        guard let ssh = host.ssh else { return true }
+        return await verifyHostKey(conn: ssh)
+    }
+
+    func verifyHostKey(conn: SSHConnection) async -> Bool {
+        guard !conn.host.isEmpty else { return true }
+        let h = conn.host, p = conn.port
+        let pf = await Task.detached { HostKeyVerifier.preflight(conn: conn) }.value
         switch pf {
-        case .known, .scanFailed:
-            return true   // 已知放行；扫描失败交给后续实际连接报错
+        case .known:
+            markHostKeyTrusted(h, p)
+            return true
+        case .scanFailed:
+            return true   // 扫描失败交给后续实际连接报错（未确认的主机在 termo_ssh_open 里会被拒绝认证）
         case .prompt(let info), .changed(let info):
             // 未知主机 / 已变更（info.changed=true 时弹窗醒目警示）→ 让用户核对指纹后决定。
             let decision: HostKeyDecision = await withCheckedContinuation { cont in
@@ -1651,9 +1860,43 @@ final class AppModel: ObservableObject {
             pendingHostKey = nil
             switch decision {
             case .cancel: return false
-            case .once: HostKeyVerifier.trust(info, persist: false); return true
-            case .save: HostKeyVerifier.trust(info, persist: true); return true
+            case .once: HostKeyVerifier.trust(info, persist: false)
+            case .save: HostKeyVerifier.trust(info, persist: true)
             }
+            markHostKeyTrusted(h, p)
+            return true
+        }
+    }
+
+    // ---------- 主机指纹（后台连接的前置条件）----------
+    // 监控 / 系统信息探测是打开概览就自动发起的后台连接，不能替用户信任未知主机：
+    // 先静默预检，已知才开始；未知则在概览里提示「验证主机指纹」，由用户走核对弹窗。
+    private var trustedEndpoints: Set<String> = []
+    /// 需要先核对指纹才能开始监控的主机 id（概览据此显示提示）。
+    @Published private(set) var hostsNeedingKeyCheck: Set<String> = []
+
+    private static func endpoint(_ h: String, _ p: Int) -> String { "\(h):\(p)" }
+
+    private func markHostKeyTrusted(_ h: String, _ p: Int) {
+        trustedEndpoints.insert(Self.endpoint(h, p))
+        let ids = hosts.filter { $0.ssh?.host == h && $0.ssh?.port == p }.map(\.id)
+        if !hostsNeedingKeyCheck.isDisjoint(with: ids) { hostsNeedingKeyCheck.subtract(ids) }
+    }
+
+    /// 静默预检主机指纹（不弹窗）：false 仅表示「明确需要用户核对」（并记入 hostsNeedingKeyCheck）。
+    /// 预检本身连不上（网络慢/暂时不可达）时返回 true 照常连接：未确认的主机在 termo_ssh_open 里会被拒绝认证，
+    /// 监控据此转为「需核对」；可达的已知主机则不会因为一次预检失败而一直卡在「正在建立监控」。
+    func hostKeyTrustedSilently(_ host: Host) async -> Bool {
+        guard let ssh = host.ssh, !ssh.host.isEmpty else { return false }
+        let h = ssh.host, p = ssh.port
+        if trustedEndpoints.contains(Self.endpoint(h, p)) { return true }
+        let pf = await Task.detached { HostKeyVerifier.preflight(conn: ssh) }.value
+        switch pf {
+        case .known: markHostKeyTrusted(h, p); return true
+        case .scanFailed: return true
+        case .prompt, .changed:
+            hostsNeedingKeyCheck.insert(host.id)
+            return false
         }
     }
 
@@ -1734,6 +1977,11 @@ final class AppModel: ObservableObject {
 
     func editorState(for tabId: Int) -> EditorState? { editorStates[tabId] }
 
+    /// 有未保存修改的编辑器文件名（退出确认里列出，避免一键退出丢掉修改）。
+    var unsavedEditorNames: [String] {
+        tabs.compactMap { tab in editorStates[tab.id].flatMap { $0.isDirty ? $0.file.name : nil } }
+    }
+
     /// 打开一个远程文件到编辑器/预览标签（同主机同路径已开则切过去）。
     func openFile(_ file: RemoteFile, host: Host) {
         guard !file.isDir else { return }
@@ -1778,6 +2026,15 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 编辑器工具栏「重新加载」：有未保存修改先确认，与文件栏右键刷新一致。
+    func requestEditorReload(_ ed: EditorState) {
+        if ed.isDirty {
+            pendingFileRefresh = RefreshConflictContext(editorState: ed, fileName: ed.file.name)
+        } else {
+            ed.reload()
+        }
+    }
+
     func confirmFileRefreshReload() {
         let ed = pendingFileRefresh?.editorState
         pendingFileRefresh = nil
@@ -1815,14 +2072,16 @@ final class AppModel: ObservableObject {
         task.onFinished = { [weak self] in self?.transferDidFinish() }
         task.onPauseStateChanged = { [weak self] in self?.pumpTransferQueue() }
         // 逐文件互斥锁：仅当两任务真要写同一目标文件时才串行，按字节冲突而非整任务冲突，杜绝空占名额。
+        let owner = task.id
         task.acquirePathLock = { [weak self] key in
-            guard let self else { return }
-            await self.acquireTransferPath(key)
+            guard let self else { return false }
+            return await self.acquireTransferPath(key, owner: owner)
         }
         task.releasePathLock = { [weak self] key in
             guard let self else { return }
             self.releaseTransferPath(key)
         }
+        task.cancelPathWait = { [weak self] in self?.cancelTransferPathWait(owner: owner) }
         transfers.append(task)
         // 下载且设置为「不弹窗」时：不展开弹窗，改放飞入左下角的弧线动画；其余情况照常自动展开。
         if task.direction == .download && !AppSettings.shared.showDownloadDialog {
@@ -1861,22 +2120,35 @@ final class AppModel: ObservableObject {
     // 旧实现按「整任务文件集」在调度期去冲突，会让与某长任务有任一同名文件的排队任务整段被跳过、白占空名额。
     // 改为运行期按单个目标文件加锁：所有排队任务照常并发开跑，只有真正同时写同一文件时才让后者短暂等待。
     private var lockedTransferPaths: Set<String> = []
-    private var transferPathWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var transferPathWaiters: [String: [(owner: UUID, cont: CheckedContinuation<Bool, Never>)]] = [:]
 
     /// 获取某目标文件的写锁；已被占用则挂起，待持有者释放后重新竞争（释放会唤醒全部等待者，由其各自重判）。
-    func acquireTransferPath(_ key: String) async {
+    /// 返回 false = 等待期间任务被取消，未取得锁。
+    func acquireTransferPath(_ key: String, owner: UUID) async -> Bool {
         while lockedTransferPaths.contains(key) {
-            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                transferPathWaiters[key, default: []].append(c)
+            let woke = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+                transferPathWaiters[key, default: []].append((owner, c))
             }
+            if !woke { return false }
         }
         lockedTransferPaths.insert(key)
+        return true
     }
     /// 释放写锁并唤醒所有等待该文件的任务（其中一个会抢到，其余重新挂起）。
     func releaseTransferPath(_ key: String) {
         lockedTransferPaths.remove(key)
         let waiters = transferPathWaiters.removeValue(forKey: key) ?? []
-        for w in waiters { w.resume() }
+        for w in waiters { w.cont.resume(returning: true) }
+    }
+    /// 取消某任务的锁等待：否则它挂在 continuation 上，取消无效、一直占着并发名额（暂停中的任务持锁时整个队列卡住）。
+    func cancelTransferPathWait(owner: UUID) {
+        for (key, list) in transferPathWaiters {
+            let mine = list.filter { $0.owner == owner }
+            guard !mine.isEmpty else { continue }
+            let rest = list.filter { $0.owner != owner }
+            transferPathWaiters[key] = rest.isEmpty ? nil : rest
+            for w in mine { w.cont.resume(returning: false) }
+        }
     }
 
     /// 暂停一个传输：释放/保留名额由设置 pausedReleasesSlot 决定，名额变化经 onPauseStateChanged 触发 pump。
@@ -1952,7 +2224,15 @@ final class AppModel: ObservableObject {
             let cwd: String
             if let known = tabCwd[tabId] { cwd = known } else { cwd = await RemoteFS(ssh).home() }
             startUpload(files: files, destDir: cwd, host: host)
+            noteSkippedFolders(urls.count - files.count)
         }
+    }
+
+    /// 文件和文件夹一起拖入时文件夹被跳过：要告诉用户，不能悄悄少传。
+    private func noteSkippedFolders(_ n: Int) {
+        guard n > 0 else { return }
+        pendingFileInfo = FileInfoContext(title: String(localized: "已跳过文件夹"),
+                                          message: String(localized: "暂不支持上传文件夹，已跳过 \(n) 个文件夹，其余文件已开始上传。"))
     }
 
     /// 拖拽上传：把外部拖入的文件上传到指定远端目录（SFTP 浏览器拖放用）。只传文件，跳过文件夹。
@@ -1964,13 +2244,14 @@ final class AppModel: ObservableObject {
             return
         }
         startUpload(files: files, destDir: dir, host: host)
+        noteSkippedFolders(urls.count - files.count)
     }
 
     /// 启动上传任务（核心）：入队后按并发上限自动开始；落地后局部刷新相关文件树缓存。
     private func startUpload(files: [URL], destDir: String, host: Host) {
         guard !files.isEmpty else { return }
         let task = UploadTask(files: files, destDir: destDir,
-                              fs: RemoteFS(host.ssh ?? SSHConnection())) { [weak self] in
+                              fs: RemoteFS(host.ssh ?? SSHConnection(), dedicated: true)) { [weak self] in
             self?.refreshTrees(host: host, dir: destDir)
         }
         task.hostId = host.id
@@ -2170,7 +2451,7 @@ final class AppModel: ObservableObject {
         // 完成后不再自动弹访达窗口（打断用户）；完成提醒由系统通知给出。
         // 本地保存名去重：不覆盖已有文件、不与进行中下载撞名 → 不同主机/来源的同名文件可并发各自落地。
         let localURLs = resolveDownloadURLs(downloadable, dir: dir)
-        let task = UploadTask(download: downloadable, toLocalURLs: localURLs, inDir: dir, fs: RemoteFS(ssh)) { }
+        let task = UploadTask(download: downloadable, toLocalURLs: localURLs, inDir: dir, fs: RemoteFS(ssh, dedicated: true)) { }
         task.hostId = host.id
         task.hostName = host.name
         task.onTerminated = releaseScope
@@ -2221,7 +2502,7 @@ final class AppModel: ObservableObject {
         let parent = (file.path as NSString).deletingLastPathComponent
         let dir = parent.isEmpty ? "/" : parent
         let task = ExtractTask(archive: file, kind: kind, parentDir: dir,
-                               fs: RemoteFS(ssh)) { [weak self] in
+                               fs: RemoteFS(ssh, dedicated: true)) { [weak self] in
             self?.refreshTrees(host: host, dir: dir)
         }
         task.hostId = host.id
@@ -2237,6 +2518,37 @@ final class AppModel: ObservableObject {
            let path = tab.filePath, let host = host(tab.hostId) {
             revealInExplorer(path, host: host)
         }
+    }
+
+    // ---------- 全局快捷键（主菜单）----------
+    /// ⌘T：有本地终端时开本地终端；MAS 沙盒下为当前标签所属的 SSH 主机新开一个终端。
+    func newTerminalShortcut() {
+        if AppEnv.localTerminalEnabled { openLocalTerminal(); return }
+        if let host = host(activeHostId), host.ssh != nil { openHostTerminal(host, forceNew: true) }
+    }
+
+    /// ⌘W：关闭当前标签（走常规关闭确认）；没有标签返回 false，由调用方关窗口。
+    func closeActiveTabShortcut() -> Bool {
+        guard let id = activeTabId else { return false }
+        closeTab(id)
+        return true
+    }
+
+    /// ⌃Tab / ⌃⇧Tab：循环切换标签。
+    func selectAdjacentTab(_ offset: Int) {
+        guard tabs.count > 1, let id = activeTabId, let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        selectTab(tabs[(i + offset + tabs.count) % tabs.count].id)
+    }
+
+    /// ⌘B：开合侧栏（瞬间开合，不加动画——宽度动画会逐帧重排工作区）。
+    func toggleSidebar() {
+        layoutModel.toggle()
+    }
+
+    /// ⌘+ / ⌘-：调整终端字号（与设置页步进器同一范围）。
+    func adjustTerminalFontSize(_ delta: Int) {
+        let s = AppSettings.shared
+        s.termFontSize = min(24, max(10, s.termFontSize + delta))
     }
 
     /// Workspace 用 ZStack 全量保活后，切 tab 不再重建视图，makeNSView 也不再自动抢焦点。
@@ -2273,9 +2585,9 @@ final class AppModel: ObservableObject {
         if inTerminal || inEditor { window.makeFirstResponder(nil) }
     }
 
-    @Published var pendingCloseTabId: Int? = nil
-    @Published var pendingTabRename: TabRenameContext? = nil      // 重命名标签输入弹窗
-    @Published var pendingMultiClose: MultiCloseContext? = nil    // 批量关闭聚合确认弹窗
+    var pendingCloseTabId: Int? { get { dialogs.pendingCloseTabId } set { dialogs.pendingCloseTabId = newValue } }
+    var pendingTabRename: TabRenameContext? { get { dialogs.pendingTabRename } set { dialogs.pendingTabRename = newValue } }
+    var pendingMultiClose: MultiCloseContext? { get { dialogs.pendingMultiClose } set { dialogs.pendingMultiClose = newValue } }
 
     func closeTab(_ id: Int) {
         if shouldConfirmClose(id) {
@@ -2327,6 +2639,10 @@ final class AppModel: ObservableObject {
     /// 关闭其它标签 / 关闭全部：逐个走 performCloseTab 完成资源拆除；有需确认的（运行中会话/未保存）先聚合确认一次。
     func closeOtherTabs(keep id: Int) { requestMultiClose(tabs.filter { $0.id != id }.map(\.id)) }
     func closeAllTabs() { requestMultiClose(tabs.map(\.id)) }
+    func closeTabsToRight(of id: Int) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        requestMultiClose(tabs[(i + 1)...].map(\.id))
+    }
 
     private func requestMultiClose(_ ids: [Int]) {
         guard !ids.isEmpty else { return }
@@ -2374,7 +2690,12 @@ final class AppModel: ObservableObject {
         if activeTabId == id {
             activeTabId = tabs.isEmpty ? nil : tabs[min(idx, tabs.count - 1)].id
         }
-        if let hid = closedHostId { stopMonitorIfUnused(hid) }   // 主机最后一个标签关闭即停监控
+        if let hid = closedHostId {
+            stopMonitorIfUnused(hid)   // 主机最后一个标签关闭即停监控
+            // 主机已无任何标签：释放其资源管理器树（连同它占用的共享 SFTP 连接引用）。以前永不释放，
+            // 访问过的主机越多，每次切换网络要重连重载的树就越多。
+            if !tabs.contains(where: { $0.hostId == hid }) { hostExplorerTrees.removeValue(forKey: hid) }
+        }
     }
 
     /// 该终端是否有正在运行的活跃进程，需要确认后再关闭。

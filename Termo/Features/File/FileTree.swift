@@ -161,19 +161,30 @@ final class FileTreeState: ObservableObject, FileOpsTarget {
         return walk(roots)
     }
 
+    /// 用新列表替换某层节点，但按路径复用已有节点：已展开的子目录及其已加载内容原样保留，
+    /// 否则上传/新建/刷新后该目录下展开的子目录会全部收起（刷新 / 时整棵树收起）。
+    private static func merge(_ files: [RemoteFile], into old: [FileTreeNode]?) -> [FileTreeNode] {
+        var byPath: [String: FileTreeNode] = [:]
+        for n in old ?? [] { byPath[n.file.path] = n }
+        return files.map { f in
+            if let n = byPath[f.path], n.file.isDir == f.isDir { n.file = f; return n }
+            return FileTreeNode(file: f)
+        }
+    }
+
     /// 重新拉取某目录（保持展开）。失败时用 exists 区分「远端已删除」与瞬时失败。
     @discardableResult
     func refreshDir(_ path: String) async -> RefreshOutcome {
         if path == "/" || path.isEmpty {
             let r = await fs.list("/")
-            if case .success(let files) = r { roots = files.map { FileTreeNode(file: $0) }; rebuild(); return .ok }
+            if case .success(let files) = r { roots = Self.merge(files, into: roots); rebuild(); return .ok }
             return await fs.exists("/") ? .failed(String(localized: "无法刷新")) : .gone
         }
         guard let node = node(at: path), node.file.isDir else { return .failed(String(localized: "不是目录")) }
         let r = await fs.list(path)
         switch r {
         case .success(let files):
-            node.children = files.map { FileTreeNode(file: $0) }
+            node.children = Self.merge(files, into: node.children)
             node.isExpanded = true
             rebuild()
             return .ok

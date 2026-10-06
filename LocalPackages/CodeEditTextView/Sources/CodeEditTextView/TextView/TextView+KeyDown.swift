@@ -26,7 +26,10 @@ extension TextView {
     }
 
     override public func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard isEditable else {
+        // Termo: key equivalents are offered to every view in the window, including editors kept alive
+        // in hidden tabs. Only the focused editor may consume PageUp/PageDown, otherwise a hidden editor
+        // swallows them while the user is in the terminal.
+        guard isEditable, window?.firstResponder === self else {
             return super.performKeyEquivalent(with: event)
         }
 

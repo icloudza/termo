@@ -54,7 +54,8 @@ final class SafeHostingView<Content: View>: NSHostingView<Content> {
 }
 
 struct HScrollRep<Content: View>: NSViewRepresentable {
-    @ObservedObject var metrics: ScrollMetrics
+    // 不订阅：滚动指标每帧都变，订阅会让每帧重设 rootView 并重新测量整条标签内容。只写不读。
+    let metrics: ScrollMetrics
     var newKey: Int
     var activeKey: Int
     var activeMinX: CGFloat   // 活动标签在内容坐标系的左右缘（真实测量，兼容不等宽标签）
@@ -212,9 +213,9 @@ struct TabStrip<Content: View>: View {
     var activeMinX: CGFloat
     var activeMaxX: CGFloat
     @ViewBuilder var content: Content
-    @StateObject private var metrics = ScrollMetrics()
+    // @State 持有引用而不订阅：只有滚动条（TabScrollbar）观察它，滚动时不牵动整条标签栏重算。
+    @State private var metrics = ScrollMetrics()
     @State private var hovering = false
-    @State private var dragStart: CGFloat?
 
     init(newKey: Int, activeKey: Int, activeMinX: CGFloat = 0, activeMaxX: CGFloat = 0, @ViewBuilder content: () -> Content) {
         self.newKey = newKey
@@ -228,14 +229,20 @@ struct TabStrip<Content: View>: View {
         VStack(spacing: 3) {
             HScrollRep(metrics: metrics, newKey: newKey, activeKey: activeKey, activeMinX: activeMinX, activeMaxX: activeMaxX) { content }
                 .frame(height: 34)
-            scrollbar
+            TabScrollbar(metrics: metrics, hovering: hovering)
                 .frame(height: 5)
         }
         .onHover { hovering = $0 }
     }
+}
 
-    @ViewBuilder
-    private var scrollbar: some View {
+/// 标签栏底部的细滚动条：唯一订阅滚动指标的视图。
+private struct TabScrollbar: View {
+    @ObservedObject var metrics: ScrollMetrics
+    let hovering: Bool               // 悬停整条标签栏时滚动条提亮
+    @State private var dragStart: CGFloat?
+
+    var body: some View {
         GeometryReader { g in
             if metrics.contentW > metrics.visibleW + 1, g.size.width > 0 {
                 let track = g.size.width

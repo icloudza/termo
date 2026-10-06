@@ -103,23 +103,15 @@ struct SSHConnection: Codable, Equatable {
     var initialCommand: String = ""
     var defaultPath: String = "~"
 
-    var usesPassword: Bool {
-        authMethod == .password && !password.isEmpty
-    }
-
-    /// 是否需要 askpass 自动喂密码：密码登录喂密码、密钥登录喂私钥 passphrase、每次询问喂弹窗输入的一次性密码。
-    var needsAskpass: Bool {
-        !password.isEmpty && (authMethod == .password || authMethod == .key || authMethod == .ask)
-    }
-
     /// 当前是否已具备自动连接所需凭证：「每次询问」需已输入本会话密码；其它方式恒为 true。
     /// 用于门控后台监控/规格探测——无凭证时跳过（UI 显示占位、不反复弹密码框），有凭证后正常采集。
     var hasUsableCredentials: Bool {
         authMethod == .ask ? !password.isEmpty : true
     }
 
-    /// 把「终端显示编码」映射为远端 locale，经 SetEnv 转发（best-effort，依赖服务器有该 locale）。
-    private var remoteLocale: String? {
+    /// 把「终端显示编码」映射为远端 locale，开 shell 时作为 LC_ALL 环境变量发送
+    /// （best-effort：依赖服务器 AcceptEnv LC_* 且有该 locale）。
+    var remoteLocale: String? {
         switch encoding {
         case "", "UTF-8": return encoding == "UTF-8" ? "en_US.UTF-8" : nil
         case "GBK": return "zh_CN.GBK"
@@ -135,65 +127,6 @@ struct SSHConnection: Codable, Equatable {
         case "Windows-1251": return "ru_RU.CP1251"
         case "Windows-1252": return "en_US.CP1252"
         case "ASCII": return "C"
-        default: return nil
-        }
-    }
-
-    /// 构建传给 ssh 的参数（不含 ssh 本身）。verbose 用于测试连接以解析流程。
-    func sshArguments(verbose: Bool = false, multiplex: Bool = false, ephemeralKnownHosts: Bool = false) -> [String] {
-        var a: [String] = []
-        if verbose { a.append("-v") }
-        // 连接复用：文件浏览等高频操作共享一条主连接，认证只触发一次（%C 是定长哈希，避免 socket 路径过长）
-        if multiplex {
-            a += ["-o", "ControlMaster=auto",
-                  "-o", "ControlPath=\(NSHomeDirectory())/.termo/cm/%C",
-                  "-o", "ControlPersist=120"]
-        }
-        // 主机密钥校验：未知主机由 App 的指纹验证弹窗预先写入 known_hosts，这里用 yes 严格校验。
-        // 测试连接用临时 known_hosts（accept-new + /dev/null），不静默写入用户的 known_hosts。
-        if ephemeralKnownHosts {
-            a += ["-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=/dev/null"]
-        } else {
-            a += ["-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=\(HostKeyVerifier.userKnownHostsArg())"]
-        }
-        // 每次询问：密码经 askpass 一次性喂入，故只走 password 认证、限 1 次。
-        a += ["-o", "NumberOfPasswordPrompts=1"]
-        if authMethod == .ask { a += ["-o", "PreferredAuthentications=password"] }
-        a += ["-p", String(port)]
-        if timeoutMs > 0 { a += ["-o", "ConnectTimeout=\(max(1, timeoutMs / 1000))"] }
-        if heartbeatMs > 0 { a += ["-o", "ServerAliveInterval=\(max(1, heartbeatMs / 1000))"] }
-        // 密钥登录：指定私钥文件，只用它（不尝试 agent/默认 key）。
-        // 关联了密钥库的密钥（keyId）时，把库私钥落成 0600 工作文件再用，优先于手填的 keyPath。
-        if authMethod == .key {
-            let path = keyId.isEmpty ? keyPath : (KeyMaterializer.path(forKeyId: keyId) ?? keyPath)
-            if !path.isEmpty { a += ["-i", path, "-o", "IdentitiesOnly=yes"] }
-        }
-        // 终端显示编码：把对应 locale 转发给远端（依赖服务器 AcceptEnv LC_*）
-        if let loc = remoteLocale { a += ["-o", "SetEnv=LC_ALL=\(loc)"] }
-        if !ciphers.isEmpty { a += ["-c", ciphers] }
-        if !kexAlgos.isEmpty { a += ["-o", "KexAlgorithms=\(kexAlgos)"] }
-        if !hostKeyAlgos.isEmpty { a += ["-o", "HostKeyAlgorithms=\(hostKeyAlgos)"] }
-        if !disableProxy, !proxyURL.isEmpty, let pc = proxyCommand() {
-            a += ["-o", "ProxyCommand=\(pc)"]
-        }
-        a += ["\(user)@\(host)"]
-        return a
-    }
-
-    /// 把 socks/http 代理 URL 转换为 ssh ProxyCommand（基于 nc）。
-    /// 注意：返回值会被 ssh 经 /bin/sh -c 执行，必须严格校验 host/port，
-    /// 否则形如 `socks5://h$(touch /tmp/x):1080` 的代理 URL 会导致本地命令注入。
-    private func proxyCommand() -> String? {
-        guard let comps = URLComponents(string: proxyURL),
-              let scheme = comps.scheme?.lowercased(),
-              let phost = comps.host, let pport = comps.port else { return nil }
-        // 代理主机只允许主机名/IPv4 字符；端口必须在合法范围内。任何 shell 元字符一律拒绝。
-        let hostOK = phost.range(of: "^[A-Za-z0-9._-]+$", options: .regularExpression) != nil
-        guard hostOK, (1...65535).contains(pport) else { return nil }
-        switch scheme {
-        case "socks5", "socks5h": return "nc -X 5 -x \(phost):\(pport) %h %p"
-        case "socks4": return "nc -X 4 -x \(phost):\(pport) %h %p"
-        case "http", "https": return "nc -X connect -x \(phost):\(pport) %h %p"
         default: return nil
         }
     }

@@ -129,9 +129,27 @@ final class HostDraft: ObservableObject {
     // 端口
     @Published var port = "22"
 
-    var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty
-            && !address.trimmingCharacters(in: .whitespaces).isEmpty
+    var canSave: Bool { saveBlocker == nil }
+
+    /// 不能保存的原因（表单底部提示）；可保存时为 nil。数字字段留空按默认值处理，填了就必须合法——
+    /// 之前「abc」会被悄悄当成 22，「70000」原样存下，连接时才莫名失败。
+    var saveBlocker: String? {
+        let noName = name.trimmingCharacters(in: .whitespaces).isEmpty
+        let noAddr = address.trimmingCharacters(in: .whitespaces).isEmpty
+        if noName && noAddr { return String(localized: "请填写名称和地址") }
+        if noName { return String(localized: "请填写名称") }
+        if noAddr { return String(localized: "请填写地址") }
+        if !Self.validInt(port, in: 1...65535) { return String(localized: "端口需在 1–65535 之间") }
+        if !Self.validInt(timeout, in: 1...600_000) { return String(localized: "超时时间需为正整数（毫秒）") }
+        if !Self.validInt(heartbeat, in: 0...3_600_000) { return String(localized: "心跳时间需为非负整数（毫秒）") }
+        return nil
+    }
+
+    private static func validInt(_ s: String, in range: ClosedRange<Int>) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty { return true }
+        guard let v = Int(t) else { return false }
+        return range.contains(v)
     }
 
     var resolvedGroup: String {
@@ -168,7 +186,7 @@ final class HostDraft: ObservableObject {
         SSHConnection(
             user: user.trimmingCharacters(in: .whitespaces).isEmpty ? "root" : user.trimmingCharacters(in: .whitespaces),
             host: address.trimmingCharacters(in: .whitespaces),
-            port: Int(port) ?? 22,
+            port: Int(port.trimmingCharacters(in: .whitespaces)) ?? 22,
             authMethod: authMethod,
             password: password,
             keyPath: keyPath.trimmingCharacters(in: .whitespaces),
@@ -179,8 +197,8 @@ final class HostDraft: ObservableObject {
             kexAlgos: kexAlgos,
             proxyURL: proxyURL.trimmingCharacters(in: .whitespaces),
             disableProxy: disableProxy,
-            timeoutMs: Int(timeout) ?? 10000,
-            heartbeatMs: Int(heartbeat) ?? 5000,
+            timeoutMs: Int(timeout.trimmingCharacters(in: .whitespaces)) ?? 10000,
+            heartbeatMs: Int(heartbeat.trimmingCharacters(in: .whitespaces)) ?? 5000,
             initialCommand: initialCommand,
             defaultPath: defaultPath
         )

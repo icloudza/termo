@@ -2,8 +2,10 @@ import SwiftUI
 
 struct TestConnectionView: View {
     @ObservedObject var draft: HostDraft
+    /// 测试前先核对主机指纹（未知主机弹核对框）；返回 false = 用户拒绝，不发凭据。
+    let verify: (SSHConnection) async -> Bool
     @ObservedObject private var theme = ThemeManager.shared
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modalDismiss) private var dismiss
     @StateObject private var tester = ConnectionTester()
 
     var body: some View {
@@ -40,7 +42,7 @@ struct TestConnectionView: View {
                     SecondaryButton(title: "取消") { tester.cancel(); dismiss() }
                 } else {
                     SecondaryButton(title: "关闭") { dismiss() }
-                    PrimaryButton(title: "重新测试") { tester.start(conn: draft.buildConnection()) }
+                    PrimaryButton(title: "重新测试") { Task { await verifyThenTest() } }
                 }
             }
             .padding(.horizontal, 20).padding(.vertical, 14)
@@ -48,13 +50,20 @@ struct TestConnectionView: View {
         .frame(width: 520, height: 600)
         .background(Pal.solidBase)
         .preferredColorScheme(theme.isDark ? .dark : .light)
-        .onAppear {
-            // 用禁用动画的事务填充初始内容，避免内容在 sheet 呈现动画期间「从上滑入」
-            var tx = Transaction()
-            tx.disablesAnimations = true
-            withTransaction(tx) { tester.start(conn: draft.buildConnection()) }
-        }
-        .onDisappear { tester.cancel() }
+        .task { await verifyThenTest() }
+        .onDisappear { tester.dismissed = true; tester.cancel() }
+    }
+
+    private func verifyThenTest() async {
+        let conn = draft.buildConnection()
+        let ok = await verify(conn)
+        // 指纹框可能停留很久：期间本弹窗已被关掉（甚至又开了一个新的）就什么都别做，免得误关新弹窗
+        guard !Task.isCancelled, !tester.dismissed else { return }
+        guard ok else { dismiss(); return }
+        // 用禁用动画的事务填充初始内容，避免内容在弹窗呈现动画期间「从上滑入」
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx) { tester.start(conn: conn) }
     }
 
     private var targetLabel: String {
@@ -166,7 +175,7 @@ struct ConnectingDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
+            ModalBackdrop { tester.cancel(); onCancel() }
             VStack(spacing: 0) {
                 HStack {
                     Text("正在连接").font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
@@ -190,7 +199,8 @@ struct ConnectingDialog: View {
                         SecondaryButton(title: "取消") { tester.cancel(); onCancel() }
                     } else if tester.failed {
                         SecondaryButton(title: "取消") { onCancel() }
-                        PrimaryButton(title: "重试") { tester.start(conn: host.ssh ?? SSHConnection()) }
+                        // 重试也重新核对指纹：第一次可能因预检超时而没核对，直接重跑测试会一直卡在「指纹未确认」
+                        PrimaryButton(title: "重试") { Task { await verifyAndStart() } }
                     } else {
                         Text("连接成功，\(successHint)").font(.system(size: 12)).foregroundStyle(Pal.green)
                     }
@@ -206,6 +216,7 @@ struct ConnectingDialog: View {
                 RoundedRectangle(cornerRadius: dialogCornerRadius, style: .continuous)
                     .strokeBorder(Pal.fill(0.08), lineWidth: 1)
             }
+            .fitInContainer(CGSize(width: 520, height: 560))   // 最小窗口只有 560 高：放不下就等比缩小，不顶到红绿灯
         }
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .task {
@@ -213,19 +224,24 @@ struct ConnectingDialog: View {
                 guard success else { return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { onConnected() }
             }
-            // 第一阶段：验证主机指纹（已知主机瞬间通过；未知主机会叠加指纹核对框）
-            let ok = await verify()
-            guard !Task.isCancelled else { return }
-            if ok {
-                verifying = false
-                var tx = Transaction()
-                tx.disablesAnimations = true
-                withTransaction(tx) { tester.start(conn: host.ssh ?? SSHConnection()) }
-            } else {
-                onCancel()
-            }
+            await verifyAndStart()
         }
         .onDisappear { tester.cancel() }
+    }
+
+    /// 第一阶段：验证主机指纹（已知主机瞬间通过；未知主机会叠加指纹核对框），通过后开始连接测试。
+    private func verifyAndStart() async {
+        verifying = true
+        let ok = await verify()
+        guard !Task.isCancelled else { return }
+        if ok {
+            verifying = false
+            var tx = Transaction()
+            tx.disablesAnimations = true
+            withTransaction(tx) { tester.start(conn: host.ssh ?? SSHConnection()) }
+        } else {
+            onCancel()
+        }
     }
 
     private var verifyingPanel: some View {
@@ -292,6 +308,8 @@ final class ConnectionTester: ObservableObject {
     ]
     private var cancelled = false
     private var concluded = false
+    /// 所属弹窗已关闭（供异步回来的流程判断是否还该动 UI）。
+    var dismissed = false
     /// C 回调闭包载体（Unmanaged 跨 @convention(c) 边界传递）。
     private final class StageBox {
         let cb: (Int, Bool, String?) -> Void
@@ -352,16 +370,19 @@ final class ConnectionTester: ObservableObject {
         let password: String? = isKey ? nil : conn.password
         let keyPass: String? = isKey ? conn.password : nil
         let (h, p, u) = (conn.host, conn.port, conn.user)
+        let (realKH, sessionKH) = (HostKeyVerifier.realKnownHosts, HostKeyVerifier.sessionKnownHosts)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let box = Unmanaged.passRetained(StageBox { stage, ok, msg in
                 Task { @MainActor in self?.onStage(stage: stage, ok: ok, message: msg) }
             }).toOpaque()
-            termo_ssh_test(h, Int32(p), u, password, keyPath, keyPass, { ud, stage, ok, msg in
-                guard let ud else { return }
-                let b = Unmanaged<StageBox>.fromOpaque(ud).takeUnretainedValue()
-                b.cb(Int(stage), ok != 0, msg.map { String(cString: $0) })
-            }, box)
+            conn.withSSHOptions { opts in
+                termo_ssh_test(h, Int32(p), u, password, keyPath, keyPass, realKH, sessionKH, opts, { ud, stage, ok, msg in
+                    guard let ud else { return }
+                    let b = Unmanaged<StageBox>.fromOpaque(ud).takeUnretainedValue()
+                    b.cb(Int(stage), ok != 0, msg.map { String(cString: $0) })
+                }, box)
+            }
             Unmanaged<StageBox>.fromOpaque(box).release()
         }
     }

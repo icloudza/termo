@@ -6,12 +6,13 @@ import SwiftUI
 /// 否则仅本次接受；取消则拒绝连接。changed=true 时显示更强的中间人警告。
 struct RDPCertDialog: View {
     let prompt: RDPCertPrompt
+    var escapable = true          // 挂在被隐藏的标签里时传 false，免得吞掉别处的 Esc
     @State private var alwaysTrust = false
     @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
+            ModalBackdrop(escapable: escapable) { prompt.respond(.reject) }   // 点空白处 = 拒绝（安全默认）
 
             VStack(alignment: .leading, spacing: 0) {
                 // 标题栏：首连用锁、变更用警告三角
@@ -46,7 +47,7 @@ struct RDPCertDialog: View {
 
                 // 证书指纹可能是整段 PEM（甚至证书链），限高 + 可滚动，避免弹窗被撑得过高。
                 ScrollView {
-                    Text(prompt.fingerprint.isEmpty ? "（无指纹信息）" : prompt.fingerprint)
+                    Text(prompt.fingerprint.isEmpty ? String(localized: "（无指纹信息）") : prompt.fingerprint)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(Pal.subtext).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -74,24 +75,9 @@ struct RDPCertDialog: View {
 
                 HStack(spacing: 10) {
                     Spacer()
-                    Button { prompt.respond(.reject) } label: {
-                        Text("取消").font(.system(size: 13)).foregroundStyle(Pal.text)
-                            .padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Pal.fill(0.10), lineWidth: 1))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-
-                    Button { prompt.respond(alwaysTrust ? .trust : .once) } label: {
-                        Text("继续").font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
-                            .padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(prompt.changed ? Pal.red : Pal.green, in: RoundedRectangle(cornerRadius: 8))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
+                    SecondaryButton(title: "取消") { prompt.respond(.reject) }
+                    Button { prompt.respond(alwaysTrust ? .trust : .once) } label: { Text("继续") }
+                        .buttonStyle(ThemedButtonStyle(kind: prompt.changed ? .destructive : .success))
                 }
             }
             .padding(22)
@@ -116,19 +102,6 @@ struct RDPCertDialog: View {
     }
 
     private func copyButton(_ title: String, _ value: String) -> some View {
-        Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(value, forType: .string)
-        } label: {
-            Text(title).font(.system(size: 12)).foregroundStyle(Pal.subtext)
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Pal.fill(0.10), lineWidth: 1))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor(!value.isEmpty)
-        .disabled(value.isEmpty)
-        .opacity(value.isEmpty ? 0.4 : 1)
+        CopyChip(title: title, value: value)
     }
 }

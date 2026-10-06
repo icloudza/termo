@@ -47,6 +47,8 @@ final class HostMonitor: ObservableObject {
 
     /// 每解析出一帧调用一次，供上层做阈值告警；监控本身只产数据、不判定告警。
     var onSample: ((HostMetrics) -> Void)?
+    /// 连接因主机指纹未确认/不匹配被拒：重试无益，停下并交给上层提示用户核对。
+    var onHostKeyRejected: (() -> Void)?
 
     private var ssh: SSHConnection
     private var session: SSHSession?     // [SSH 迁移] libssh2 进程内会话（替代 spawn /usr/bin/ssh）
@@ -68,6 +70,7 @@ final class HostMonitor: ObservableObject {
     var sampleInterval: Double { Double(Self.interval) }
 
     /// 远端内联采样脚本：无 /proc 立即报 NOPROC 退出；否则每 interval 秒输出一帧，以 === 分隔。
+    /// df 只看本地文件系统（-l）：挂死的 NFS 会让 df 永久阻塞，监控从此停帧却仍显示「实时」。
     /// CPU 输出整机与每核（cpu / cpuN）；网络累计排除回环 lo 并把网卡名冒号换空格再取字段，避免高流量字节数
     /// 与冒号粘连错位；磁盘只列真实块设备（/dev/ 开头）的各挂载点；有 nvidia-smi 时每块 GPU 一行（| 分隔，
     /// 容纳含空格的型号名）。内存单位 kB、磁盘 1K 块、显存 MiB。
@@ -80,7 +83,8 @@ final class HostMonitor: ObservableObject {
       awk 'NR>2{sub(/:/," "); if($1!="lo" && NF>=10){r+=$2; t+=$10}} END{print "NET "r" "t}' /proc/net/dev
       echo "UP $(cut -d" " -f1 /proc/uptime)"
       echo "LOAD $(cut -d" " -f1-3 /proc/loadavg)"
-      df -kP 2>/dev/null | awk 'NR>1 && index($1,"/dev/")==1{print "DISK "$6" "$3" "$2}'
+      D=$(df -kPl 2>/dev/null); [ -n "$D" ] || D=$(df -kP 2>/dev/null)
+      printf '%s\n' "$D" | awk 'NR>1 && index($1,"/dev/")==1{print "DISK "$6" "$3" "$2}'
       [ "$HASGPU" = 1 ] && nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | awk -F", *" '{print "GPU "$1"|"$2"|"$3"|"$4"|"$5"|"$6}'
       echo "==="
       sleep __INTERVAL__
@@ -148,23 +152,27 @@ final class HostMonitor: ObservableObject {
         // 离线时不发起连接，等网络恢复由 handleNetworkChange 触发重连，避免离线期间空转重试。
         guard NetworkMonitor.shared.isOnline else { phase = .error; return }
         let cmd = Self.script.replacingOccurrences(of: "__INTERVAL__", with: String(Self.interval))
-        // 认证参数（独立连接，不复用 master；探测脚本 accept-new，与原行为一致）
-        let isKey = ssh.authMethod == .key
-        let keyPath: String? = isKey
-            ? (ssh.keyId.isEmpty ? (ssh.keyPath.isEmpty ? nil : ssh.keyPath) : KeyMaterializer.path(forKeyId: ssh.keyId))
-            : nil
-        let password: String? = isKey ? nil : ssh.password
-        let keyPass: String? = isKey ? ssh.password : nil
-        let (h, p, u) = (ssh.host, ssh.port, ssh.user)
+        let conn = ssh   // 独立连接（不复用会话池），按主机设置走代理/算法偏好
 
         prevCpu.removeAll(); prevRx = nil; prevTx = nil; prevUptime = nil
         buffer.removeAll()
         launchGen &+= 1
         let gen = launchGen
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let session = try? SSHSession.connect(host: h, port: p, user: u,
-                                                        password: password, keyPath: keyPath, keyPassphrase: keyPass) else {
-                Task { @MainActor in self?.streamEnded(gen: gen) }   // 连接失败 → 重连
+            let session: SSHSession
+            do { session = try SSHSession.connect(conn) }
+            catch {
+                let msg = (error as? SSHSession.SSHError)?.message ?? ""
+                Task { @MainActor in
+                    guard let self, gen == self.launchGen else { return }
+                    if msg.hasPrefix("HOSTKEY_") {
+                        self.stop()
+                        self.phase = .connecting
+                        self.onHostKeyRejected?()
+                    } else {
+                        self.streamEnded(gen: gen)               // 连接失败 → 重连
+                    }
+                }
                 return
             }
             Task { @MainActor in self?.adoptSession(session, gen: gen) }
@@ -220,6 +228,7 @@ final class HostMonitor: ObservableObject {
             return
         }
 
+        let hadPrevCpu = !prevCpu.isEmpty   // 重连后的第一帧只能当基线：CPU 占用要两帧差值才算得出
         var m = HostMetrics()
         var memAvail: Int64 = 0
         var swapFree: Int64 = 0
@@ -308,6 +317,8 @@ final class HostMonitor: ObservableObject {
             netTick &+= 1
         }
 
+        // 重连后的基线帧没有 CPU 数据：已有画面时不发布它，否则 CPU 区先塌成「采样中…」再撑开，整块跳动。
+        if !hadPrevCpu, !curCpu.isEmpty, metrics != nil { return }
         metrics = m
         phase = .live
         onSample?(m)

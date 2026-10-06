@@ -21,7 +21,11 @@ struct ReleaseNotesWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ web: WKWebView, context: Context) {
-        web.loadHTMLString(themedDocument(html), baseURL: nil)
+        // 只有内容或主题变了才重载：父视图每次刷新（下载进度等）都重载会闪一下并把滚动位置弹回顶部。
+        let doc = themedDocument(html)
+        guard doc != context.coordinator.loadedDocument else { return }
+        context.coordinator.loadedDocument = doc
+        web.loadHTMLString(doc, baseURL: nil)
     }
 
     private func themedDocument(_ body: String) -> String {
@@ -59,6 +63,8 @@ struct ReleaseNotesWebView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
+        var loadedDocument: String?
+
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

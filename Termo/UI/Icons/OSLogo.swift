@@ -62,13 +62,21 @@ struct HostLeadingIcon: View {
     var body: some View {
         // SSH 主机用探测到的发行版(specs.os),回退到存储的 os 字段;RDP 视为 Windows。
         let osStr = host.isRDP ? "windows" : (host.specs?.os ?? host.os)
-        let dotColor = LatencyLevel(ms: host.latencyMs).color   // 延迟等级着色:快绿、慢黄/红,未探测/不可达为灰
+        // 在线按延迟等级着色（快绿、慢黄/红）；离线标红，和「还没探测」的灰点区分开。
+        let dotColor = host.status == .offline ? Pal.red : LatencyLevel(ms: host.latencyMs).color
         ZStack(alignment: .bottomTrailing) {
+            // 在图标上挖出一圈透明缝把小点隔开，而不是描一圈侧栏底色：选中/悬停行、后台中心里底色不同，描边会露出一圈色环。
             iconTile(osStr)
+                .mask {
+                    ZStack(alignment: .bottomTrailing) {
+                        Rectangle()
+                        Circle().frame(width: 12, height: 12).offset(x: 3, y: 3).blendMode(.destinationOut)
+                    }
+                    .compositingGroup()
+                }
             Circle()
                 .fill(dotColor)
                 .frame(width: 8, height: 8)
-                .overlay(Circle().stroke(Pal.mantle, lineWidth: 2))   // 描边与侧栏底色融合，使小点从实心底里分离
                 .offset(x: 1, y: 1)
         }
         .frame(width: Self.side, height: Self.side)

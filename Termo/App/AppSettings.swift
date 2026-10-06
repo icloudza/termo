@@ -94,6 +94,10 @@ final class AppSettings: ObservableObject {
     @Published var termScrollback: Int {
         didSet { d.set(termScrollback, forKey: "termScrollback") }
     }
+    /// GPU（Metal）渲染终端；关闭则回退 CoreText 逐行 CPU 绘制。
+    @Published var termGPURendering: Bool {
+        didSet { d.set(termGPURendering, forKey: "termGPURendering") }
+    }
 
     /// 默认下载目录（空=系统下载文件夹）。
     @Published var downloadDir: String {
@@ -169,6 +173,7 @@ final class AppSettings: ObservableObject {
         termCursorStyle = d.string(forKey: "termCursorStyle") ?? "bar"
         termCursorBlink = d.object(forKey: "termCursorBlink") as? Bool ?? true
         termScrollback = d.object(forKey: "termScrollback") as? Int ?? 1000
+        termGPURendering = d.object(forKey: "termGPURendering") as? Bool ?? true
         downloadDir = d.string(forKey: "downloadDir") ?? ""
         downloadAskEachTime = d.object(forKey: "downloadAskEachTime") as? Bool ?? false
         maxConcurrentTransfers = d.object(forKey: "maxConcurrentTransfers") as? Int ?? 2

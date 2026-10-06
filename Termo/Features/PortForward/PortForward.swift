@@ -132,7 +132,17 @@ final class ForwardManager: ObservableObject {
     private static let backoffBase: TimeInterval = 2
     private static let backoffCap: TimeInterval = 30
     // 致命失败（重试无益，需用户改配置/释放端口）：看门狗不自动重启。
-    private static let fatalSubstrings = ["端口已被占用", "认证", "主机密钥", "转发请求被拒绝", "主机未配置"]
+    private static let fatalSubstrings = ["端口已被占用", "认证", "主机密钥", "指纹", "转发请求被拒绝", "主机未配置"]
+
+    // 每条规则同一时刻最多一个后台建连：网络切换时若已有一个在途，只记下「回来后重连」，不并发再起一个
+    // （否则两个都去绑同一本地端口，后到的报「端口已被占用」被判致命、隧道被停）。
+    private var inFlight: Set<UUID> = []
+    private var relaunchAfterInFlight: Set<UUID> = []
+    // 后台拆除中的规则：本地端口释放前不能再起（停止后立刻再启动会撞「端口已被占用」）。
+    private var closing: Set<UUID> = []
+    private var launchAfterClose: Set<UUID> = []
+    // 拆除（join pump + 关会话）可能阻塞数秒：放到后台串行做，主线程不卡；同一规则的重连排在拆除之后。
+    private static let teardownQueue = DispatchQueue(label: "termo.forward.teardown", qos: .userInitiated)
 
     /// on_state(ok=0) 异步断开回调的载体。
     private final class StateBox {
@@ -167,22 +177,22 @@ final class ForwardManager: ObservableObject {
 
     /// 拉起一条隧道（start 与自动重启共用；不改 intended/退避）：后台建 dedicated 会话 + 开 C 层转发。
     private func launch(_ rule: ForwardRule) {
-        guard forwards[rule.id] == nil, sessions[rule.id] == nil else { return }
+        guard forwards[rule.id] == nil, sessions[rule.id] == nil, !inFlight.contains(rule.id) else { return }
+        if closing.contains(rule.id) { launchAfterClose.insert(rule.id); statuses[rule.id] = .starting; return }
         guard NetworkMonitor.shared.isOnline else { statuses[rule.id] = .failed(String(localized: "等待网络")); return }
         guard !ssh.host.isEmpty else { statuses[rule.id] = .failed("主机未配置"); return }
 
         statuses[rule.id] = .starting
+        inFlight.insert(rule.id)
         let conn = ssh
         let id = rule.id
         let kind: Int32 = rule.kind == .local ? 0 : (rule.kind == .remote ? 1 : 2)
         let (bind, lport, dhost, dport) = (rule.bindAddress, rule.listenPort, rule.destHost, rule.destPort)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let a = conn.libssh2Auth
             let session: SSHSession
             do {
-                session = try SSHSession.connect(host: conn.host, port: conn.port, user: conn.user,
-                                                 password: a.password, keyPath: a.keyPath, keyPassphrase: a.keyPassphrase)
+                session = try SSHSession.connect(conn)
             } catch {
                 let msg = (error as? SSHSession.SSHError)?.message ?? String(localized: "连接失败")
                 Task { @MainActor in self?.onFailure(id, reason: msg) }
@@ -213,11 +223,15 @@ final class ForwardManager: ObservableObject {
         }
     }
 
-    /// 后台建立成功：登记并标记 active（若期间已被 stop，则就地拆掉）。
+    /// 后台建立成功：登记并标记 active（若期间已被 stop，则就地拆掉；期间网络切换过则拆掉重连）。
     private func onEstablished(_ id: UUID, session: SSHSession, forward: OpaquePointer, box: UnsafeMutableRawPointer) {
-        guard intended.contains(id) else {
-            termo_ssh_forward_close(forward); session.close()
-            Unmanaged<StateBox>.fromOpaque(box).release()
+        inFlight.remove(id)
+        let stale = relaunchAfterInFlight.remove(id) != nil
+        guard intended.contains(id), !stale else {
+            Self.close(forward: forward, session: session, box: box) { [weak self] in
+                guard let self, stale, self.intended.contains(id), let rule = self.startedRules[id] else { return }
+                self.launch(rule)
+            }
             return
         }
         sessions[id] = session
@@ -232,6 +246,11 @@ final class ForwardManager: ObservableObject {
 
     /// 建立失败（连接/认证/监听）：标记失败；致命则不重试，瞬时则退避重启。
     private func onFailure(_ id: UUID, reason: String) {
+        inFlight.remove(id)
+        if relaunchAfterInFlight.remove(id) != nil, intended.contains(id), let rule = startedRules[id] {
+            launch(rule)    // 在途那次跑在旧网络上，失败不计数，按新网络重来
+            return
+        }
         statuses[id] = .failed(reason)
         guard intended.contains(id) else { return }
         if Self.fatalSubstrings.contains(where: { reason.contains($0) }) {
@@ -245,18 +264,46 @@ final class ForwardManager: ObservableObject {
     /// 运行中异步断开（C 层 on_state 回调）：拆除并按瞬时失败重启。
     private func onDropped(_ id: UUID, reason: String) {
         guard sessions[id] != nil else { return }   // 已被 stop/teardown → 忽略
-        teardown(id)
         statuses[id] = .failed(reason.isEmpty ? String(localized: "连接已断开") : reason)
-        guard intended.contains(id) else { return }
-        scheduleRestart(id)
+        teardown(id) { [weak self] in
+            guard let self, self.intended.contains(id) else { return }
+            self.scheduleRestart(id)                // 旧隧道释放完本地端口再排重启
+        }
     }
 
     /// 关闭转发 + 会话并清理登记，但不改 intended/退避（供 stop 与网络重连复用）。
-    private func teardown(_ id: UUID) {
+    /// 状态立即清掉（之后的回调按「已拆除」忽略），真正的 join/关闭在后台完成，完成后在主线程回调 then。
+    private func teardown(_ id: UUID, then: (() -> Void)? = nil) {
         if let regId = regIds[id] { ForwardProcessRegistry.shared.unregister(regId); regIds[id] = nil }
-        if let fwd = forwards[id] { termo_ssh_forward_close(fwd); forwards[id] = nil }   // 停 pump（join）后无更多回调
-        if let box = boxes[id] { Unmanaged<StateBox>.fromOpaque(box).release(); boxes[id] = nil }
-        if let s = sessions[id] { s.close(); sessions[id] = nil }
+        let fwd = forwards.removeValue(forKey: id)
+        let box = boxes.removeValue(forKey: id)
+        let s = sessions.removeValue(forKey: id)
+        guard fwd != nil || box != nil || s != nil else { then?(); return }
+        closing.insert(id)
+        Self.close(forward: fwd, session: s, box: box) { [weak self] in
+            guard let self else { return }
+            self.closing.remove(id)
+            if self.launchAfterClose.remove(id) != nil, self.intended.contains(id), let rule = self.startedRules[id] {
+                self.launch(rule)
+            }
+            then?()
+        }
+    }
+
+    /// 后台：停 pump（join 之后不再有回调）→ 释放回调载体 → 关会话；完成后主线程回调。
+    private struct Handles: @unchecked Sendable {   // C 指针只在拆除队列上使用一次
+        let forward: OpaquePointer?
+        let box: UnsafeMutableRawPointer?
+    }
+    private static func close(forward: OpaquePointer?, session: SSHSession?, box: UnsafeMutableRawPointer?,
+                              then: (() -> Void)? = nil) {
+        let h = Handles(forward: forward, box: box)
+        teardownQueue.async {
+            if let f = h.forward { termo_ssh_forward_close(f) }
+            if let b = h.box { Unmanaged<StateBox>.fromOpaque(b).release() }
+            session?.close()
+            if let then { DispatchQueue.main.async { then() } }
+        }
     }
 
     /// 用户主动停止：取消期望、清退避与待重启，然后终止。
@@ -281,8 +328,12 @@ final class ForwardManager: ObservableObject {
             guard let rule = startedRules[id] else { continue }
             restartWork[id]?.cancel(); restartWork[id] = nil
             failCount[id] = 0
-            teardown(id)            // 旧连接已随网络失效，丢弃重连
-            launch(rule)
+            if inFlight.contains(id) { relaunchAfterInFlight.insert(id); continue }   // 在途的回来后重连
+            statuses[id] = .starting
+            teardown(id) { [weak self] in                // 旧连接已随网络失效：释放完端口再重连
+                guard let self, self.intended.contains(id) else { return }
+                self.launch(rule)
+            }
         }
     }
 

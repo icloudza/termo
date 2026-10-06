@@ -6,6 +6,7 @@ struct ActivityBar: View {
     // 非 @ObservedObject:本视图只在点击闭包里读写宽度,body 不依赖它。
     // 若用 @ObservedObject,即便 body 不读宽度也会订阅其变化、拖动时被白白重算。
     let layout: LayoutModel
+    @ObservedObject private var dialogs = AppModel.shared.dialogs   // 设置按钮的选中态
     @ObservedObject private var theme = ThemeManager.shared
     @State private var isFullScreen = false
 
@@ -16,6 +17,17 @@ struct ActivityBar: View {
         ("display", .rdp),
         ("chevron.left.forwardslash.chevron.right", .snippets),
     ]
+
+    private func title(_ section: Section) -> String {
+        switch section {
+        case .hosts: return String(localized: "主机")
+        case .files: return String(localized: "文件")
+        case .sshKeys: return String(localized: "密钥")
+        case .rdp: return String(localized: "远程桌面")
+        case .snippets: return String(localized: "代码片段")
+        case .settings: return String(localized: "设置")
+        }
+    }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -38,33 +50,39 @@ struct ActivityBar: View {
         .frame(width: 76)
         .frame(maxHeight: .infinity)
         .background(Pal.crust)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
-            isFullScreen = true
+        // 全屏通知是全局的：RDP「新窗口」默认全屏，不能把它当成主窗口全屏（否则活动栏顶到红绿灯下）。
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { note in
+            if Self.isMainWindow(note) { isFullScreen = true }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in
-            isFullScreen = false
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { note in
+            if Self.isMainWindow(note) { isFullScreen = false }
         }
     }
 
+    private static func isMainWindow(_ note: Notification) -> Bool {
+        guard let w = note.object as? NSWindow else { return false }
+        return !(w.windowController is RDPWindowController)
+    }
+
     private var settingsButton: some View {
-        ActivityBarButton(symbol: "gearshape", selected: model.showSettings) {
+        ActivityBarButton(symbol: "gearshape", selected: dialogs.showSettings) {
             model.showSettings = true
         }
+        .tooltip(String(localized: "设置（⌘,）"))
     }
 
     @ViewBuilder
     private func item(_ symbol: String, _ section: Section) -> some View {
         ActivityBarButton(symbol: symbol, selected: model.section == section) {
             // 瞬间开合(不加动画):宽度滑动动画会逐帧重排工作区 → 卡顿。
-            if model.section == section && layout.sidebarWidth >= 10 {
+            if model.section == section && !layout.isCollapsed {
                 layout.sidebarWidth = 0
             } else {
                 model.section = section
-                if layout.sidebarWidth < 10 {
-                    layout.sidebarWidth = 224
-                }
+                if layout.isCollapsed { layout.expand() }
             }
         }
+        .tooltip(title(section))
     }
 }
 

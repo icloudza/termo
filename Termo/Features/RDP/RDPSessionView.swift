@@ -3,6 +3,8 @@ import SwiftUI
 /// RDP 远程桌面标签页：显示 FreeRDP 实时帧。连接进度与证书信任由 ContentView 级的 RDPConnectingDialog 呈现（标签未开即弹）。
 struct RDPSessionView: View {
     @ObservedObject var session: RDPSession
+    var isActive = true
+    var onClose: (() -> Void)? = nil      // 标签里显示时提供「关闭标签」；独立窗口里为 nil
 
     var body: some View {
         GeometryReader { geo in
@@ -23,6 +25,7 @@ struct RDPSessionView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay { RDPTabStatusOverlay(session: session, isActive: isActive, onClose: onClose) }
             // 会话通常在标签打开前已连好（连接弹窗阶段）。出现时按真实标签尺寸校正分辨率（连接时用的是估算画布）；
             // 若尚未连接（直接进入此视图的兜底路径）则按尺寸发起连接。
             .onAppear {
@@ -44,6 +47,65 @@ struct RDPSessionView: View {
     }
 }
 
+/// 标签内的连接状态层：掉线 / 失败时盖住冻结的最后一帧并给出重连；重连中显示进度。
+/// 之前掉线后画面停在最后一帧、键鼠被静默丢弃，看起来像远端卡死。
+private struct RDPTabStatusOverlay: View {
+    @ObservedObject var session: RDPSession
+    let isActive: Bool
+    let onClose: (() -> Void)?
+
+    var body: some View {
+        ZStack {
+            if let prompt = session.certPrompt {
+                RDPCertDialog(prompt: prompt, escapable: isActive)
+            } else if let state {
+                Color.black.opacity(0.55).contentShape(Rectangle())
+                card(state)
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: session.phase)
+    }
+
+    private enum State { case connecting, lost(String, String) }
+
+    private var state: State? {
+        switch session.phase {
+        case .failed(let msg): return .lost(String(localized: "远程桌面连接失败"), msg)
+        case .disconnected: return .lost(String(localized: "远程桌面连接已断开"), String(localized: "远端会话已结束，或网络中断。"))
+        case .pending, .connecting: return session.image == nil ? .connecting : nil
+        case .connected: return nil
+        }
+    }
+
+    @ViewBuilder
+    private func card(_ state: State) -> some View {
+        VStack(spacing: 12) {
+            switch state {
+            case .connecting:
+                ProgressView().controlSize(.small)
+                Text("正在连接远程桌面…").font(.system(size: 13)).foregroundStyle(Pal.text)
+            case .lost(let title, let detail):
+                Image(systemName: "display.trianglebadge.exclamationmark")
+                    .font(.system(size: 26)).foregroundStyle(Pal.yellow)
+                Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
+                Text(detail).font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                    .multilineTextAlignment(.center).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    if let onClose { SecondaryButton(title: "关闭标签", action: onClose) }
+                    PrimaryButton(title: "重新连接") { session.retry() }
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(24)
+        .frame(width: 360)
+        .background(Pal.solidMantle, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Pal.fill(0.08), lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 24, y: 8)
+    }
+}
+
 /// RDP 连接弹窗：整窗半透明遮罩 + 居中卡片。挂在 ContentView 级、覆盖当前概览/列表，
 /// 由「标签未开的连接中会话」驱动：首帧到达即视为成功 → 回调开标签（把已连会话交给标签，无缝切到桌面）。
 /// 有证书待确认时改显证书信任框（与连接卡互斥，避免双层遮罩）。
@@ -58,7 +120,7 @@ struct RDPConnectingDialog: View {
                 RDPCertDialog(prompt: prompt).transition(.opacity)
             } else {
                 ZStack {
-                    Color.black.opacity(0.45).ignoresSafeArea()
+                    ModalBackdrop(onTap: onCancel)
                     RDPConnectingPanel(session: session, onCancel: onCancel, onRetry: { session.retry() })
                 }
                 .transition(.opacity)
@@ -82,7 +144,7 @@ struct RDPOpenDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea().onTapGesture(perform: onCancel)
+            ModalBackdrop(onTap: onCancel)
             VStack(alignment: .leading, spacing: 14) {
                 Text("打开远程桌面").font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
                 Text("「\(hostName)」要如何打开？")

@@ -9,13 +9,17 @@ final class SSHSession: @unchecked Sendable {
         var errorDescription: String? { message }
         /// 主机密钥与已知记录不匹配（疑似 MITM）——上层可据此给出区别于普通失败的提示。
         var isHostKeyMismatch: Bool { message.hasPrefix("HOSTKEY_MISMATCH") }
+        /// 连通道都没打开（命令还没开始执行）：典型是复用的暖连接已被对端/NAT 回收，换新连接重试是安全的。
+        var isChannelOpenFailure: Bool { message.hasPrefix("打开通道失败") }
     }
     struct ExecResult { let output: String; let stderr: String; let exitCode: Int }
     /// 二进制安全的 exec 结果（供 RemoteFS.run）：stdout/stderr 为原始字节，timedOut/cancelled 标识非正常结束。
-    struct ExecBytes { let stdout: Data; let stderr: Data; let exitCode: Int32; let timedOut: Bool; let cancelled: Bool }
+    /// truncated：stdout 超出 outCap，多出部分被 C 层丢弃——需要完整输出的调用方必须按失败处理。
+    struct ExecBytes { let stdout: Data; let stderr: Data; let exitCode: Int32; let timedOut: Bool; let cancelled: Bool; let truncated: Bool }
 
     private var handle: OpaquePointer?          // TermoSSHSession*
     private let queue: DispatchQueue
+    private let cancelLock = NSLock()           // cancel 不走串行队列：与 close 之间靠它避免对已释放句柄置标志
     let fingerprintSHA256: String
     let fingerprintMD5: String
 
@@ -26,18 +30,19 @@ final class SSHSession: @unchecked Sendable {
         self.fingerprintMD5 = String(cString: termo_ssh_session_md5(handle))
     }
 
-    /// 连接 + 握手 + 认证（同步，务必后台调用）。keyPath 非空走公钥认证。
-    /// 握手后认证前对照 known_hosts 校验主机密钥：仅明确不匹配（疑似 MITM）才抛错拒绝；未知主机放行。
-    static func connect(host: String, port: Int, user: String,
-                        password: String?, keyPath: String?, keyPassphrase: String?) throws -> SSHSession {
+    /// 连接 + 握手 + 认证（同步，务必后台调用）。按主机设置走代理、应用算法偏好；密钥登录走公钥认证。
+    /// 握手后认证前对照 known_hosts 校验主机密钥：不匹配（疑似 MITM）或尚未确认的主机一律拒绝，不发凭据。
+    static func connect(_ conn: SSHConnection) throws -> SSHSession {
+        let a = conn.libssh2Auth
         var err = [CChar](repeating: 0, count: 256)
         let real = HostKeyVerifier.realKnownHosts
         let session = HostKeyVerifier.sessionKnownHosts
-        guard let h = termo_ssh_open(host, Int32(port), user, password, keyPath, keyPassphrase,
-                                     real, session, &err, 256) else {
-            throw SSHError(message: String(cString: err))
+        let h = conn.withSSHOptions { opts in
+            termo_ssh_open(conn.host, Int32(conn.port), conn.user, a.password, a.keyPath, a.keyPassphrase,
+                           real, session, opts, &err, 256)
         }
-        return SSHSession(handle: h, queue: DispatchQueue(label: "termo.ssh.\(host):\(port)"))
+        guard let h else { throw SSHError(message: String(cString: err)) }
+        return SSHSession(handle: h, queue: DispatchQueue(label: "termo.ssh.\(conn.host):\(conn.port)"))
     }
 
     /// exec 一条命令，读回 stdout/stderr/退出码。
@@ -60,6 +65,7 @@ final class SSHSession: @unchecked Sendable {
                    outCap: Int = 1 << 20, errCap: Int = 1 << 16) throws -> ExecBytes {
         try queue.sync {
             guard let h = handle else { throw SSHError(message: String(localized: "会话已关闭")) }
+            let outCap = outCap + 1                 // 多留 1 字节：读满它即说明输出超限、被截断
             var out = [CChar](repeating: 0, count: outCap)
             var errb = [CChar](repeating: 0, count: errCap)
             var outLen: Int32 = 0, errLen: Int32 = 0, code: Int32 = 0
@@ -79,10 +85,11 @@ final class SSHSession: @unchecked Sendable {
                                      &code, tmo, &emsg, 256)
             }
             if rc == -1 { throw SSHError(message: String(cString: emsg)) }
-            let outData = Data(bytes: out, count: Int(outLen))
+            let truncated = Int(outLen) >= outCap
+            let outData = Data(bytes: out, count: min(Int(outLen), outCap - 1))
             let errData = Data(bytes: errb, count: Int(errLen))
             return ExecBytes(stdout: outData, stderr: errData, exitCode: code,
-                             timedOut: rc == 1, cancelled: rc == 2)
+                             timedOut: rc == 1, cancelled: rc == 2, truncated: truncated)
         }
     }
 
@@ -126,6 +133,7 @@ final class SSHSession: @unchecked Sendable {
 
     /// 打断正在跑的流（仅置 C 层 volatile 标志，可从任意线程调用，不走串行队列以免与阻塞中的流死锁）。
     func cancel() {
+        cancelLock.lock(); defer { cancelLock.unlock() }
         if let h = handle { termo_ssh_cancel(h) }
     }
 
@@ -134,7 +142,11 @@ final class SSHSession: @unchecked Sendable {
 
     func close() {
         queue.sync {
-            if let h = handle { termo_ssh_close(h); handle = nil }
+            cancelLock.lock()
+            let h = handle
+            handle = nil
+            cancelLock.unlock()
+            if let h { termo_ssh_close(h) }
         }
     }
 

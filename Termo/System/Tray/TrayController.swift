@@ -12,11 +12,16 @@ final class TrayController: NSObject, NSMenuDelegate {
     private let onShow: () -> Void
     private let onQuit: () -> Void
     private var bgCancellable: AnyCancellable?
-    /// 灯的三态：空闲（静态蓝）/ 运行中（蓝绿呼吸）/ 有失败（红色呼吸）。红 > 运行 > 空闲。
-    private enum LightMode { case idle, running, failure }
+    /// 灯态：空闲（静态蓝）/ 仅有常驻转发（静态绿）/ 传输等短时任务进行中（蓝绿呼吸）/ 有失败（红色呼吸）。
+    /// 转发一挂就是几小时，不能为它常驻跑动画（每秒唤醒主线程、菜单栏持续重绘）。
+    private enum LightMode { case idle, forwarding, running, failure }
     private var lastMode: LightMode = .idle   // 去重避免无谓重绘
     private var animTimer: Timer?
-    private var animPhase: Double = 0
+    private var animFrame = 0
+    private static let frameCount = 18                 // 一个呼吸周期的帧数；10fps 下周期 1.8s
+    private static let frameInterval = 0.1
+    private lazy var runningFrames = Self.breathingFrames(Self.barBlue, Self.barGreen)
+    private lazy var failureFrames = Self.breathingFrames(Self.barRed, Self.barRedAlt)
 
     // `_` 的呼吸两端色（两端都取高明度，靠色相往返出动感，避免某端发暗发脏）：
     // 运行态 品牌蓝↔运行绿；失败态 亮红↔暖橙红（脉冲告警感，不发黑）。
@@ -56,8 +61,10 @@ final class TrayController: NSObject, NSMenuDelegate {
 
     /// 当前应处的灯态：失败优先（红） > 运行中（蓝绿） > 空闲（静态蓝）。
     private func currentMode() -> LightMode {
-        if AppModel.shared.hasBackgroundFailure { return .failure }
-        if AppModel.shared.activeBackgroundCount > 0 { return .running }
+        let model = AppModel.shared
+        if model.hasBackgroundFailure { return .failure }
+        if model.nonForwardActiveCount > 0 { return .running }
+        if model.hasRunningForward { return .forwarding }
         return .idle
     }
 
@@ -74,17 +81,21 @@ final class TrayController: NSObject, NSMenuDelegate {
         case .idle:
             stopAnimating()
             statusItem?.button?.image = Self.logoImage(barColor: Self.barBlue)
+        case .forwarding:
+            stopAnimating()
+            statusItem?.button?.image = Self.logoImage(barColor: Self.barGreen)
         case .running, .failure:
             startAnimating()
         }
     }
 
-    /// 启动 `_` 的呼吸（约 20fps，周期 ~1.8s）；仅有任务/失败时运行，幂等。
+    /// 启动 `_` 的呼吸（10fps，预渲染帧循环）；仅短时任务/失败时运行，幂等。
     private func startAnimating() {
         guard animTimer == nil else { return }
-        let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.animTick() }
+        let t = Timer(timeInterval: Self.frameInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.animTick() }   // 主 RunLoop 上触发，无需再跳一次 Task
         }
+        t.tolerance = 0.02
         RunLoop.main.add(t, forMode: .common)   // .common：菜单/拖动等模式下仍走动画
         animTimer = t
         animTick()   // 立即出一帧，避免首帧延迟（须在 animTimer 赋值后，否则被下方 guard 拦掉）
@@ -102,14 +113,19 @@ final class TrayController: NSObject, NSMenuDelegate {
         // 防卡色根因②（漏发布）：任务结束/失败清除偶尔没经 AppModel publish（子对象 phase 翻转不冒泡），
         // 托盘收不到刷新通知而一直转。动画期间每帧自校验真相源：转空闲即停并复位静态蓝；失败↔运行切换则换色。
         let mode = currentMode()
-        if mode == .idle { updateImage(); return }
-        if mode != lastMode { lastMode = mode }    // 运行↔失败 在动画中平滑切色，同步去重态
-        animPhase += 0.18                          // 步进：周期约 2π/0.18×0.05s ≈ 1.75s
-        let f = CGFloat((sin(animPhase) + 1) / 2)  // 0…1 平滑往返
-        let color = mode == .failure
-            ? Self.lerp(Self.barRed, Self.barRedAlt, f)    // 失败：亮红↔暖橙红脉冲告警
-            : Self.lerp(Self.barBlue, Self.barGreen, f)    // 运行：品牌蓝↔运行绿
-        statusItem?.button?.image = Self.logoImage(barColor: color)
+        if mode == .idle || mode == .forwarding { updateImage(); return }
+        if mode != lastMode { lastMode = mode }    // 运行↔失败 在动画中切色，同步去重态
+        animFrame = (animFrame + 1) % Self.frameCount
+        // 失败：亮红↔暖橙红脉冲告警；运行：品牌蓝↔运行绿。
+        statusItem?.button?.image = (mode == .failure ? failureFrames : runningFrames)[animFrame]
+    }
+
+    /// 一个呼吸周期的帧（正弦往返插值），只渲染一次反复使用。
+    private static func breathingFrames(_ a: NSColor, _ b: NSColor) -> [NSImage] {
+        (0..<frameCount).map { i in
+            let f = CGFloat((sin(Double(i) / Double(frameCount) * 2 * .pi) + 1) / 2)
+            return logoImage(barColor: lerp(a, b, f))
+        }
     }
 
     /// 在 sRGB 分量间线性插值两色。

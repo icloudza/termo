@@ -68,3 +68,18 @@ extension View {
         }
     }
 }
+
+/// 取拖入的本地文件 URL（主线程回调）。NSItemProvider 的回调在任意队列上并发到达，汇总时必须加锁。
+func loadDroppedFileURLs(_ providers: [NSItemProvider], _ completion: @escaping ([URL]) -> Void) {
+    let lock = NSLock()
+    var urls: [URL] = []
+    let group = DispatchGroup()
+    for p in providers {
+        group.enter()
+        _ = p.loadObject(ofClass: URL.self) { url, _ in
+            if let url, url.isFileURL { lock.lock(); urls.append(url); lock.unlock() }
+            group.leave()
+        }
+    }
+    group.notify(queue: .main) { completion(urls) }
+}

@@ -78,7 +78,7 @@ struct UpdateInlineControls: View {
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "zh_Hans")
+        f.locale = Locale(identifier: Bundle.main.preferredLocalizations.first ?? "zh-Hans")   // 跟随界面语言
         f.unitsStyle = .short
         return f
     }()

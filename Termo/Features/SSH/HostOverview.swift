@@ -1,9 +1,19 @@
 import SwiftUI
 
 struct HostOverview: View {
-    let host: Host
+    private let snapshot: Host
     @ObservedObject var model: AppModel
+    @ObservedObject private var sidebar = AppModel.shared.sidebarState   // 脱敏开关
     @ObservedObject private var theme = ThemeManager.shared
+
+    init(host: Host, model: AppModel) {
+        self.snapshot = host
+        self.model = model
+    }
+
+    /// Workspace 不订阅 AppModel，传进来的 host 是开标签那一刻的快照；探测结果、在线状态、延迟、编辑后的名称等
+    /// 都要从 model 取最新值（本视图已订阅 model，变化时会重算）。
+    private var host: Host { model.host(snapshot.id) ?? snapshot }
 
     var body: some View {
         ScrollView {
@@ -59,7 +69,7 @@ struct HostOverview: View {
                 }
 
                 if host.ssh != nil {
-                    if needsAuth {
+                    if needsAuth || needsKeyCheck {
                         monitorAuthPlaceholder
                     } else {
                         MonitorPanel(monitor: model.hostMonitor(for: liveHost))
@@ -76,6 +86,13 @@ struct HostOverview: View {
             model.probeHostIfNeeded(liveHost)
             model.overviewAppeared(liveHost)
         }
+        // 首次连接的主机：用户核对指纹后（needsKeyCheck 由 true→false），开始探测与采集。
+        .onChange(of: needsKeyCheck) { _, stillNeeds in
+            if !isRDP, !stillNeeds {
+                model.probeHostIfNeeded(liveHost)
+                model.overviewAppeared(liveHost)
+            }
+        }
         // 「每次询问」主机：取得本会话密码后（needsAuth 由 true→false），开始采集。
         .onChange(of: needsAuth) { stillNeeds in
             if !isRDP, !stillNeeds {
@@ -89,31 +106,35 @@ struct HostOverview: View {
     /// 是否为 RDP（远程桌面）主机：决定概览页展示哪套操作、是否走 SSH 监控生命周期。
     private var isRDP: Bool { host.isRDP }
 
-    /// 实时主机：host 是 Workspace 传入的快照，输密码等变化要从 model 取最新值（HostOverview 已 @ObservedObject model）。
-    private var liveHost: Host { model.host(host.id) ?? host }
+    private var liveHost: Host { host }
 
     /// 「每次询问」且本会话尚未输入密码：监控无法采集，显示占位而非无限「正在建立监控…」。
     private var needsAuth: Bool {
         liveHost.ssh?.authMethod == .ask && (liveHost.ssh?.password ?? "").isEmpty
     }
 
+    /// 首次连接、指纹尚未确认：监控/探测不会自动连接（不能替用户信任未知主机），等用户核对。
+    private var needsKeyCheck: Bool { model.hostsNeedingKeyCheck.contains(host.id) }
+
     private var monitorAuthPlaceholder: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let keyCheck = needsKeyCheck && !needsAuth
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text("监控").font(.system(size: 12)).foregroundStyle(Pal.overlay)
                 Circle().fill(Pal.overlay).frame(width: 6, height: 6)
             }
             HStack(spacing: 12) {
-                Image(systemName: "lock.circle").font(.system(size: 24)).foregroundStyle(Pal.overlay)
+                Image(systemName: keyCheck ? "checkmark.shield" : "lock.circle").font(.system(size: 24)).foregroundStyle(Pal.overlay)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("连接后开始监控").font(.system(size: 13)).foregroundStyle(Pal.subtext)
-                    Text("该主机为「每次询问」，输入密码连接成功后，将在本次运行内采集监控数据。")
+                    (keyCheck ? Text("验证主机后开始监控") : Text("连接后开始监控")).font(.system(size: 13)).foregroundStyle(Pal.subtext)
+                    (keyCheck ? Text("首次连接这台主机，需要先核对主机指纹；确认后才会建立监控连接。")
+                              : Text("该主机为「每次询问」，输入密码连接成功后，将在本次运行内采集监控数据。"))
                         .font(.system(size: 11)).foregroundStyle(Pal.overlay)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
                 Button { model.verifyConnect(host) } label: {
-                    Text("连接").font(.system(size: 12)).foregroundStyle(Pal.mauve)
+                    (keyCheck ? Text("验证") : Text("连接")).font(.system(size: 12)).foregroundStyle(Pal.mauve)
                         .padding(.horizontal, 14).padding(.vertical, 6)
                         .background(Pal.mauve.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
                         .contentShape(Rectangle())
@@ -282,20 +303,14 @@ struct HostOverview: View {
 
 }
 
-/// 呼吸状态点：绿色实心点 + 向外扩散渐隐的光环，表示「运行中」。
+/// 呼吸状态点：绿色实心点 + 向外扩散渐隐的光环，表示「运行中」（光环为图层动画，见 [[PulseDot]]）。
 private struct BreathingDot: View {
-    @State private var pulse = false
     var body: some View {
         ZStack {
-            Circle().fill(Pal.green.opacity(0.5))
-                .frame(width: 8, height: 8)
-                .scaleEffect(pulse ? 2.2 : 1)
-                .opacity(pulse ? 0 : 0.6)
+            PulseDot(color: Pal.green.opacity(0.5), diameter: 8, style: .ripple)
             Circle().fill(Pal.green).frame(width: 7, height: 7)
         }
-        .onAppear {
-            withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulse = true }
-        }
+        .frame(width: 8, height: 8)
     }
 }
 
@@ -316,11 +331,14 @@ private struct MonitorPanel: View {
             HStack(spacing: 7) {
                 Text("监控").font(.system(size: 12)).foregroundStyle(Pal.overlay)
                 Circle().fill(monitor.phase == .live ? Self.green : Pal.overlay).frame(width: 6, height: 6)
-                if !settings.monitorNoticeHidden && !settings.monitorNoticeAckedThisSession {
+                if isStale {
+                    Text("数据已停止更新 · 监控连接中断，正在重试").font(.system(size: 11)).foregroundStyle(Pal.yellow)
+                        .lineLimit(1)
+                } else if !settings.monitorNoticeHidden && !settings.monitorNoticeAckedThisSession {
                     Text("提示：本监控仅进行数据采集与状态读取，不会在目标机器内执行或部署任何 shell 脚本。")
-                        .font(.system(size: 8)).foregroundStyle(Pal.overlay).lineLimit(1)
+                        .font(.system(size: 11)).foregroundStyle(Pal.overlay).lineLimit(1)
                     Button { settings.monitorNoticeAckedThisSession = true } label: {
-                        Text("我已知晓").font(.system(size: 8, weight: .medium)).foregroundStyle(Pal.mauve)
+                        Text("我已知晓").font(.system(size: 11, weight: .medium)).foregroundStyle(Pal.mauve)
                     }
                     .buttonStyle(.plain)
                     .pointerCursor()
@@ -332,14 +350,22 @@ private struct MonitorPanel: View {
         }
     }
 
+    /// 有旧数据但连接已断：数据不再更新，必须让人看出来，否则会把几分钟前的 CPU、网速当成实时值。
+    private var isStale: Bool { monitor.metrics != nil && monitor.phase != .live }
+
     @ViewBuilder
     private var content: some View {
         if let m = monitor.metrics {
-            cpuSection(m)
-            memorySection(m)
-            if !m.gpus.isEmpty { gpuSection(m.gpus) }
-            if !m.disks.isEmpty { diskSection(m.disks) }
-            networkSection(m)
+            VStack(alignment: .leading, spacing: 18) {
+                cpuSection(m)
+                memorySection(m)
+                if !m.gpus.isEmpty { gpuSection(m.gpus) }
+                if !m.disks.isEmpty { diskSection(m.disks) }
+                networkSection(m)
+            }
+            .opacity(isStale ? 0.45 : 1)
+            .saturation(isStale ? 0 : 1)
+            .animation(.easeOut(duration: 0.2), value: isStale)
         } else if monitor.phase == .unsupported {
             Text("该系统暂不支持实时监控")
                 .font(.system(size: 13)).foregroundStyle(Pal.overlay).padding(.vertical, 6)
@@ -576,7 +602,7 @@ private struct MonitorPanel: View {
                 plainNum(left, size: 10, design: .monospaced, color: Pal.overlay)
                 Spacer()
                 Text(critical ? "CRITICAL" : right)
-                    .font(.system(size: 9, weight: critical ? .bold : .regular))
+                    .font(.system(size: 10, weight: critical ? .bold : .regular))
                     .foregroundStyle(critical ? Pal.red : Pal.overlay)
             }
         }
@@ -622,7 +648,7 @@ private struct MonitorPanel: View {
     private func human(_ kb: Int64) -> String {
         let f = ByteCountFormatter()
         f.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
-        f.countStyle = .decimal
+        f.countStyle = .memory   // 按 1024 进位（同 free -h / df -h）：16 GiB 内存不再显示成「17.18 GB」
         return f.string(fromByteCount: kb * 1024)
     }
 
@@ -647,65 +673,119 @@ private struct MonitorPanel: View {
 }
 
 /// 网络波动折线图：下行（绿）、上行（蓝）两条平滑曲线，传送带式匀速左滑。
-/// 两条曲线各用原生 Shape（矢量图层）描边 + TimelineView 限制重绘帧率，取代 Canvas 的位图绘制层（更省内存）。
-/// 滚动每 1~2 秒才左移约一格、速度极慢，20fps 肉眼丝滑。滚动相位 = 距上一帧采样的时间 / 采样间隔，时间驱动、平滑。
-private struct NetSparkline: View {
+/// 每来一帧采样只算一次路径，左移一格的平移交给 Core Animation（渲染服务器驱动）：
+/// 以前用 TimelineView 每秒 20 次在主线程重建两条路径，概览开着就一直耗 CPU。
+private struct NetSparkline: NSViewRepresentable {
     let samples: [NetSample]
     let tick: Int
     let interval: Double
     let down: Color
     let up: Color
-    @State private var lastTick: Date = .distantPast
 
+    func makeNSView(context: Context) -> NetSparklineView { NetSparklineView() }
+
+    func updateNSView(_ v: NetSparklineView, context: Context) {
+        v.update(samples: samples, tick: tick, interval: interval, down: NSColor(down), up: NSColor(up))
+    }
+}
+
+final class NetSparklineView: NSView {
     private static let visible = 40
-    private static let fps = 20.0
-    private static let stroke = StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+    private let content = CALayer()
+    private let rxLayer = CAShapeLayer()
+    private let txLayer = CAShapeLayer()
+    private var samples: [NetSample] = []
+    private var tick = -1
+    private var interval = 2.0
+    private var measured: Double?               // 实测采样间隔（平滑）：远端脚本自身耗时让实际间隔略大于 2 秒
+    private var lastTickTime: CFTimeInterval?
+    private var lastSize: CGSize = .zero
 
-    var body: some View {
-        // rx/tx/maxV 只随数据帧变化，TimelineView 重绘时复用（不每帧重算）。
-        let maxV = max(1, samples.flatMap { [$0.rx, $0.tx] }.max() ?? 1)
-        let rx = win(samples.map(\.rx), maxV)
-        let tx = win(samples.map(\.tx), maxV)
-        TimelineView(.animation(minimumInterval: 1.0 / Self.fps)) { tl in
-            let phase = phase(at: tl.date)
-            ZStack {
-                NetCurve(values: rx, phase: phase, visible: Self.visible).stroke(down.opacity(0.9), style: Self.stroke)
-                NetCurve(values: tx, phase: phase, visible: Self.visible).stroke(up.opacity(0.9), style: Self.stroke)
-            }
-            .clipped()   // Shape 不像 Canvas 自动裁，需裁掉两侧的屏外点
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.masksToBounds = true            // 两侧各有一个屏外点，需裁掉
+        for l in [rxLayer, txLayer] {
+            l.fillColor = nil
+            l.lineWidth = 1.5
+            l.lineCap = .round
+            l.lineJoin = .round
+            content.addSublayer(l)
         }
-        .onChange(of: tick) { _ in lastTick = Date() }
+        layer?.addSublayer(content)
     }
 
-    /// 滚动相位 0..1：距上一帧采样过去的比例；尚无采样时停在 1（静止到位）。
-    private func phase(at now: Date) -> CGFloat {
-        guard lastTick != .distantPast else { return 1 }
-        return CGFloat(min(1, max(0, now.timeIntervalSince(lastTick) / interval)))
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func update(samples: [NetSample], tick: Int, interval: Double, down: NSColor, up: NSColor) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        rxLayer.strokeColor = down.withAlphaComponent(0.9).cgColor
+        txLayer.strokeColor = up.withAlphaComponent(0.9).cgColor
+        CATransaction.commit()
+        self.interval = max(0.2, interval)
+        guard tick != self.tick else { return }
+        let animate = self.tick >= 0 && !samples.isEmpty
+        let now = CACurrentMediaTime()
+        if let last = lastTickTime {
+            let dt = min(max(now - last, 0.2), self.interval * 3)          // 断流重连等异常间隔不计入
+            measured = measured.map { $0 * 0.7 + dt * 0.3 } ?? dt
+        }
+        lastTickTime = now
+        self.tick = tick
+        self.samples = samples
+        redraw(slide: animate)
     }
 
-    /// 取最近 visible+2 个样本（两侧各留一个屏幕外点）、归一化到 0..1；不足时前端用首值补齐，保证点数恒定、平移无缝。
-    private func win(_ raw: [Double], _ maxV: Double) -> [Double] {
+    override func layout() {
+        super.layout()
+        guard bounds.size != lastSize else { return }
+        lastSize = bounds.size
+        redraw(slide: false)
+    }
+
+    /// 按当前样本重画两条曲线（第 i 点在 x=i*step），再从原位平移到左移一格；尺寸变化时直接停在终点。
+    private func redraw(slide: Bool) {
+        let size = bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        content.frame = CGRect(origin: .zero, size: size)
+        for l in [rxLayer, txLayer] { l.frame = content.bounds }
         let n = Self.visible + 2
+        let maxV = max(1, samples.flatMap { [$0.rx, $0.tx] }.max() ?? 1)
+        let step = size.width / CGFloat(Self.visible)
+        rxLayer.path = Self.curve(Self.window(samples.map(\.rx), maxV, n), step: step, height: size.height)
+        txLayer.path = Self.curve(Self.window(samples.map(\.tx), maxV, n), step: step, height: size.height)
+        content.removeAnimation(forKey: "slide")
+        content.transform = CATransform3DMakeTranslation(-step, 0, 0)    // 终态：左移一格
+        CATransaction.commit()
+        guard slide else { return }
+        let a = CABasicAnimation(keyPath: "transform.translation.x")
+        a.fromValue = 0
+        a.toValue = -step
+        a.duration = measured ?? interval   // 滑完一格恰好接上下一帧，不停顿再跳
+        a.timingFunction = CAMediaTimingFunction(name: .linear)
+        content.add(a, forKey: "slide")
+    }
+
+    /// 取最近 n 个样本并归一化到 0..1；不足时前端用首值补齐，保证点数恒定、平移无缝。
+    private static func window(_ raw: [Double], _ maxV: Double, _ n: Int) -> [Double] {
         let norm = raw.map { min(1, max(0, $0 / maxV)) }
         if norm.count >= n { return Array(norm.suffix(n)) }
         return Array(repeating: norm.first ?? 0, count: n - norm.count) + norm
     }
-}
 
-/// 一条 Catmull-Rom 平滑折线（已归一化的点，count = visible+2）。
-/// 第 i 点画在 x=(i-phase)*step，随 phase 0→1 整条左移一格；两侧各留一个屏外点，接缝 [0,width] 连续、左右缘不弹动。
-private struct NetCurve: Shape {
-    let values: [Double]
-    let phase: CGFloat
-    let visible: Int
-
-    func path(in rect: CGRect) -> Path {
-        guard values.count > 1 else { return Path() }
-        let step = rect.width / CGFloat(visible)
+    /// Catmull-Rom 平滑折线（flipped 坐标，y=0 在顶部）。
+    private static func curve(_ values: [Double], step: CGFloat, height: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        guard values.count > 1 else { return path }
         let pts = values.enumerated().map { i, y in
-            CGPoint(x: (CGFloat(i) - phase) * step, y: rect.height * (1 - CGFloat(min(1, max(0, y)))))
+            CGPoint(x: CGFloat(i) * step, y: height * (1 - CGFloat(y)))
         }
-        var path = Path()
         path.move(to: pts[0])
         for i in 0..<pts.count - 1 {
             let p0 = i > 0 ? pts[i - 1] : pts[i]

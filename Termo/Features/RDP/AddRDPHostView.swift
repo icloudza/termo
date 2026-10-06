@@ -6,7 +6,7 @@ struct AddRDPHostView: View {
     @ObservedObject var model: AppModel
     var editing: Host? = nil
     @ObservedObject private var theme = ThemeManager.shared
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modalDismiss) private var dismiss
 
     @State private var name = ""
     @State private var group = ""
@@ -24,9 +24,27 @@ struct AddRDPHostView: View {
 
     private var isEditing: Bool { editing != nil }
 
-    private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty
-            && !address.trimmingCharacters(in: .whitespaces).isEmpty
+    private var canSave: Bool { saveBlocker == nil }
+
+    /// 不能保存的原因（底部提示）。数字留空用默认值，填了就必须合法。
+    private var saveBlocker: String? {
+        let noName = name.trimmingCharacters(in: .whitespaces).isEmpty
+        let noAddr = address.trimmingCharacters(in: .whitespaces).isEmpty
+        if noName && noAddr { return String(localized: "请填写名称和地址") }
+        if noName { return String(localized: "请填写名称") }
+        if noAddr { return String(localized: "请填写地址") }
+        if !Self.validInt(port, in: 1...65535) { return String(localized: "端口需在 1–65535 之间") }
+        if !Self.validInt(width, in: 200...8192) || !Self.validInt(height, in: 200...8192) {
+            return String(localized: "分辨率需在 200–8192 之间")
+        }
+        return nil
+    }
+
+    private static func validInt(_ s: String, in range: ClosedRange<Int>) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty { return true }
+        guard let v = Int(t) else { return false }
+        return range.contains(v)
     }
 
     private var resolvedGroup: String {
@@ -37,7 +55,7 @@ struct AddRDPHostView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     groupSelector
@@ -78,12 +96,11 @@ struct AddRDPHostView: View {
                 .padding(22)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             footer
         }
         .frame(width: 560, height: 580)
         .background(Pal.solidBase)
-        .background(NoInitialFocus())   // 打开时不默认把光标聚焦到「名称」
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .onAppear {
             guard !didLoad else { return }
@@ -116,6 +133,9 @@ struct AddRDPHostView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
+            if let blocker = saveBlocker {
+                Text(blocker).font(.system(size: 11)).foregroundStyle(Pal.overlay).lineLimit(1)
+            }
             Spacer()
             SecondaryButton(title: "取消") { dismiss() }
             PrimaryButton(title: isEditing ? "保存" : "添加", enabled: canSave) { save() }
@@ -142,11 +162,11 @@ struct AddRDPHostView: View {
         return RDPConnection(
             user: u.isEmpty ? "Administrator" : u,
             host: address.trimmingCharacters(in: .whitespaces),
-            port: Int(port) ?? 3389,
+            port: Int(port.trimmingCharacters(in: .whitespaces)) ?? 3389,
             password: password,
             domain: domain.trimmingCharacters(in: .whitespaces),
-            width: Int(width) ?? 1920,
-            height: Int(height) ?? 1080,
+            width: Int(width.trimmingCharacters(in: .whitespaces)) ?? 1920,
+            height: Int(height.trimmingCharacters(in: .whitespaces)) ?? 1080,
             colorDepth: colorDepth,
             security: security
         )

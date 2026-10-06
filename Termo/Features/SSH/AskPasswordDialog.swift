@@ -15,13 +15,15 @@ struct AskPasswordDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea().onTapGesture(perform: onCancel)
+            ModalBackdrop(onTap: onCancel)
             VStack(alignment: .leading, spacing: 14) {
                 Text("输入密码").font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
                 Text("连接 \(target)，仅本次使用、不保存。")
                     .font(.system(size: 12)).foregroundStyle(Pal.subtext)
                     .fixedSize(horizontal: false, vertical: true)
-                ThemedSecureField(placeholder: "密码", text: $password)
+                ThemedSecureField(placeholder: "密码", text: $password, autofocus: true) {
+                    if !password.isEmpty { onConfirm(password) }
+                }
                 HStack(spacing: 10) {
                     Spacer()
                     SecondaryButton(title: "取消", action: onCancel)

@@ -26,7 +26,7 @@ struct RenameDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea().onTapGesture(perform: onCancel)
+            ModalBackdrop(onTap: onCancel)
             VStack(alignment: .leading, spacing: 14) {
                 Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
                 ThemedTextField(placeholder: "名称", text: $name, autofocus: true, onSubmit: submit)
@@ -51,6 +51,9 @@ struct ChmodDialog: View {
     let onCancel: () -> Void
     @State private var mode: Int
     @State private var octalText: String
+    // setuid/setgid/sticky：界面只编辑 rwx，但应用时必须带回去（setstat 写的是完整 mode），
+    // 否则对 2775 / 1777 之类的目录什么都不改点「应用」，特殊位也会被清掉。输入 4 位权限码可改它们。
+    @State private var special: Int
     @ObservedObject private var theme = ThemeManager.shared
 
     init(fileName: String, initialMode: Int, onConfirm: @escaping (Int) -> Void, onCancel: @escaping () -> Void) {
@@ -58,6 +61,7 @@ struct ChmodDialog: View {
         self.onConfirm = onConfirm
         self.onCancel = onCancel
         _mode = State(initialValue: initialMode & 0o777)
+        _special = State(initialValue: initialMode & 0o7000)
         _octalText = State(initialValue: String(format: "%03o", initialMode & 0o777))
     }
 
@@ -72,7 +76,7 @@ struct ChmodDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea().onTapGesture(perform: onCancel)
+            ModalBackdrop(onTap: onCancel)
             VStack(alignment: .leading, spacing: 12) {
                 Text("权限").font(.system(size: 15, weight: .semibold)).foregroundStyle(Pal.text)
                 Text(fileName).font(.system(size: 11, design: .monospaced))
@@ -82,12 +86,14 @@ struct ChmodDialog: View {
 
                 HStack(spacing: 8) {
                     Text("权限码").font(.system(size: 12)).foregroundStyle(Pal.subtext)
-                    ThemedTextField(placeholder: "755", text: $octalText)
+                    ThemedTextField(placeholder: "755", text: $octalText, onSubmit: { onConfirm(special | (mode & 0o777)) })
                         .frame(width: 72)
                         .onChange(of: octalText) { t in
-                            // 仅取末 3 位八进制数字解析回 mode；不反写 octalText，避免回环更新
-                            let digits = String(t.filter { "01234567".contains($0) }.suffix(3))
+                            // 取末 3 位八进制数字解析回 mode（输入 4 位时首位为特殊位）；不反写 octalText，避免回环更新
+                            let all = t.filter { "01234567".contains($0) }
+                            let digits = String(all.suffix(3))
                             if let v = Int(digits, radix: 8) { mode = v & 0o777 }
+                            if all.count >= 4, let sp = Int(String(all.suffix(4).prefix(1)), radix: 8) { special = sp << 9 }
                         }
                     Spacer()
                     Text(symbolic).font(.system(size: 11, design: .monospaced)).foregroundStyle(Pal.overlay)
@@ -96,7 +102,7 @@ struct ChmodDialog: View {
                 HStack(spacing: 10) {
                     Spacer()
                     SecondaryButton(title: "取消", action: onCancel)
-                    PrimaryButton(title: "应用") { onConfirm(mode & 0o777) }
+                    PrimaryButton(title: "应用") { onConfirm(special | (mode & 0o777)) }
                 }
                 .padding(.top, 2)
             }

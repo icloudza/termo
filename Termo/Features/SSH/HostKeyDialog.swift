@@ -10,7 +10,7 @@ struct HostKeyDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
+            ModalBackdrop { pending.respond(.cancel) }   // 点空白处 = 取消连接（安全默认）
 
             VStack(alignment: .leading, spacing: 0) {
                 // 标题栏
@@ -63,7 +63,7 @@ struct HostKeyDialog: View {
 
                 Button { pending.respond(.once) } label: {
                     Text("仅本次继续（不保存）")
-                        .font(.system(size: 13)).foregroundStyle(Color(hex: 0x89b4fa))
+                        .font(.system(size: 13)).foregroundStyle(Pal.mauve)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -72,24 +72,10 @@ struct HostKeyDialog: View {
 
                 HStack(spacing: 10) {
                     Spacer()
-                    Button { pending.respond(.cancel) } label: {
-                        Text("取消连接").font(.system(size: 13)).foregroundStyle(Pal.text)
-                            .padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Pal.fill(0.10), lineWidth: 1))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-
-                    Button { pending.respond(.save) } label: {
-                        Text("信任并保存").font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
-                            .padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(Pal.green, in: RoundedRectangle(cornerRadius: 8))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
+                    SecondaryButton(title: "取消连接") { pending.respond(.cancel) }
+                    // 指纹变更（疑似中间人）时信任是危险操作，按钮转红。
+                    Button { pending.respond(.save) } label: { Text("信任并保存") }
+                        .buttonStyle(ThemedButtonStyle(kind: info.changed ? .destructive : .success))
                 }
             }
             .padding(22)
@@ -102,19 +88,6 @@ struct HostKeyDialog: View {
     }
 
     private func copyButton(_ title: String, _ value: String) -> some View {
-        Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(value, forType: .string)
-        } label: {
-            Text(title).font(.system(size: 12)).foregroundStyle(Pal.subtext)
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Pal.fill(0.10), lineWidth: 1))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor(!value.isEmpty)
-        .disabled(value.isEmpty)
-        .opacity(value.isEmpty ? 0.4 : 1)
+        CopyChip(title: title, value: value)
     }
 }

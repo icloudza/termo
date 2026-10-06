@@ -6,26 +6,30 @@ import UniformTypeIdentifiers
 @MainActor
 final class BrowserState: ObservableObject, FileOpsTarget {
     @Published var path: String = ""
-    @Published var entries: [RemoteFile] = []
+    @Published var entries: [RemoteFile] = [] { didSet { refreshVisible() } }
     @Published var phase: LoadPhase = .loading
-    @Published var showHidden = false
+    @Published var showHidden = false { didSet { refreshVisible() } }
     @Published var selection: Set<String> = []   // 选中文件路径（多选下载）
     @Published var hoveredPath: String? = nil     // 鼠标悬停的行（由统一交互层上报）
+    @Published var cursorPath: String? = nil      // 键盘光标所在行（方向键移动，列表随之滚动）
     var marqueeBase: Set<String> = []             // 框选开始前的选择快照（ESC 取消时恢复）
 
     private let fs: RemoteFS
     private var backStack: [String] = []
     private var loadTask: Task<Void, Never>?
     private var started = false
+    // 上一次失败的跳转：重试要重试它，而不是重载停留的旧目录。
+    private var failedLoad: (path: String, from: String?)?
 
     init(fs: RemoteFS) { self.fs = fs }
 
     var canGoBack: Bool { !backStack.isEmpty }
     var canGoUp: Bool { path != "/" && !path.isEmpty }
 
-    /// 可见条目（按隐藏文件开关过滤）。
-    var visible: [RemoteFile] {
-        showHidden ? entries : entries.filter { !$0.name.hasPrefix(".") }
+    /// 可见条目（按隐藏文件开关过滤）。存下来而不是每次现算：body、悬停、框选里会被反复访问，大目录下每次 O(n)。
+    private(set) var visible: [RemoteFile] = []
+    private func refreshVisible() {
+        visible = showHidden ? entries : entries.filter { !$0.name.hasPrefix(".") }
     }
 
     /// 当前选中的条目。
@@ -46,6 +50,24 @@ final class BrowserState: ObservableObject, FileOpsTarget {
             selection = [p]
             anchorPath = p
         }
+        cursorPath = p
+    }
+
+    /// 方向键移动（⇧ 扩展选区，同 Finder）；delta 取 ±Int.max 表示到首/尾。
+    func moveCursor(_ delta: Int, extend: Bool) {
+        let paths = visible.map(\.path)
+        guard !paths.isEmpty else { return }
+        let cur = cursorPath.flatMap { paths.firstIndex(of: $0) } ?? (delta > 0 ? -1 : paths.count)
+        let next = delta == .max ? paths.count - 1 : delta == .min ? 0 : min(max(cur + delta, 0), paths.count - 1)
+        let p = paths[next]
+        if extend, let anchor = anchorPath ?? cursorPath, let a = paths.firstIndex(of: anchor) {
+            selection = Set(paths[min(a, next)...max(a, next)])
+            anchorPath = anchor
+        } else {
+            selection = [p]
+            anchorPath = p
+        }
+        cursorPath = p
     }
 
     /// 首次出现时加载家目录。
@@ -61,6 +83,18 @@ final class BrowserState: ObservableObject, FileOpsTarget {
     func enter(_ file: RemoteFile) {
         guard file.isDir else { return }
         navigate(to: file.path)
+    }
+
+    /// 双击/回车打开：目录进入，文件交给编辑器；软链接先看指向的是目录还是文件（如 /var/www → /data/www）。
+    func open(_ file: RemoteFile, openFile: @escaping (RemoteFile) -> Void) {
+        switch file.kind {
+        case .directory: navigate(to: file.path)
+        case .symlink:
+            Task {
+                if await fs.isDirectory(file.path) { navigate(to: file.path) } else { openFile(file) }
+            }
+        default: openFile(file)
+        }
     }
 
     func goUp() {
@@ -81,11 +115,26 @@ final class BrowserState: ObservableObject, FileOpsTarget {
         loadTask = Task { await load(p, pushBack: false) }
     }
 
-    /// 网络恢复后重连：重置底层 SFTP 连接并重载当前目录；未浏览过则跳过。
+    /// 出错页的「重试」：重试失败的那次跳转；连家目录都没打开过时重新走一遍首次加载。
+    func retry() {
+        loadTask?.cancel()
+        if path.isEmpty {
+            // 首次加载就失败：重新解析家目录（失败时 home() 会退回 "/"，不能拿它当要重试的目录）
+            failedLoad = nil
+            started = false
+            startIfNeeded()
+        } else if let f = failedLoad {
+            loadTask = Task { await load(f.path, pushBack: f.from != nil, from: f.from) }
+        } else {
+            reload()
+        }
+    }
+
+    /// 网络恢复后重连：重置底层 SFTP 连接并重载（或重试失败的）目录；从未发起过加载则跳过。
     func reconnect() {
-        guard !path.isEmpty else { return }
+        guard started else { return }
         fs.resetForReconnect()
-        reload()
+        retry()
     }
 
     private func navigate(to newPath: String) {
@@ -97,18 +146,28 @@ final class BrowserState: ObservableObject, FileOpsTarget {
     }
 
     private func load(_ newPath: String, pushBack: Bool, from: String? = nil) async {
-        phase = .loading
+        // 同目录刷新（删除/重命名/上传后）：保留当前列表直到新数据到达，不闪成转圈、不丢滚动位置与选择。
+        let refreshing = newPath == path && phase == .loaded
+        if !refreshing { phase = .loading }
         let result = await fs.list(newPath)
         if Task.isCancelled { return }
         switch result {
         case .success(let files):
+            failedLoad = nil
             if pushBack, let from, !from.isEmpty { backStack.append(from) }
             path = newPath
             entries = files
-            selection = []      // 切目录清空选择
-            anchorPath = nil
+            if refreshing {
+                let alive = Set(files.map(\.path))
+                if !selection.isSubset(of: alive) { selection = selection.intersection(alive) }
+            } else {
+                selection = []      // 切目录清空选择
+                anchorPath = nil
+                cursorPath = nil
+            }
             phase = .loaded
         case .failure(let e):
+            failedLoad = (newPath, pushBack ? from : nil)
             phase = .error(e.message)
         }
     }
@@ -174,9 +233,9 @@ struct FileBrowser: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             columnHeader
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             content
         }
         .background(Pal.base)
@@ -211,16 +270,7 @@ struct FileBrowser: View {
     }
 
     private func loadURLs(_ providers: [NSItemProvider], _ completion: @escaping ([URL]) -> Void) {
-        var urls: [URL] = []
-        let group = DispatchGroup()
-        for p in providers {
-            group.enter()
-            _ = p.loadObject(ofClass: URL.self) { url, _ in
-                if let url, url.isFileURL { urls.append(url) }
-                group.leave()
-            }
-        }
-        group.notify(queue: .main) { completion(urls) }
+        loadDroppedFileURLs(providers, completion)
     }
 
     // MARK: - 工具栏
@@ -238,8 +288,9 @@ struct FileBrowser: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
 
-            if !state.selectedFiles.isEmpty {
-                let dlFiles = state.selectedFiles.filter { !$0.isDir }
+            let selectedFiles = state.selectedFiles
+            if !selectedFiles.isEmpty {
+                let dlFiles = selectedFiles.filter { !$0.isDir }
                 if !dlFiles.isEmpty {
                     Button { model.downloadFiles(dlFiles, host: host) } label: {
                         HStack(spacing: 5) {
@@ -253,12 +304,12 @@ struct FileBrowser: View {
                     }
                     .buttonStyle(.plain)
                     .pointerCursor()
-                    .help(String(localized: "下载选中的文件"))
+                    .tooltip(String(localized: "下载选中的文件"))
                 }
-                Button { model.requestBatchDelete(state.selectedFiles, host: host, target: state) } label: {
+                Button { model.requestBatchDelete(selectedFiles, host: host, target: state) } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "trash").font(.system(size: 11))
-                        Text("删除 (\(state.selectedFiles.count))").font(.system(size: 11, weight: .medium))
+                        Text("删除 (\(selectedFiles.count))").font(.system(size: 11, weight: .medium))
                     }
                     .foregroundStyle(Pal.red)
                     .padding(.horizontal, 9).frame(height: 26)
@@ -267,7 +318,7 @@ struct FileBrowser: View {
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
-                .help(String(localized: "删除选中的项目"))
+                .tooltip(String(localized: "删除选中的项目"))
             }
 
             Button { model.beginUpload(into: currentDir, host: host) } label: {
@@ -277,7 +328,7 @@ struct FileBrowser: View {
             }
             .buttonStyle(.plain)
             .pointerCursor(!state.path.isEmpty)
-            .help(String(localized: "上传文件到当前目录"))
+            .tooltip(String(localized: "上传文件到当前目录"))
             .disabled(state.path.isEmpty)
 
             Button { state.showHidden.toggle() } label: {
@@ -287,7 +338,7 @@ struct FileBrowser: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .help(state.showHidden ? String(localized: "隐藏点文件") : String(localized: "显示点文件"))
+            .tooltip(state.showHidden ? String(localized: "隐藏点文件") : String(localized: "显示点文件"))
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
     }
@@ -321,14 +372,14 @@ struct FileBrowser: View {
     private var content: some View {
         switch state.phase {
         case .loading:
-            centered { ProgressView().controlSize(.small) }
+            centered { DelayedSpinner() }
         case .error(let msg):
             centered {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 24)).foregroundStyle(Pal.yellow)
                     Text(msg).font(.system(size: 12)).foregroundStyle(Pal.subtext)
                         .multilineTextAlignment(.center).textSelection(.enabled)
-                    Button("重试") { state.reload() }.buttonStyle(.plain).pointerCursor().foregroundStyle(Pal.mauve)
+                    TintedButton(title: "重试") { state.retry() }
                 }
                 .padding(.horizontal, 40)
             }
@@ -336,6 +387,7 @@ struct FileBrowser: View {
             // 整张列表的鼠标交互（单/双击、悬停、光标、橡皮筋框选、右键菜单）由统一的 AppKit 交互层接管，
             // 行只负责展示。用 GeometryReader 让内容至少铺满视口，空白区也参与命中。
             GeometryReader { geo in
+                ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(state.visible) { file in
@@ -359,15 +411,21 @@ struct FileBrowser: View {
                             onPrimaryClick: { i, cmd, shift in handlePrimaryClick(i, cmd: cmd, shift: shift) },
                             onOpen: { i in handleOpen(i) },
                             onHover: { i in
-                                state.hoveredPath = i.flatMap { state.visible.indices.contains($0) ? state.visible[$0].path : nil }
+                                // 每次鼠标移动都会回调：同一行内移动不写，避免整张列表逐帧重算
+                                let p = i.flatMap { state.visible.indices.contains($0) ? state.visible[$0].path : nil }
+                                if p != state.hoveredPath { state.hoveredPath = p }
                             },
                             onMarquee: { idxs in handleMarquee(idxs) },
                             onMarqueeBegin: { state.marqueeBase = state.selection },
                             onMarqueeCancel: { state.selection = state.marqueeBase },
                             onEscape: { state.selection = [] },
+                            onKey: { key in handleKey(key) },
                             makeMenu: { i in makeContextMenu(forIndex: i) }
                         )
                     )
+                }
+                // 键盘移动到视口外的行时跟着滚过去（不带锚点 = 只滚最小距离）。
+                .onChange(of: state.cursorPath) { _, p in if let p { proxy.scrollTo(p) } }
                 }
             }
         }
@@ -381,14 +439,30 @@ struct FileBrowser: View {
         }
     }
 
+    private func handleKey(_ key: FileListInteraction.FileListKey) {
+        switch key {
+        case .move(let d, let extend): state.moveCursor(d, extend: extend)
+        case .open:
+            let sel = state.selectedFiles
+            if sel.count == 1 { state.open(sel[0], openFile: onOpenFile) }
+        case .delete:
+            let sel = state.selectedFiles
+            if !sel.isEmpty { model.requestBatchDelete(sel, host: host, target: state) }
+        case .selectAll: state.selection = Set(state.visible.map(\.path))
+        case .up: state.goUp()
+        case .back: state.goBack()
+        }
+    }
+
     private func handleOpen(_ i: Int?) {
         guard let i, state.visible.indices.contains(i) else { return }
         let f = state.visible[i]
-        if f.isDir { state.enter(f) } else { onOpenFile(f) }
+        state.open(f, openFile: onOpenFile)
     }
 
     private func handleMarquee(_ idxs: Set<Int>) {
-        state.selection = Set(idxs.compactMap { state.visible.indices.contains($0) ? state.visible[$0].path : nil })
+        let sel = Set(idxs.compactMap { state.visible.indices.contains($0) ? state.visible[$0].path : nil })
+        if sel != state.selection { state.selection = sel }   // 框选拖动逐帧回调，选区没变不写
     }
 
     // MARK: - 右键菜单（AppKit，因统一交互层在前会拦截 SwiftUI 的 contextMenu）
@@ -547,7 +621,10 @@ struct FileListInteraction: NSViewRepresentable {
     var onMarqueeBegin: () -> Void
     var onMarqueeCancel: () -> Void
     var onEscape: () -> Void
+    var onKey: (FileListKey) -> Void
     var makeMenu: (_ index: Int?) -> NSMenu?
+
+    enum FileListKey { case move(Int, extend: Bool), open, delete, selectAll, up, back }
 
     func makeNSView(context: Context) -> InteractionView { InteractionView() }
 
@@ -562,6 +639,7 @@ struct FileListInteraction: NSViewRepresentable {
         v.onMarqueeBegin = onMarqueeBegin
         v.onMarqueeCancel = onMarqueeCancel
         v.onEscape = onEscape
+        v.onKey = onKey
         v.makeMenu = makeMenu
     }
 
@@ -576,6 +654,7 @@ struct FileListInteraction: NSViewRepresentable {
         var onMarqueeBegin: () -> Void = {}
         var onMarqueeCancel: () -> Void = {}
         var onEscape: () -> Void = {}
+        var onKey: (FileListKey) -> Void = { _ in }
         var makeMenu: (Int?) -> NSMenu? = { _ in nil }
 
         private var dragStart: NSPoint?
@@ -676,6 +755,32 @@ struct FileListInteraction: NSViewRepresentable {
             }
             let p = convert(event.locationInWindow, from: nil)
             onPrimaryClick(index(at: p), event.modifierFlags.contains(.command), event.modifierFlags.contains(.shift))
+        }
+
+        // 键盘：↑↓ 移动（⇧ 扩展）、Home/End、回车打开、⌘⌫ 删除、⌘↑ 上一级、⌘[ 后退、⌘A 全选（同 Finder）。
+        // 之前点进列表后这些键都只会「嘟」一声。
+        override func keyDown(with event: NSEvent) {
+            // 弹窗打开时列表可能仍是第一响应者：回车、方向键不能去操作弹窗背后的列表（如删除确认时顺手回车打开了文件）。
+            if AppModel.shared.isModalPresented { super.keyDown(with: event); return }
+            let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            let cmd = mods.contains(.command), shift = mods.contains(.shift)
+            switch Int(event.keyCode) {
+            case 125: onKey(.move(1, extend: shift))
+            case 126: cmd ? onKey(.up) : onKey(.move(-1, extend: shift))
+            case 115: onKey(.move(.min, extend: shift))
+            case 119: onKey(.move(.max, extend: shift))
+            case 36, 76: onKey(.open)
+            case 51 where cmd: onKey(.delete)
+            case 33 where cmd: onKey(.back)
+            case 0 where cmd: onKey(.selectAll)
+            default: super.keyDown(with: event)
+            }
+        }
+
+        // 主菜单「全选」⌘A 经响应链落到这里（焦点在列表上时）。
+        override func selectAll(_ sender: Any?) {
+            guard !AppModel.shared.isModalPresented else { return }
+            onKey(.selectAll)
         }
 
         // ESC：框选拖拽中 → 撤销本次框选并恢复原选择；否则（已选中状态）→ 清空选择。

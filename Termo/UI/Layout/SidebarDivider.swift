@@ -50,7 +50,7 @@ struct SidebarDivider: View {
         }
         .onTapGesture(count: 2) {
             // 瞬间开合(不加动画):滑动动画会逐帧重排工作区 → 卡顿。
-            layout.sidebarWidth = layout.sidebarWidth < 10 ? 224 : 0
+            layout.toggle()
         }
         .gesture(
             DragGesture(minimumDistance: 2, coordinateSpace: .global)
@@ -69,7 +69,7 @@ struct SidebarDivider: View {
                     isDragging = false
                     var w = pendingWidth
                     if w < collapseThreshold { w = 0 }
-                    else if w < 140 { w = 140 }
+                    else if w < LayoutModel.minExpanded { w = LayoutModel.minExpanded }
                     // 松手:带轻动画滑到目标位置(从冻结的起始宽度补间到 w),避免面板"硬跳"。
                     // 代价:动画期间宽度逐帧变化 → 终端会逐帧 reflow;非终端标签则顺滑。
                     // 若觉得这段滑动仍顿,把本行换回 `layout.sidebarWidth = w`(瞬间到位)即可。

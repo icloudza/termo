@@ -11,7 +11,7 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-            Divider().overlay(Pal.fill(0.06))
+            Hairline(vertical: true)
             content
         }
         .frame(width: 720, height: 480)
@@ -34,6 +34,11 @@ struct SettingsView: View {
     /// 干净重启：先关所有模态 sheet（SwiftUI 的 .sheet 会拦截 NSApp.terminate，不先关就会
     /// 「新实例已起、旧实例退不掉」双开），留一拍让其关闭，再启动新实例并退出旧进程。
     static func relaunch() {
+        // 新实例会先起来再退旧实例：退出若被「未保存的文件」拦下就会出现两个实例，所以先挡在这里。
+        guard AppModel.shared.unsavedEditorNames.isEmpty else {
+            AppModel.shared.snippetNotice = String(localized: "有未保存的文件，请先保存或关闭后再重启。")
+            return
+        }
         AppModel.shared.dismissAllSheets()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             let cfg = NSWorkspace.OpenConfiguration()
@@ -286,7 +291,7 @@ struct SettingsView: View {
                         ForEach(certStore.entries) { cert in
                             trustedCertRow(cert)
                             if cert.id != certStore.entries.last?.id {
-                                Divider().overlay(Pal.fill(0.06))
+                                Hairline()
                             }
                         }
                     }
@@ -389,6 +394,10 @@ struct SettingsView: View {
                 )
                 .frame(width: 140)
             }
+
+            settingRow(String(localized: "GPU 加速渲染"), description: String(localized: "用 Metal 绘制终端，大量输出与全屏程序更流畅；显示异常时可关闭回退到 CPU 绘制")) {
+                ThemedToggle(isOn: $settings.termGPURendering)
+            }
         }
     }
 
@@ -417,7 +426,7 @@ struct SettingsView: View {
     private var aboutSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
             sectionHeader(String(localized: "关于"))
-            AboutContent()   // 与独立「关于」窗口复用同一份内容
+            AboutContent(onShowPrivacy: { model.showPrivacyPolicy = true })   // 与独立「关于」窗口复用同一份内容
         }
     }
 

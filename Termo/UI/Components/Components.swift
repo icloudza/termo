@@ -36,7 +36,7 @@ struct TruncatableText: View {
             .contentShape(Rectangle())
             .onTapGesture { if isTruncated { showPreview = true } }
             .pointerCursor(isTruncated)
-            .help(isTruncated ? "点击查看完整内容（可复制）" : "")
+            .tooltip(String(localized: "点击查看完整内容（可复制）"), when: isTruncated)
             .popover(isPresented: $showPreview, arrowEdge: .bottom) { preview }
     }
 
@@ -155,7 +155,8 @@ struct ThemedTextField: View {
     }
 
     var body: some View {
-        TextField(text: $text.singleLine, prompt: prompt) { EmptyView() }
+        // 占位文字必须显式着色：不设时由系统决定颜色，深色下几乎和正文一样亮，分不清是占位还是已填的值。
+        TextField(text: $text.singleLine, prompt: prompt.foregroundStyle(Pal.overlay)) { EmptyView() }
             .textFieldStyle(.plain)
             .lineLimit(1)
             .noNativeFocusRing()
@@ -211,10 +212,92 @@ struct ThemedTextEditor: View {
     }
 }
 
+/// 分隔线：主题色的 1pt 线。系统 Divider 用系统分隔色、叠色也盖不住，且是独立绘制层，弹窗淡入淡出时会慢一拍残留。
+struct Hairline: View {
+    var vertical = false
+    var length: CGFloat? = nil
+    var opacity: Double = 0.08
+    @ObservedObject private var theme = ThemeManager.shared
+
+    var body: some View {
+        Rectangle().fill(Pal.fill(opacity))
+            .frame(width: vertical ? 1 : length, height: vertical ? length : 1)
+    }
+}
+
+/// 复制小按钮：点击后短暂显示「已复制」，让人知道确实复制了。
+struct CopyChip: View {
+    let title: String
+    let value: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(value, forType: .string)
+            copied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+        } label: {
+            HStack(spacing: 4) {
+                if copied { Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)) }
+                Text(copied ? String(localized: "已复制") : title)
+            }
+            .font(.system(size: 12)).foregroundStyle(copied ? Pal.green : (value.isEmpty ? Pal.overlay : Pal.subtext))
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Pal.fill(0.10), lineWidth: 1))
+            .contentShape(Rectangle())
+            .animation(.easeOut(duration: 0.12), value: copied)
+        }
+        .buttonStyle(.plain)
+        .pointerCursor(!value.isEmpty)
+        .disabled(value.isEmpty)
+    }
+}
+
+/// 延迟出现的加载转圈：快速完成的加载（多数目录、小文件）不闪一下转圈。
+struct DelayedSpinner: View {
+    var delay: Duration = .milliseconds(250)
+    @State private var visible = false
+
+    var body: some View {
+        ProgressView().controlSize(.small)
+            .opacity(visible ? 1 : 0)
+            .task {
+                try? await Task.sleep(for: delay)
+                withAnimation(.easeOut(duration: 0.15)) { visible = true }
+            }
+    }
+}
+
+/// 浅色强调按钮：空状态、出错页里的轻量操作（添加主机、重试、清除搜索等）。
+struct TintedButton: View {
+    let title: LocalizedStringKey
+    var tint: Color? = nil            // nil = 主色
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        let c = tint ?? Pal.mauve
+        Button(action: action) {
+            Text(title).font(.system(size: 12)).foregroundStyle(c)
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .background(c.opacity(hover ? 0.16 : 0.10), in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .onHover { hover = $0 }
+        .animation(.easeOut(duration: 0.12), value: hover)
+    }
+}
+
 /// 密码输入框（带显示/隐藏小眼睛）。
 struct ThemedSecureField: View {
     let placeholder: LocalizedStringKey
     @Binding var text: String
+    var autofocus: Bool = false
+    var onSubmit: (() -> Void)? = nil
     @State private var reveal = false
     @FocusState private var focusedField: Field?
     @ObservedObject private var theme = ThemeManager.shared
@@ -226,12 +309,14 @@ struct ThemedSecureField: View {
         HStack(spacing: 6) {
             // 两个字段都常驻、仅切 opacity；切换显示/隐藏时不重建视图，焦点不丢失
             ZStack {
-                SecureField(placeholder, text: $text.singleLine)
+                SecureField(text: $text.singleLine, prompt: Text(placeholder).foregroundStyle(Pal.overlay)) { Text(placeholder) }
                     .focused($focusedField, equals: .secure)
+                    .onSubmit { onSubmit?() }
                     .opacity(reveal ? 0 : 1)
                     .allowsHitTesting(!reveal)
-                TextField(placeholder, text: $text.singleLine)
+                TextField(text: $text.singleLine, prompt: Text(placeholder).foregroundStyle(Pal.overlay)) { Text(placeholder) }
                     .focused($focusedField, equals: .plain)
+                    .onSubmit { onSubmit?() }
                     .opacity(reveal ? 1 : 0)
                     .allowsHitTesting(reveal)
             }
@@ -257,7 +342,7 @@ struct ThemedSecureField: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .help(reveal ? "隐藏密码" : "显示密码")
+            .tooltip(reveal ? String(localized: "隐藏密码") : String(localized: "显示密码"))
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 8)
@@ -267,6 +352,8 @@ struct ThemedSecureField: View {
                 .stroke(isFocused ? Pal.mauve : Pal.fill(0.12), lineWidth: isFocused ? 1.5 : 1)
         )
         .animation(.easeOut(duration: 0.12), value: isFocused)
+        // 弹窗淡入时立即设焦点可能落空，下一拍再设。
+        .onAppear { if autofocus { DispatchQueue.main.async { focusedField = .secure } } }
     }
 }
 
@@ -398,8 +485,8 @@ private struct DropdownOption: View {
 struct SearchableSelect: View {
     let options: [String]
     @Binding var text: String
-    var placeholder: String = "搜索或输入新分组…"
-    var emptyLabel: String = "未分组"      // text 为空时按钮显示的占位文案
+    var placeholder: String = String(localized: "搜索或新建分组…")
+    var emptyLabel: String = String(localized: "未分组")      // text 为空时按钮显示的占位文案
     var allowsCreate: Bool = true
 
     @State private var open = false
@@ -446,7 +533,7 @@ struct SearchableSelect: View {
             VStack(spacing: 6) {
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Pal.overlay)
-                    TextField(placeholder, text: $query.singleLine)
+                    TextField(text: $query.singleLine, prompt: Text(placeholder).foregroundStyle(Pal.overlay)) { EmptyView() }
                         .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Pal.text)
                         .lineLimit(1)
                         .noNativeFocusRing()
@@ -460,7 +547,7 @@ struct SearchableSelect: View {
                 ScrollView {
                     VStack(spacing: 1) {
                         if canCreate {
-                            DropdownOption(verbatim: "新建「\(trimmedQuery)」", selected: false, leadingSymbol: "plus") {
+                            DropdownOption(verbatim: String(localized: "新建「\(trimmedQuery)」"), selected: false, leadingSymbol: "plus") {
                                 select(trimmedQuery)
                             }
                         }
@@ -504,24 +591,6 @@ struct SearchableSelect: View {
     }
 }
 
-/// 放进 sheet 背景即可：阻止打开时自动把光标聚焦到第一个文本框。
-/// 关键在「时机」——必须在窗口成为 key 之前就把初始第一响应者指向一个**不接受焦点**的占位视图，
-/// 这样 AppKit 自动选首个文本框那一步直接落空，不会出现「先聚焦再取消」的闪烁。
-/// 用户点击字段仍可正常聚焦，只是不在弹出瞬间默认抢焦。
-struct NoInitialFocus: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { FocusSink() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    private final class FocusSink: NSView {
-        override var acceptsFirstResponder: Bool { false }
-        // 视图刚挂到窗口时（早于窗口成为 key）即接管初始第一响应者，抢在自动聚焦之前。
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            window?.initialFirstResponder = self
-        }
-    }
-}
-
 /// 自定义步进器（数值加减）。
 struct ThemedStepper: View {
     @Binding var value: Int
@@ -532,16 +601,16 @@ struct ThemedStepper: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            stepButton("minus") {
+            stepButton("minus", enabled: value > range.lowerBound) {
                 value = max(range.lowerBound, value - step)
             }
-            Divider().frame(height: 16).overlay(Pal.fill(0.10))
+            Hairline(vertical: true, length: 16, opacity: 0.10)
             Text("\(value)\(suffix)")
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(Pal.text)
                 .frame(minWidth: 46)
-            Divider().frame(height: 16).overlay(Pal.fill(0.10))
-            stepButton("plus") {
+            Hairline(vertical: true, length: 16, opacity: 0.10)
+            stepButton("plus", enabled: value < range.upperBound) {
                 value = min(range.upperBound, value + step)
             }
         }
@@ -549,16 +618,17 @@ struct ThemedStepper: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Pal.fill(0.12), lineWidth: 1))
     }
 
-    private func stepButton(_ symbol: String, _ action: @escaping () -> Void) -> some View {
+    private func stepButton(_ symbol: String, enabled: Bool, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Pal.subtext)
-                .frame(width: 30, height: 30)
+                .foregroundStyle(enabled ? Pal.subtext : Pal.overlay.opacity(0.5))
+                .frame(width: 30, height: 32)   // 与输入框同高
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .pointerCursor()
+        .disabled(!enabled)
+        .pointerCursor(enabled)
     }
 }
 
@@ -650,9 +720,7 @@ struct ConfirmDialog: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.35)
-                .ignoresSafeArea()
-                .onTapGesture(perform: onCancel)
+            ModalBackdrop(onTap: onCancel)
 
             VStack(alignment: .leading, spacing: 14) {
                 title
@@ -667,18 +735,11 @@ struct ConfirmDialog: View {
                     Spacer()
                     if showCancel { SecondaryButton(title: cancelTitle, action: onCancel) }
                     if busy { ProgressView().controlSize(.small) }   // 进行中：确认键旁转圈
-                    Button(action: onConfirm) {
-                        Text(confirmTitle)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16).padding(.vertical, 7)
-                            .background((destructive ? Pal.red : Pal.mauve).opacity(busy ? 0.6 : 1),
-                                        in: RoundedRectangle(cornerRadius: 7))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(busy)
-                    .pointerCursor(!busy)
+                    Button(action: onConfirm) { Text(confirmTitle) }
+                        .buttonStyle(ThemedButtonStyle(kind: destructive ? .destructive : .primary))
+                        .disabled(busy)
+                        // 回车确认：只给非破坏性操作（删除类必须明确点按钮，防止顺手一敲回车就删了）。
+                        .keyboardShortcut(destructive || busy ? nil : KeyboardShortcut.defaultAction)
                 }
             }
             .padding(20)
@@ -690,26 +751,76 @@ struct ConfirmDialog: View {
     }
 }
 
+/// 弹窗、表单按钮的统一外观：32pt 高（与输入框齐平）、圆角 8、悬停提亮、按下压暗。
+/// 禁用一律灰底灰字——不再把主色调成半透明，那样看着像另一种颜色的可点按钮。
+struct ThemedButtonStyle: ButtonStyle {
+    enum Kind { case primary, secondary, destructive, success, softDestructive, tinted }
+    var kind: Kind = .primary
+
+    func makeBody(configuration: Configuration) -> some View {
+        ThemedButtonBody(kind: kind, configuration: configuration)
+    }
+}
+
+private struct ThemedButtonBody: View {
+    let kind: ThemedButtonStyle.Kind
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hover = false
+
+    private var filled: Bool { kind == .primary || kind == .destructive || kind == .success }
+
+    private var fill: Color {
+        switch kind {
+        case .primary: return Pal.accentFill
+        case .destructive: return Pal.dangerFill
+        case .success: return Pal.successFill
+        case .secondary: return Pal.fill(hover ? 0.10 : 0.06)
+        case .softDestructive: return Pal.red.opacity(hover ? 0.18 : 0.12)
+        case .tinted: return Pal.mauve.opacity(hover ? 0.16 : 0.10)
+        }
+    }
+
+    private var foreground: Color {
+        if !isEnabled { return Pal.overlay }
+        switch kind {
+        case .primary, .destructive, .success: return .white
+        case .secondary: return hover ? Pal.text : Pal.subtext
+        case .softDestructive: return Pal.red
+        case .tinted: return Pal.mauve
+        }
+    }
+
+    var body: some View {
+        configuration.label
+            .font(.system(size: 13, weight: kind == .secondary ? .regular : .medium))
+            .foregroundStyle(foreground)
+            .lineLimit(1).fixedSize()
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .background(isEnabled ? fill : Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                if isEnabled && filled {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(configuration.isPressed ? Color.black.opacity(0.14) : Color.white.opacity(hover ? 0.08 : 0))
+                }
+            }
+            .contentShape(Rectangle())
+            .onHover { hover = $0 }
+            .animation(.easeOut(duration: 0.12), value: hover)
+            .pointerCursor(isEnabled)
+    }
+}
+
 /// 主要操作按钮（强调色填充）。
 struct PrimaryButton: View {
     let title: LocalizedStringKey
     var enabled: Bool = true
     let action: () -> Void
-    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white)
-                .lineLimit(1).fixedSize()
-                .padding(.horizontal, 16).padding(.vertical, 7)
-                .background(Pal.mauve.opacity(enabled ? 1 : 0.4), in: RoundedRectangle(cornerRadius: 7))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .pointerCursor(enabled)
+        Button(action: action) { Text(title) }
+            .buttonStyle(ThemedButtonStyle(kind: .primary))
+            .disabled(!enabled)
     }
 }
 
@@ -717,19 +828,22 @@ struct PrimaryButton: View {
 struct SecondaryButton: View {
     let title: LocalizedStringKey
     let action: () -> Void
-    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 13))
-                .foregroundStyle(Pal.subtext)
-                .lineLimit(1).fixedSize()
-                .padding(.horizontal, 16).padding(.vertical, 7)
-                .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 7))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
+        Button(action: action) { Text(title) }
+            .buttonStyle(ThemedButtonStyle(kind: .secondary))
+    }
+}
+
+/// 危险操作按钮（删除等）。
+struct DestructiveButton: View {
+    let title: LocalizedStringKey
+    var enabled: Bool = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { Text(title) }
+            .buttonStyle(ThemedButtonStyle(kind: .destructive))
+            .disabled(!enabled)
     }
 }

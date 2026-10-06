@@ -4,7 +4,8 @@ import SwiftUI
 struct GenerateKeyView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var theme = ThemeManager.shared
-    @Environment(\.dismiss) private var dismiss
+    @State private var generating = false
+    @Environment(\.modalDismiss) private var dismiss
 
     @State private var name = ""
     @State private var type: SSHKeyType = .ed25519
@@ -22,46 +23,43 @@ struct GenerateKeyView: View {
                 .buttonStyle(.plain).pointerCursor()
             }
             .padding(.horizontal, 18).padding(.vertical, 14)
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     labeled("名称") { ThemedTextField(placeholder: "我的密钥", text: $name) }
-                    labeled(String(localized: "类型")) {
-                        ThemedDropdown(options: SSHKeyType.allCases.map { (value: $0, label: $0.label) },
+                    labeled("类型") {
+                        ThemedDropdown(options: SSHKeyType.allCases.map { (value: $0, verbatim: $0.label) },
                                        selection: $type)
                     }
                     labeled("注释") { ThemedTextField(placeholder: "user@host（可选，写入公钥尾部）", text: $comment) }
-                    labeled(String(localized: "口令")) { ThemedSecureField(placeholder: "（可选，给私钥加密）", text: $passphrase) }
+                    labeled("口令") { ThemedSecureField(placeholder: "（可选，给私钥加密）", text: $passphrase) }
                     Text("私钥安全存入系统钥匙串，绝不落盘明文；公钥可随时复制到服务器 authorized_keys。")
                         .font(.system(size: 11)).foregroundStyle(Pal.overlay)
                 }
                 .padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             HStack {
                 Spacer()
-                Button { dismiss() } label: {
-                    Text("取消").font(.system(size: 13)).foregroundStyle(Pal.subtext)
-                        .padding(.horizontal, 16).padding(.vertical, 7)
-                        .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 8))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).pointerCursor()
+                SecondaryButton(title: "取消") { dismiss() }
                 Button {
+                    generating = true
                     model.generateKey(name: name.trimmingCharacters(in: .whitespaces),
-                                      type: type, comment: comment, passphrase: passphrase)
-                    dismiss()
+                                      type: type, comment: comment, passphrase: passphrase) { ok in
+                        generating = false
+                        if ok { dismiss() }
+                    }
                 } label: {
-                    Text("生成").font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
-                        .padding(.horizontal, 16).padding(.vertical, 7)
-                        .background(Pal.mauve, in: RoundedRectangle(cornerRadius: 8))
-                        .contentShape(Rectangle())
+                    HStack(spacing: 6) {
+                        // 固定 12pt 槽位：转圈出现时按钮不变宽
+                        if generating { ProgressView().controlSize(.mini).tint(.white).frame(width: 12, height: 12) }
+                        Text("生成")
+                    }
                 }
-                .buttonStyle(.plain).pointerCursor()
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                .opacity(name.trimmingCharacters(in: .whitespaces).isEmpty ? 0.5 : 1)
+                .buttonStyle(ThemedButtonStyle(kind: .primary))
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || generating)
             }
             .padding(.horizontal, 18).padding(.vertical, 12)
         }
@@ -71,7 +69,7 @@ struct GenerateKeyView: View {
     }
 
     @ViewBuilder
-    private func labeled<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
+    private func labeled<Content: View>(_ label: LocalizedStringKey, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label).font(.system(size: 12)).foregroundStyle(Pal.subtext)
             content()
@@ -84,7 +82,7 @@ struct KeyDetailView: View {
     @ObservedObject var model: AppModel
     let key: SSHKey
     @ObservedObject private var theme = ThemeManager.shared
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modalDismiss) private var dismiss
     @State private var copied = false
 
     var body: some View {
@@ -99,7 +97,7 @@ struct KeyDetailView: View {
                 .buttonStyle(.plain).pointerCursor()
             }
             .padding(.horizontal, 18).padding(.vertical, 14)
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -115,6 +113,7 @@ struct KeyDetailView: View {
                             Spacer()
                             Button {
                                 model.copyPublicKey(key); copied = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }   // 反馈后复原，可再次复制
                             } label: {
                                 Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
                                     .font(.system(size: 11)).foregroundStyle(Pal.mauve)
@@ -132,25 +131,12 @@ struct KeyDetailView: View {
                 .padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Divider().overlay(Pal.fill(0.06))
+            Hairline()
             HStack {
-                Button {
-                    model.deleteKey(key); dismiss()
-                } label: {
-                    Text("删除").font(.system(size: 13, weight: .medium)).foregroundStyle(Pal.red)
-                        .padding(.horizontal, 16).padding(.vertical, 7)
-                        .background(Pal.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).pointerCursor()
+                Button { model.requestDeleteKey(key) } label: { Text("删除") }   // 确认后由 deleteKey 关闭本弹窗
+                    .buttonStyle(ThemedButtonStyle(kind: .softDestructive))
                 Spacer()
-                Button { dismiss() } label: {
-                    Text("关闭").font(.system(size: 13)).foregroundStyle(Pal.subtext)
-                        .padding(.horizontal, 16).padding(.vertical, 7)
-                        .background(Pal.fill(0.06), in: RoundedRectangle(cornerRadius: 8))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).pointerCursor()
+                SecondaryButton(title: "关闭") { dismiss() }
             }
             .padding(.horizontal, 18).padding(.vertical, 12)
         }
@@ -161,7 +147,9 @@ struct KeyDetailView: View {
 
     private func info(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top) {
-            Text(label).font(.system(size: 12)).foregroundStyle(Pal.subtext).frame(width: 64, alignment: .leading)
+            // 最小 64 宽对齐中文标签；英文「Passphrase Protected」等更长时自动撑开，不折行。
+            Text(label).font(.system(size: 12)).foregroundStyle(Pal.subtext)
+                .fixedSize().frame(minWidth: 64, alignment: .leading)
             Text(value).font(.system(size: 12)).foregroundStyle(Pal.text)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -27,6 +27,10 @@ struct SFTPAttrs {
     var size: UInt64? = nil
     var permissions: UInt32? = nil
     var mtime: UInt32? = nil
+    var uid: UInt32? = nil
+    var gid: UInt32? = nil
+    /// permissions 含 st_mode 的文件类型位（OpenSSH 服务端会带上）。
+    var isSymlink: Bool { permissions.map { $0 & 0o170000 == 0o120000 } ?? false }
     /// 版本令牌 "mtime:size"（乐观锁），缺字段时为 nil。
     var versionToken: String? {
         guard let m = mtime, let s = size else { return nil }
@@ -37,6 +41,7 @@ struct SFTPAttrs {
         if a.has_size != 0 { size = a.size }
         if a.has_perm != 0 { permissions = a.permissions }
         if a.has_mtime != 0 { mtime = a.mtime }
+        if a.has_owner != 0 { uid = a.uid; gid = a.gid }
     }
 }
 
@@ -51,7 +56,13 @@ final class SFTPSession: @unchecked Sendable {
     private let queue = DispatchQueue(label: "termo.sftp")
     private var conn: SSHSession?                              // dedicated 连接
     private var sftp: UnsafeMutableRawPointer?                 // LIBSSH2_SFTP*
-    private var failure: SFTPError?                            // 传输级失败后粘住（上层弃用本会话重建）
+    private var failure: SFTPError? {                          // 传输级失败后粘住（上层弃用本会话重建）
+        didSet { failLock.lock(); failed = failure != nil; failLock.unlock() }
+    }
+    private let failLock = NSLock()
+    private var failed = false
+    /// 是否已出过传输级故障（可跨线程读）。共享池据此判断该不该作废它：拿旧句柄在新连接上报的错不算。
+    var isFailed: Bool { failLock.lock(); defer { failLock.unlock() }; return failed }
     private var handles: [UInt64: UnsafeMutableRawPointer] = [:]
     private var nextId: UInt64 = 1
 
@@ -74,9 +85,7 @@ final class SFTPSession: @unchecked Sendable {
         if let failure { return failure }
         if sftp != nil { return nil }
         do {
-            let a = ssh.libssh2Auth
-            let c = try SSHSession.connect(host: ssh.host, port: ssh.port, user: ssh.user,
-                                           password: a.password, keyPath: a.keyPath, keyPassphrase: a.keyPassphrase)
+            let c = try SSHSession.connect(ssh)
             guard let raw = c.rawHandle, let sp = termo_sftp_init(raw) else {
                 c.close()
                 let e = SFTPError(code: 0xF001, message: String(localized: "SFTP 初始化失败"), isTransport: true)
@@ -266,6 +275,9 @@ final class SFTPSession: @unchecked Sendable {
     func setPermissions(_ path: String, _ mode: UInt32) async throws {
         try await simple { termo_sftp_setstat_perm($0, $1, path, mode) }
     }
+    func setOwner(_ path: String, uid: UInt32, gid: UInt32) async throws {
+        try await simple { termo_sftp_setstat_owner($0, $1, path, uid, gid) }
+    }
     func rename(from: String, to: String) async throws {
         try await simple { termo_sftp_rename($0, $1, from, to, 0) }
     }
@@ -290,5 +302,104 @@ final class SFTPSession: @unchecked Sendable {
             return rc == 0 ? nil : self.makeError(rc)
         }
         if let r { throw r }
+    }
+}
+
+
+// MARK: - 按主机共享的 SFTP 会话
+
+/// 交互类文件操作（浏览器、目录树、编辑器、临时查询）按主机共享一条 SFTP 连接：以前每个视图、每个打开的文件
+/// 都各自新建一条 SSH 连接并完整握手认证，打开文件前总要先等一轮建连。
+/// 上传/下载/解压等长任务仍各用独占连接（SFTPSession 串行执行请求，共用会让浏览等一个大文件传完）。
+///
+/// 生命周期按使用者计数：最后一个使用者释放后闲置 `idleTTL` 再断开，期间重新打开文件即可直接复用。
+/// 连接出错只作废当前这一条，下次操作自动重建；只有服务器不支持 SFTP 子系统时才在一段时间内改走 shell。
+final class SFTPSessionPool: @unchecked Sendable {
+    static let shared = SFTPSessionPool()
+    private init() {}
+
+    private struct Entry {
+        var session: SFTPSession?
+        var refs = 0
+        var idleWork: DispatchWorkItem?
+        var unsupportedUntil: Date?
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+    private static let idleTTL: TimeInterval = 120
+    private static let unsupportedTTL: TimeInterval = 600
+
+    func retain(_ c: SSHConnection) {
+        lock.lock(); defer { lock.unlock() }
+        let k = c.poolKey
+        var e = entries[k] ?? Entry()
+        e.refs += 1
+        e.idleWork?.cancel(); e.idleWork = nil
+        entries[k] = e
+    }
+
+    func release(_ c: SSHConnection) {
+        lock.lock(); defer { lock.unlock() }
+        let k = c.poolKey
+        guard var e = entries[k] else { return }
+        e.refs = max(0, e.refs - 1)
+        if e.refs == 0 {
+            let work = DispatchWorkItem { [weak self] in self?.closeIfIdle(k) }
+            e.idleWork = work
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.idleTTL, execute: work)
+        }
+        entries[k] = e
+    }
+
+    /// 当前共享会话（没有则新建，连接本身在首次请求时懒建）。
+    func session(for c: SSHConnection) -> SFTPSession {
+        lock.lock(); defer { lock.unlock() }
+        let k = c.poolKey
+        var e = entries[k] ?? Entry()
+        if let s = e.session { return s }
+        let s = SFTPSession(c)
+        e.session = s
+        entries[k] = e
+        return s
+    }
+
+    func isUnsupported(_ c: SSHConnection) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let until = entries[c.poolKey]?.unsupportedUntil else { return false }
+        return until > Date()
+    }
+
+    /// 作废出错的会话：只在它仍是当前会话、且确实出过传输故障时（别的使用者可能已经换上了新的；
+    /// 用上一条连接的旧句柄在新连接上报的错不代表新连接坏了）。unsupported = 服务器不支持 SFTP。
+    func invalidate(_ c: SSHConnection, _ s: SFTPSession, unsupported: Bool) {
+        lock.lock()
+        let k = c.poolKey
+        var e = entries[k] ?? Entry()
+        let drop = e.session === s && (s.isFailed || unsupported)
+        if drop { e.session = nil }
+        if unsupported { e.unsupportedUntil = Date().addingTimeInterval(Self.unsupportedTTL) }
+        entries[k] = e
+        lock.unlock()
+        if drop { Task { await s.shutdown() } }
+    }
+
+    /// 网络切换后：丢掉旧连接、清除「不支持」记录，下次操作重新建连。幂等。
+    func reset(_ c: SSHConnection) {
+        lock.lock()
+        let k = c.poolKey
+        let old = entries[k]?.session
+        entries[k]?.session = nil
+        entries[k]?.unsupportedUntil = nil
+        lock.unlock()
+        if let old { Task { await old.shutdown() } }
+    }
+
+    private func closeIfIdle(_ k: String) {
+        lock.lock()
+        guard let e = entries[k], e.refs == 0 else { lock.unlock(); return }
+        entries.removeValue(forKey: k)
+        lock.unlock()
+        if let s = e.session { Task { await s.shutdown() } }
     }
 }

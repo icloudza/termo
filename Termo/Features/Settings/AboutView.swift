@@ -4,7 +4,10 @@ import SwiftUI
 /// 「关于」内容卡片——设置页的「关于」与菜单打开的独立「关于」窗口共用同一份。
 struct AboutContent: View {
     var showUpdateStatus: Bool = true   // 独立「关于」弹窗里置 false：不显示「上次检查」等状态文字，更精简
+    /// 主窗口（设置页）内由模型在窗口层呈现隐私政策（卡片比设置页高，放不进设置卡片里）；独立「关于」窗口传 nil，用该窗口自己的 sheet。
+    var onShowPrivacy: (() -> Void)? = nil
     @ObservedObject private var theme = ThemeManager.shared
+    @ObservedObject private var settings = AppSettings.shared
     @State private var showPrivacy = false
 
     var body: some View {
@@ -23,21 +26,23 @@ struct AboutContent: View {
                 Spacer()
                 UpdateInlineControls(showStatus: showUpdateStatus)   // 软件更新：自动检查开关 + 检查更新按钮，置于头部右侧
             }
-            Divider().background(Pal.fill(0.06)).padding(.vertical, 6)
+            Hairline().padding(.vertical, 6)
             linkLine("GitHub", "github.com/icloudza/termo", url: "https://github.com/icloudza/termo")
             infoLine(String(localized: "终端引擎"), value: "SwiftTerm 1.13")
-            infoLine(String(localized: "渲染"), value: "CoreText / AppKit")
+            infoLine(String(localized: "渲染"), value: settings.termGPURendering ? "Metal / AppKit" : "CoreText / AppKit")
             infoLine(String(localized: "平台"), value: "macOS 14+")
             infoLine(String(localized: "架构"), value: "Apple Silicon")
             privacyLine
         }
         .padding(20)
         .background(Pal.fill(0.03), in: RoundedRectangle(cornerRadius: 10))
-        .sheet(isPresented: $showPrivacy) { PrivacyPolicyView() }
+        .sheet(isPresented: $showPrivacy) {
+            PrivacyPolicyView().environment(\.modalDismiss, ModalDismissAction { showPrivacy = false })
+        }
     }
 
     private var privacyLine: some View {
-        Button { showPrivacy = true } label: {
+        Button { if let onShowPrivacy { onShowPrivacy() } else { showPrivacy = true } } label: {
             HStack {
                 Text(String(localized: "隐私政策")).font(.system(size: 12)).foregroundStyle(Pal.overlay)
                 Spacer()
@@ -67,7 +72,7 @@ struct AboutContent: View {
             if let u = URL(string: url) {
                 Link(text, destination: u)
                     .font(.system(size: 12))
-                    .foregroundStyle(Color(hex: 0x89b4fa))
+                    .foregroundStyle(Pal.mauve)
                     .pointerCursor()
             } else {
                 Text(text).font(.system(size: 12)).foregroundStyle(Pal.subtext)

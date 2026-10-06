@@ -24,6 +24,12 @@ static int termo_bridge_verify_certificate(void *userdata, const char *host, int
     NSLock *_certLock;
     dispatch_semaphore_t _certSem;   // 非 nil 表示有一次证书决定正在等待
     NSInteger _certDecision;
+    // 帧合并：后台线程只覆盖「最新一帧」，主线程每次只渲染最新的那帧；主线程忙时中间帧直接丢弃，
+    // 不再每帧拷一份（最大十几 MB）排队投递、内存暴涨且延迟越积越大。
+    NSLock *_frameLock;
+    NSMutableData *_frameBuf;
+    int _frameW, _frameH, _frameStride, _frameBpp;
+    BOOL _frameScheduled;
 }
 
 - (instancetype)initWithHost:(NSString *)host
@@ -42,8 +48,36 @@ static int termo_bridge_verify_certificate(void *userdata, const char *host, int
         _width = width;
         _height = height;
         _certLock = [[NSLock alloc] init];
+        _frameLock = [[NSLock alloc] init];
     }
     return self;
+}
+
+// 后台线程：拷贝最新一帧（FreeRDP 缓冲回调返回后即可能变化）；已有待投递的就只覆盖内容、不再排队。
+- (void)termo_enqueueFrame:(const uint8_t *)pixels width:(int)width height:(int)height stride:(int)stride bpp:(int)bpp {
+    NSUInteger len = (NSUInteger)height * (NSUInteger)stride;
+    [_frameLock lock];
+    if (!_frameBuf || _frameBuf.length != len) _frameBuf = [NSMutableData dataWithLength:len];
+    memcpy(_frameBuf.mutableBytes, pixels, len);
+    _frameW = width; _frameH = height; _frameStride = stride; _frameBpp = bpp;
+    BOOL schedule = !_frameScheduled;
+    _frameScheduled = YES;
+    [_frameLock unlock];
+    if (!schedule) return;
+    dispatch_async(dispatch_get_main_queue(), ^{ [self termo_deliverFrame]; });
+}
+
+// 主线程：取走最新一帧交给 delegate（缓冲所有权一并移交，下一帧另起缓冲）。
+- (void)termo_deliverFrame {
+    [_frameLock lock];
+    NSData *data = _frameBuf;
+    _frameBuf = nil;
+    int w = _frameW, h = _frameH, stride = _frameStride, bpp = _frameBpp;
+    _frameScheduled = NO;
+    [_frameLock unlock];
+    if (!data) return;
+    if ([self.delegate respondsToSelector:@selector(rdpSession:didReceiveFrame:width:height:stride:bpp:)])
+        [self.delegate rdpSession:self didReceiveFrame:data width:w height:h stride:stride bpp:bpp];
 }
 
 - (void)connect {
@@ -176,12 +210,7 @@ static void termo_bridge_on_state(void *userdata, TermoRDPState state, const cha
 
 static void termo_bridge_on_frame(void *userdata, const uint8_t *pixels, int width, int height, int stride, int bpp) {
     TermoRDPSession *session = (__bridge TermoRDPSession *)userdata;
-    // 拷贝整帧（FreeRDP 缓冲回调返回后即可能变化），跨线程交给主线程渲染。
-    NSData *data = [NSData dataWithBytes:pixels length:(NSUInteger)height * (NSUInteger)stride];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if ([session.delegate respondsToSelector:@selector(rdpSession:didReceiveFrame:width:height:stride:bpp:)])
-            [session.delegate rdpSession:session didReceiveFrame:data width:width height:height stride:stride bpp:bpp];
-    });
+    [session termo_enqueueFrame:pixels width:width height:height stride:stride bpp:bpp];
 }
 
 // 连接日志蹦床：转回主线程交给 delegate。

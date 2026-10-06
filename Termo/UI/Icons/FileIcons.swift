@@ -4,21 +4,26 @@ import SwiftUI
 /// 语言层面 SF Symbols 无品牌图标，故以「少数代码字形 + 鲜明配色」最大化区分度；
 /// 另对特殊文件名、特殊目录、归档/镜像/包、密钥/字体、备份/临时/续传等做了细分。
 enum FileIcon {
-    // Catppuccin 强调色（按类别上色，色相尽量分散以提升辨识度）
-    private static let rosewater = Color(hex: 0xf5e0dc)
-    private static let flamingo  = Color(hex: 0xf2cdcd)
-    private static let pink      = Color(hex: 0xf5c2e7)
-    private static let mauve     = Color(hex: 0xcba6f7)
-    private static let red       = Color(hex: 0xf38ba8)
-    private static let maroon    = Color(hex: 0xeba0ac)
-    private static let peach     = Color(hex: 0xfab387)
-    private static let yellow    = Color(hex: 0xf9e2af)
-    private static let green     = Color(hex: 0xa6e3a1)
-    private static let teal      = Color(hex: 0x94e2d5)
-    private static let sky       = Color(hex: 0x89dceb)
-    private static let sapphire  = Color(hex: 0x74c7ec)
-    private static let blue      = Color(hex: 0x89b4fa)
-    private static let lavender  = Color(hex: 0xb4befe)
+    // Catppuccin 强调色（按类别上色，色相尽量分散以提升辨识度）。深色用 Mocha，浅色用 Latte：
+    // Mocha 的粉彩色放在浅色侧栏上对比度只有 1.1–2:1，图标几乎看不见。
+    private static var rosewater: Color { pick(0xf5e0dc, 0xdc8a78) }
+    private static var flamingo: Color { pick(0xf2cdcd, 0xdd7878) }
+    private static var pink: Color { pick(0xf5c2e7, 0xea76cb) }
+    private static var mauve: Color { pick(0xcba6f7, 0x8839ef) }
+    private static var red: Color { pick(0xf38ba8, 0xd20f39) }
+    private static var maroon: Color { pick(0xeba0ac, 0xe64553) }
+    private static var peach: Color { pick(0xfab387, 0xfe640b) }
+    private static var yellow: Color { pick(0xf9e2af, 0xdf8e1d) }
+    private static var green: Color { pick(0xa6e3a1, 0x40a02b) }
+    private static var teal: Color { pick(0x94e2d5, 0x179299) }
+    private static var sky: Color { pick(0x89dceb, 0x04a5e5) }
+    private static var sapphire: Color { pick(0x74c7ec, 0x209fb5) }
+    private static var blue: Color { pick(0x89b4fa, 0x1e66f5) }
+    private static var lavender: Color { pick(0xb4befe, 0x7287fd) }
+
+    private static func pick(_ dark: UInt32, _ light: UInt32) -> Color {
+        Color(hex: ThemeManager.shared.isDark ? dark : light)
+    }
 
     static func info(for file: RemoteFile) -> (symbol: String, color: Color) {
         switch file.kind {
